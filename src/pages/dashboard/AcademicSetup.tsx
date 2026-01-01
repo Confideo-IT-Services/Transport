@@ -29,7 +29,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Edit, Users, BookOpen, Calendar, ChevronRight } from "lucide-react";
+import { Plus, Edit, Users, BookOpen, Calendar, ChevronRight, GraduationCap } from "lucide-react";
 
 const academicYears = [
   { id: 1, name: "2024-25", status: "active", startDate: "Apr 2024", endDate: "Mar 2025" },
@@ -85,29 +85,69 @@ const classesData = [
   },
 ];
 
-const subjects = [
-  { id: 1, name: "Mathematics", code: "MATH", classes: "1-5", type: "Core" },
-  { id: 2, name: "English", code: "ENG", classes: "1-5", type: "Core" },
-  { id: 3, name: "Hindi", code: "HIN", classes: "1-5", type: "Core" },
-  { id: 4, name: "Science", code: "SCI", classes: "3-5", type: "Core" },
-  { id: 5, name: "Social Studies", code: "SST", classes: "3-5", type: "Core" },
-  { id: 6, name: "Computer", code: "COMP", classes: "1-5", type: "Elective" },
-  { id: 7, name: "Art", code: "ART", classes: "1-5", type: "Elective" },
+const availableSubjects = [
+  "Mathematics", "English", "Hindi", "Science", "Social Studies", "Computer", "Art", "Physical Education", "Music"
 ];
 
-const teachers = [
-  { id: 1, name: "Mrs. Sharma", subjects: ["Mathematics"], classes: ["1A", "1B", "2A"] },
-  { id: 2, name: "Mr. Singh", subjects: ["English", "Hindi"], classes: ["2A", "2B", "2C"] },
-  { id: 3, name: "Mrs. Gupta", subjects: ["Science"], classes: ["3A", "3B", "4A"] },
-  { id: 4, name: "Mr. Kumar", subjects: ["Social Studies"], classes: ["4A", "4B", "5A"] },
-  { id: 5, name: "Mrs. Patel", subjects: ["Computer", "Art"], classes: ["5A", "5B"] },
+const initialTeachers = [
+  { id: 1, name: "Mrs. Sharma", email: "sharma@school.com", phone: "9876543210", subjects: ["Mathematics"], classes: ["1A", "1B", "2A"] },
+  { id: 2, name: "Mr. Singh", email: "singh@school.com", phone: "9876543211", subjects: ["English", "Hindi"], classes: ["2A", "2B", "2C"] },
+  { id: 3, name: "Mrs. Gupta", email: "gupta@school.com", phone: "9876543212", subjects: ["Science"], classes: ["3A", "3B", "4A"] },
+  { id: 4, name: "Mr. Kumar", email: "kumar@school.com", phone: "9876543213", subjects: ["Social Studies"], classes: ["4A", "4B", "5A"] },
+  { id: 5, name: "Mrs. Patel", email: "patel@school.com", phone: "9876543214", subjects: ["Computer", "Art"], classes: ["5A", "5B"] },
 ];
+
+const allClasses = classesData.flatMap(cls => 
+  cls.sections.map(sec => `${cls.name.replace("Class ", "")}${sec.name}`)
+);
 
 export default function AcademicSetup() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
   const [isAddClassOpen, setIsAddClassOpen] = useState(false);
+  const [isAddTeacherOpen, setIsAddTeacherOpen] = useState(false);
   const [selectedClass, setSelectedClass] = useState<string>("");
+  const [teachers, setTeachers] = useState(initialTeachers);
+  
+  // New teacher form state
+  const [newTeacher, setNewTeacher] = useState({
+    name: "",
+    email: "",
+    phone: "",
+    subjects: [] as string[],
+    classes: [] as string[],
+  });
+
+  const handleAddTeacher = () => {
+    if (!newTeacher.name || newTeacher.subjects.length === 0 || newTeacher.classes.length === 0) {
+      return;
+    }
+    const teacher = {
+      id: teachers.length + 1,
+      ...newTeacher,
+    };
+    setTeachers([...teachers, teacher]);
+    setNewTeacher({ name: "", email: "", phone: "", subjects: [], classes: [] });
+    setIsAddTeacherOpen(false);
+  };
+
+  const toggleSubject = (subject: string) => {
+    setNewTeacher(prev => ({
+      ...prev,
+      subjects: prev.subjects.includes(subject)
+        ? prev.subjects.filter(s => s !== subject)
+        : [...prev.subjects, subject]
+    }));
+  };
+
+  const toggleClass = (cls: string) => {
+    setNewTeacher(prev => ({
+      ...prev,
+      classes: prev.classes.includes(cls)
+        ? prev.classes.filter(c => c !== cls)
+        : [...prev.classes, cls]
+    }));
+  };
 
   return (
     <UnifiedLayout>
@@ -133,7 +173,6 @@ export default function AcademicSetup() {
           <TabsList>
             <TabsTrigger value="years">Academic Years</TabsTrigger>
             <TabsTrigger value="classes">Classes & Sections</TabsTrigger>
-            <TabsTrigger value="subjects">Subjects</TabsTrigger>
             <TabsTrigger value="teachers">Teacher Assignments</TabsTrigger>
           </TabsList>
 
@@ -347,93 +386,145 @@ export default function AcademicSetup() {
             </div>
           </TabsContent>
 
-          {/* Subjects */}
-          <TabsContent value="subjects" className="space-y-4">
-            <div className="flex justify-between items-center">
-              <h2 className="text-lg font-medium">Subjects</h2>
-              {isAdmin && (
-                <Button size="sm">
-                  <Plus className="w-4 h-4 mr-2" />
-                  Add Subject
-                </Button>
-              )}
-            </div>
-            <Card>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Subject Name</TableHead>
-                    <TableHead>Code</TableHead>
-                    <TableHead>Classes</TableHead>
-                    <TableHead>Type</TableHead>
-                    {isAdmin && <TableHead className="text-right">Actions</TableHead>}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {subjects.map((subject) => (
-                    <TableRow key={subject.id}>
-                      <TableCell className="font-medium">{subject.name}</TableCell>
-                      <TableCell>{subject.code}</TableCell>
-                      <TableCell>{subject.classes}</TableCell>
-                      <TableCell>
-                        <Badge variant={subject.type === "Core" ? "default" : "secondary"}>
-                          {subject.type}
-                        </Badge>
-                      </TableCell>
-                      {isAdmin && (
-                        <TableCell className="text-right">
-                          <Button variant="ghost" size="sm">Edit</Button>
-                        </TableCell>
-                      )}
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </Card>
-          </TabsContent>
-
           {/* Teacher Assignments */}
           <TabsContent value="teachers" className="space-y-4">
             <div className="flex justify-between items-center">
               <h2 className="text-lg font-medium">Teacher Assignments</h2>
               {isAdmin && (
-                <Button size="sm">
-                  <Plus className="w-4 h-4 mr-2" />
-                  Assign Teacher
-                </Button>
+                <Dialog open={isAddTeacherOpen} onOpenChange={setIsAddTeacherOpen}>
+                  <DialogTrigger asChild>
+                    <Button size="sm">
+                      <Plus className="w-4 h-4 mr-2" />
+                      Add New Teacher
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+                    <DialogHeader>
+                      <DialogTitle>Add New Teacher</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-4 py-4">
+                      <div className="space-y-2">
+                        <Label>Teacher Name *</Label>
+                        <Input 
+                          placeholder="e.g., Mr. John Doe" 
+                          value={newTeacher.name}
+                          onChange={(e) => setNewTeacher(prev => ({ ...prev, name: e.target.value }))}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Email</Label>
+                        <Input 
+                          type="email"
+                          placeholder="e.g., john@school.com" 
+                          value={newTeacher.email}
+                          onChange={(e) => setNewTeacher(prev => ({ ...prev, email: e.target.value }))}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Phone</Label>
+                        <Input 
+                          placeholder="e.g., 9876543210" 
+                          value={newTeacher.phone}
+                          onChange={(e) => setNewTeacher(prev => ({ ...prev, phone: e.target.value }))}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Subjects Teaching *</Label>
+                        <div className="flex gap-2 flex-wrap p-3 border rounded-lg bg-muted/30">
+                          {availableSubjects.map((subject) => (
+                            <Badge 
+                              key={subject}
+                              variant={newTeacher.subjects.includes(subject) ? "default" : "outline"}
+                              className="cursor-pointer transition-colors"
+                              onClick={() => toggleSubject(subject)}
+                            >
+                              {subject}
+                            </Badge>
+                          ))}
+                        </div>
+                        {newTeacher.subjects.length > 0 && (
+                          <p className="text-xs text-muted-foreground">
+                            Selected: {newTeacher.subjects.join(", ")}
+                          </p>
+                        )}
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Classes Assigned *</Label>
+                        <div className="flex gap-2 flex-wrap p-3 border rounded-lg bg-muted/30 max-h-32 overflow-y-auto">
+                          {allClasses.map((cls) => (
+                            <Badge 
+                              key={cls}
+                              variant={newTeacher.classes.includes(cls) ? "default" : "outline"}
+                              className="cursor-pointer transition-colors"
+                              onClick={() => toggleClass(cls)}
+                            >
+                              {cls}
+                            </Badge>
+                          ))}
+                        </div>
+                        {newTeacher.classes.length > 0 && (
+                          <p className="text-xs text-muted-foreground">
+                            Selected: {newTeacher.classes.join(", ")}
+                          </p>
+                        )}
+                      </div>
+                      <Button 
+                        className="w-full" 
+                        onClick={handleAddTeacher}
+                        disabled={!newTeacher.name || newTeacher.subjects.length === 0 || newTeacher.classes.length === 0}
+                      >
+                        <GraduationCap className="w-4 h-4 mr-2" />
+                        Add Teacher
+                      </Button>
+                    </div>
+                  </DialogContent>
+                </Dialog>
               )}
             </div>
+
+            {/* Teacher Cards with Subject & Class Info */}
             <div className="grid gap-4 md:grid-cols-2">
               {teachers.map((teacher) => (
-                <Card key={teacher.id}>
+                <Card key={teacher.id} className="hover:border-primary/30 transition-colors">
                   <CardContent className="pt-6">
                     <div className="flex items-start gap-4">
-                      <div className="w-12 h-12 rounded-full bg-secondary/10 flex items-center justify-center">
-                        <Users className="w-6 h-6 text-secondary" />
+                      <div className="w-14 h-14 rounded-full bg-gradient-to-br from-primary/20 to-secondary/20 flex items-center justify-center">
+                        <GraduationCap className="w-7 h-7 text-primary" />
                       </div>
                       <div className="flex-1">
-                        <h3 className="font-semibold">{teacher.name}</h3>
-                        <div className="mt-2 space-y-2">
+                        <h3 className="font-semibold text-lg">{teacher.name}</h3>
+                        {teacher.email && (
+                          <p className="text-xs text-muted-foreground">{teacher.email}</p>
+                        )}
+                        <div className="mt-3 space-y-3">
                           <div>
-                            <p className="text-xs text-muted-foreground mb-1">Subjects</p>
-                            <div className="flex gap-1 flex-wrap">
+                            <p className="text-xs font-medium text-muted-foreground mb-1.5 flex items-center gap-1">
+                              <BookOpen className="w-3 h-3" /> Subjects Teaching
+                            </p>
+                            <div className="flex gap-1.5 flex-wrap">
                               {teacher.subjects.map((sub) => (
-                                <Badge key={sub} variant="outline" className="text-xs">{sub}</Badge>
+                                <Badge key={sub} variant="secondary" className="text-xs">
+                                  {sub}
+                                </Badge>
                               ))}
                             </div>
                           </div>
                           <div>
-                            <p className="text-xs text-muted-foreground mb-1">Classes</p>
-                            <div className="flex gap-1 flex-wrap">
+                            <p className="text-xs font-medium text-muted-foreground mb-1.5 flex items-center gap-1">
+                              <Users className="w-3 h-3" /> Classes Assigned
+                            </p>
+                            <div className="flex gap-1.5 flex-wrap">
                               {teacher.classes.map((cls) => (
-                                <Badge key={cls} className="text-xs bg-primary/10 text-primary hover:bg-primary/20">{cls}</Badge>
+                                <Badge key={cls} className="text-xs bg-primary/10 text-primary hover:bg-primary/20 border-primary/20">
+                                  Class {cls}
+                                </Badge>
                               ))}
                             </div>
                           </div>
                         </div>
                       </div>
                       {isAdmin && (
-                        <Button variant="ghost" size="sm">
+                        <Button variant="ghost" size="icon">
                           <Edit className="w-4 h-4" />
                         </Button>
                       )}
