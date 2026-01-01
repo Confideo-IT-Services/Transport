@@ -5,32 +5,23 @@ interface StatCardProps {
   title: string;
   value: string | number;
   icon: LucideIcon;
-  trend?: {
-    value: number;
-    isPositive: boolean;
-  };
-  variant?: "default" | "primary" | "success" | "warning" | "info";
+  trend?: string;
+  trendUp?: boolean;
+  iconColor?: string;
+  iconBg?: string;
 }
 
-const variantStyles = {
-  default: "bg-card",
-  primary: "bg-primary/5 border-primary/20",
-  success: "bg-success/5 border-success/20",
-  warning: "bg-warning/5 border-warning/20",
-  info: "bg-info/5 border-info/20",
-};
-
-const iconStyles = {
-  default: "bg-muted text-muted-foreground",
-  primary: "bg-primary/10 text-primary",
-  success: "bg-success/10 text-success",
-  warning: "bg-warning/10 text-warning",
-  info: "bg-info/10 text-info",
-};
-
-export function StatCard({ title, value, icon: Icon, trend, variant = "default" }: StatCardProps) {
+export function StatCard({ 
+  title, 
+  value, 
+  icon: Icon, 
+  trend, 
+  trendUp = true,
+  iconColor = "text-muted-foreground",
+  iconBg = "bg-muted"
+}: StatCardProps) {
   return (
-    <div className={cn("stat-card animate-fade-in", variantStyles[variant])}>
+    <div className="stat-card animate-fade-in">
       <div className="flex items-start justify-between">
         <div>
           <p className="text-sm font-medium text-muted-foreground">{title}</p>
@@ -38,15 +29,15 @@ export function StatCard({ title, value, icon: Icon, trend, variant = "default" 
           {trend && (
             <p className={cn(
               "text-sm mt-2 flex items-center gap-1",
-              trend.isPositive ? "text-success" : "text-destructive"
+              trendUp ? "text-secondary" : "text-muted-foreground"
             )}>
-              <span>{trend.isPositive ? "↑" : "↓"}</span>
-              <span>{Math.abs(trend.value)}% from last month</span>
+              {trendUp && <span>↑</span>}
+              <span>{trend}</span>
             </p>
           )}
         </div>
-        <div className={cn("w-12 h-12 rounded-xl flex items-center justify-center", iconStyles[variant])}>
-          <Icon className="w-6 h-6" />
+        <div className={cn("w-12 h-12 rounded-xl flex items-center justify-center", iconBg)}>
+          <Icon className={cn("w-6 h-6", iconColor)} />
         </div>
       </div>
     </div>

@@ -55,24 +55,35 @@ export default function SuperAdminDashboard() {
             title="Total Schools"
             value={35}
             icon={Building2}
-            trend={{ value: 25, isPositive: true }}
+            trend="+25% growth"
+            trendUp={true}
+            iconColor="text-primary"
+            iconBg="bg-primary/10"
           />
           <StatCard
             title="Total Students"
             value="12,450"
             icon={GraduationCap}
-            trend={{ value: 12, isPositive: true }}
+            trend="+12% growth"
+            trendUp={true}
+            iconColor="text-secondary"
+            iconBg="bg-secondary/10"
           />
           <StatCard
             title="Total Teachers"
             value="856"
             icon={Users}
-            trend={{ value: 8, isPositive: true }}
+            trend="+8% growth"
+            trendUp={true}
+            iconColor="text-accent"
+            iconBg="bg-accent/10"
           />
           <StatCard
             title="School Admins"
             value={42}
             icon={UserCog}
+            iconColor="text-primary"
+            iconBg="bg-primary/10"
           />
         </div>
 

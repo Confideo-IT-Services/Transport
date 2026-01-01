@@ -44,28 +44,36 @@ export default function AdminDashboard() {
             title="Total Classes"
             value={24}
             icon={School}
-            variant="primary"
-            trend={{ value: 8, isPositive: true }}
+            trend="+8% from last month"
+            trendUp={true}
+            iconColor="text-primary"
+            iconBg="bg-primary/10"
           />
           <StatCard
             title="Total Students"
             value={1248}
             icon={GraduationCap}
-            variant="success"
-            trend={{ value: 12, isPositive: true }}
+            trend="+12% from last month"
+            trendUp={true}
+            iconColor="text-secondary"
+            iconBg="bg-secondary/10"
           />
           <StatCard
             title="Total Teachers"
             value={86}
             icon={Users}
-            variant="info"
-            trend={{ value: 5, isPositive: true }}
+            trend="+5% from last month"
+            trendUp={true}
+            iconColor="text-primary"
+            iconBg="bg-primary/10"
           />
           <StatCard
             title="Pending Approvals"
             value={12}
             icon={UserCheck}
-            variant="warning"
+            trend="2 new today"
+            iconColor="text-accent"
+            iconBg="bg-accent/10"
           />
         </div>
 
