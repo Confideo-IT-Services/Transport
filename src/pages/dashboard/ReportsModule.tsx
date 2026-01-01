@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { 
   BarChart, 
   Bar, 
@@ -56,6 +57,8 @@ import {
   Pencil,
   X,
   Save,
+  ChevronDown,
+  FileText,
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 
@@ -216,6 +219,7 @@ export default function ReportsModule() {
     selectedSubjects: [] as number[],
   });
   const [studentSubjectMarks, setStudentSubjectMarks] = useState<{ [studentId: number]: { [subjectId: number]: number } }>({});
+  const [openTests, setOpenTests] = useState<number[]>([1]); // Track which tests are expanded
 
   const students = initialStudents;
 
@@ -439,8 +443,8 @@ export default function ReportsModule() {
               Analytics
             </TabsTrigger>
             <TabsTrigger value="unit-tests" className="flex items-center gap-2">
-              <BookOpen className="w-4 h-4" />
-              Unit Tests
+              <FileText className="w-4 h-4" />
+              Student Reports
             </TabsTrigger>
           </TabsList>
 
@@ -587,11 +591,11 @@ export default function ReportsModule() {
             </div>
           </TabsContent>
 
-          {/* Unit Tests Tab */}
+          {/* Student Reports Tab */}
           <TabsContent value="unit-tests" className="space-y-6">
             <div className="flex items-center justify-between">
               <div>
-                <h2 className="text-lg font-semibold">Unit Tests</h2>
+                <h2 className="text-lg font-semibold">Student Reports</h2>
                 <p className="text-sm text-muted-foreground">Create unit tests with multiple subjects, add marks, and send to parents</p>
               </div>
               <Dialog open={showAddUnitTest} onOpenChange={setShowAddUnitTest}>
@@ -640,107 +644,135 @@ export default function ReportsModule() {
               </Dialog>
             </div>
 
-            {/* Unit Tests List */}
-            <div className="grid gap-4">
-              {unitTests.map((test) => (
-                <Card key={test.id}>
-                  <CardHeader className="pb-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-lg bg-blue-100 flex items-center justify-center">
-                          <BookOpen className="w-5 h-5 text-blue-600" />
-                        </div>
-                        <div>
-                          {editingTestId === test.id ? (
+            {/* Unit Tests List - Collapsible */}
+            <div className="grid gap-3">
+              {unitTests.map((test) => {
+                const isOpen = openTests.includes(test.id);
+                return (
+                  <Collapsible
+                    key={test.id}
+                    open={isOpen}
+                    onOpenChange={(open) => {
+                      setOpenTests(prev => open 
+                        ? [...prev, test.id] 
+                        : prev.filter(id => id !== test.id)
+                      );
+                    }}
+                  >
+                    <Card>
+                      <CollapsibleTrigger asChild>
+                        <CardHeader className="pb-3 cursor-pointer hover:bg-muted/50 transition-colors">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-10 rounded-lg bg-blue-100 flex items-center justify-center">
+                                <BookOpen className="w-5 h-5 text-blue-600" />
+                              </div>
+                              <div>
+                                {editingTestId === test.id ? (
+                                  <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                                    <Input value={editingTestName} onChange={(e) => setEditingTestName(e.target.value)} className="h-8 w-40" />
+                                    <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleRenameUnitTest(test.id)}><Save className="w-4 h-4" /></Button>
+                                    <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setEditingTestId(null)}><X className="w-4 h-4" /></Button>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center gap-2">
+                                    <CardTitle className="text-base">{test.name}</CardTitle>
+                                    <Button size="icon" variant="ghost" className="h-6 w-6" onClick={(e) => { e.stopPropagation(); setEditingTestId(test.id); setEditingTestName(test.name); }}>
+                                      <Pencil className="w-3 h-3" />
+                                    </Button>
+                                  </div>
+                                )}
+                                <p className="text-sm text-muted-foreground">{new Date(test.date).toLocaleDateString()} • {test.subjects.length} subjects</p>
+                              </div>
+                            </div>
                             <div className="flex items-center gap-2">
-                              <Input value={editingTestName} onChange={(e) => setEditingTestName(e.target.value)} className="h-8 w-40" />
-                              <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleRenameUnitTest(test.id)}><Save className="w-4 h-4" /></Button>
-                              <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setEditingTestId(null)}><X className="w-4 h-4" /></Button>
+                              <Badge variant="outline">{test.results.length} students</Badge>
+                              <ChevronDown className={`w-5 h-5 text-muted-foreground transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+                            </div>
+                          </div>
+                        </CardHeader>
+                      </CollapsibleTrigger>
+                      
+                      <CollapsibleContent>
+                        <CardContent className="pt-0">
+                          {/* Actions */}
+                          <div className="flex items-center gap-2 mb-4">
+                            <Button variant="outline" size="sm" onClick={() => { setSelectedUnitTest(test); setShowAddMarks(true); }}>
+                              <Plus className="w-4 h-4 mr-1" />Add Marks
+                            </Button>
+                            {test.results.length > 0 && (
+                              <Button size="sm" onClick={() => sendAllUnitTestResults(test)}><Send className="w-4 h-4 mr-1" />Send All to Parents</Button>
+                            )}
+                          </div>
+
+                          {/* Subjects */}
+                          <div className="mb-4">
+                            <Label className="text-sm text-muted-foreground mb-2 block">Subjects:</Label>
+                            <div className="flex flex-wrap gap-2">
+                              {test.subjects.map(subject => (
+                                <Badge key={subject.id} variant="secondary">{subject.name} ({subject.maxMarks})</Badge>
+                              ))}
+                              <Select onValueChange={(value) => handleAddSubjectToTest(test.id, parseInt(value))}>
+                                <SelectTrigger className="w-32 h-7"><SelectValue placeholder="+ Add" /></SelectTrigger>
+                                <SelectContent>
+                                  {availableSubjects.filter(s => !test.subjects.find(ts => ts.id === s.id)).map(subject => (
+                                    <SelectItem key={subject.id} value={subject.id.toString()}>{subject.name}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          </div>
+
+                          {/* Results Table */}
+                          {test.results.length > 0 ? (
+                            <div className="border rounded-lg overflow-hidden">
+                              <Table>
+                                <TableHeader>
+                                  <TableRow>
+                                    <TableHead>Student</TableHead>
+                                    {test.subjects.map(s => (<TableHead key={s.id} className="text-center">{s.name}</TableHead>))}
+                                    <TableHead className="text-center">Total</TableHead>
+                                    <TableHead className="text-center">Grade</TableHead>
+                                    <TableHead className="text-center">Action</TableHead>
+                                  </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                  {test.results.map(result => {
+                                    const student = getStudentById(result.studentId);
+                                    if (!student) return null;
+                                    return (
+                                      <TableRow key={result.studentId}>
+                                        <TableCell className="font-medium">{student.name}</TableCell>
+                                        {test.subjects.map(s => {
+                                          const subRes = result.subjects.find(sr => sr.subjectId === s.id);
+                                          return (<TableCell key={s.id} className="text-center">{subRes ? `${subRes.marks}/${subRes.maxMarks}` : "-"}</TableCell>);
+                                        })}
+                                        <TableCell className="text-center font-medium">{result.totalMarks}/{result.totalMaxMarks} ({result.percentage.toFixed(1)}%)</TableCell>
+                                        <TableCell className="text-center">
+                                          <Badge className={result.overallGrade.startsWith("A") ? "bg-green-100 text-green-700" : "bg-yellow-100 text-yellow-700"}>{result.overallGrade}</Badge>
+                                        </TableCell>
+                                        <TableCell className="text-center">
+                                          <Button variant="ghost" size="sm" onClick={() => sendUnitTestResultToParent(test, result.studentId)}>
+                                            {result.sentToParent ? <CheckCircle2 className="w-4 h-4 text-green-600" /> : <Send className="w-4 h-4" />}
+                                          </Button>
+                                        </TableCell>
+                                      </TableRow>
+                                    );
+                                  })}
+                                </TableBody>
+                              </Table>
                             </div>
                           ) : (
-                            <div className="flex items-center gap-2">
-                              <CardTitle className="text-base">{test.name}</CardTitle>
-                              <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => { setEditingTestId(test.id); setEditingTestName(test.name); }}>
-                                <Pencil className="w-3 h-3" />
-                              </Button>
+                            <div className="text-center py-8 text-muted-foreground border rounded-lg bg-muted/30">
+                              <p>No marks added yet. Click "Add Marks" to enter student scores.</p>
                             </div>
                           )}
-                          <p className="text-sm text-muted-foreground">{new Date(test.date).toLocaleDateString()}</p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Badge variant="outline">{test.results.length} students</Badge>
-                        <Button variant="outline" size="sm" onClick={() => { setSelectedUnitTest(test); setShowAddMarks(true); }}>
-                          <Plus className="w-4 h-4 mr-1" />Add Marks
-                        </Button>
-                        {test.results.length > 0 && (
-                          <Button size="sm" onClick={() => sendAllUnitTestResults(test)}><Send className="w-4 h-4 mr-1" />Send All</Button>
-                        )}
-                      </div>
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    {/* Subjects */}
-                    <div className="mb-4">
-                      <Label className="text-sm text-muted-foreground mb-2 block">Subjects:</Label>
-                      <div className="flex flex-wrap gap-2">
-                        {test.subjects.map(subject => (
-                          <Badge key={subject.id} variant="secondary">{subject.name} ({subject.maxMarks})</Badge>
-                        ))}
-                        <Select onValueChange={(value) => handleAddSubjectToTest(test.id, parseInt(value))}>
-                          <SelectTrigger className="w-32 h-7"><SelectValue placeholder="+ Add" /></SelectTrigger>
-                          <SelectContent>
-                            {availableSubjects.filter(s => !test.subjects.find(ts => ts.id === s.id)).map(subject => (
-                              <SelectItem key={subject.id} value={subject.id.toString()}>{subject.name}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-
-                    {/* Results Table */}
-                    {test.results.length > 0 && (
-                      <div className="border rounded-lg overflow-hidden">
-                        <Table>
-                          <TableHeader>
-                            <TableRow>
-                              <TableHead>Student</TableHead>
-                              {test.subjects.map(s => (<TableHead key={s.id} className="text-center">{s.name}</TableHead>))}
-                              <TableHead className="text-center">Total</TableHead>
-                              <TableHead className="text-center">Grade</TableHead>
-                              <TableHead className="text-center">Action</TableHead>
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {test.results.map(result => {
-                              const student = getStudentById(result.studentId);
-                              if (!student) return null;
-                              return (
-                                <TableRow key={result.studentId}>
-                                  <TableCell className="font-medium">{student.name}</TableCell>
-                                  {test.subjects.map(s => {
-                                    const subRes = result.subjects.find(sr => sr.subjectId === s.id);
-                                    return (<TableCell key={s.id} className="text-center">{subRes ? `${subRes.marks}/${subRes.maxMarks}` : "-"}</TableCell>);
-                                  })}
-                                  <TableCell className="text-center font-medium">{result.totalMarks}/{result.totalMaxMarks} ({result.percentage.toFixed(1)}%)</TableCell>
-                                  <TableCell className="text-center">
-                                    <Badge className={result.overallGrade.startsWith("A") ? "bg-green-100 text-green-700" : "bg-yellow-100 text-yellow-700"}>{result.overallGrade}</Badge>
-                                  </TableCell>
-                                  <TableCell className="text-center">
-                                    <Button variant="ghost" size="sm" onClick={() => sendUnitTestResultToParent(test, result.studentId)}>
-                                      {result.sentToParent ? <CheckCircle2 className="w-4 h-4 text-green-600" /> : <Send className="w-4 h-4" />}
-                                    </Button>
-                                  </TableCell>
-                                </TableRow>
-                              );
-                            })}
-                          </TableBody>
-                        </Table>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              ))}
+                        </CardContent>
+                      </CollapsibleContent>
+                    </Card>
+                  </Collapsible>
+                );
+              })}
             </div>
           </TabsContent>
         </Tabs>
