@@ -2,13 +2,16 @@ import { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface QuickActionProps {
-  title: string;
-  description: string;
+  title?: string;
+  label?: string;
+  description?: string;
   icon: LucideIcon;
   onClick?: () => void;
 }
 
-export function QuickAction({ title, description, icon: Icon, onClick }: QuickActionProps) {
+export function QuickAction({ title, label, description, icon: Icon, onClick }: QuickActionProps) {
+  const displayTitle = title || label;
+  
   return (
     <Button
       variant="outline"
@@ -19,8 +22,8 @@ export function QuickAction({ title, description, icon: Icon, onClick }: QuickAc
         <Icon className="w-5 h-5 text-primary" />
       </div>
       <div className="text-left">
-        <p className="font-medium text-foreground">{title}</p>
-        <p className="text-xs text-muted-foreground">{description}</p>
+        <p className="font-medium text-foreground">{displayTitle}</p>
+        {description && <p className="text-xs text-muted-foreground">{description}</p>}
       </div>
     </Button>
   );

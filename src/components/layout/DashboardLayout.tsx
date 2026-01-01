@@ -4,7 +4,7 @@ import { Header } from "./Header";
 
 interface DashboardLayoutProps {
   children: ReactNode;
-  role: "admin" | "teacher";
+  role: "admin" | "teacher" | "superadmin";
   userName: string;
   onLogout: () => void;
 }
