@@ -5,14 +5,26 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Send, Bell, AlertTriangle, Clock } from "lucide-react";
+import { Send, Bell, AlertTriangle, Clock, Users, User } from "lucide-react";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Checkbox } from "@/components/ui/checkbox";
 
 const recentNotifications = [
-  { id: 1, title: "Field Trip Permission", priority: "normal", time: "2 hours ago" },
-  { id: 2, title: "Parent Meeting Reminder", priority: "urgent", time: "1 day ago" },
-  { id: 3, title: "Homework Deadline Extended", priority: "normal", time: "2 days ago" },
-  { id: 4, title: "Emergency School Closure", priority: "urgent", time: "3 days ago" },
+  { id: 1, title: "Field Trip Permission", priority: "normal", time: "2 hours ago", recipients: "All Parents" },
+  { id: 2, title: "Parent Meeting Reminder", priority: "urgent", time: "1 day ago", recipients: "All Parents" },
+  { id: 3, title: "Homework Deadline Extended", priority: "normal", time: "2 days ago", recipients: "Rahul S., Priya M." },
+  { id: 4, title: "Emergency School Closure", priority: "urgent", time: "3 days ago", recipients: "All Parents" },
+];
+
+const students = [
+  { id: 1, name: "Rahul Sharma", rollNo: "01" },
+  { id: 2, name: "Priya Mehta", rollNo: "02" },
+  { id: 3, name: "Amit Kumar", rollNo: "03" },
+  { id: 4, name: "Sneha Patel", rollNo: "04" },
+  { id: 5, name: "Vikram Singh", rollNo: "05" },
+  { id: 6, name: "Ananya Das", rollNo: "06" },
+  { id: 7, name: "Rohan Gupta", rollNo: "07" },
+  { id: 8, name: "Kavya Nair", rollNo: "08" },
 ];
 
 export default function TeacherNotifications() {
@@ -20,9 +32,27 @@ export default function TeacherNotifications() {
   const [title, setTitle] = useState("");
   const [message, setMessage] = useState("");
   const [priority, setPriority] = useState("normal");
+  const [recipientType, setRecipientType] = useState("all");
+  const [selectedStudents, setSelectedStudents] = useState<number[]>([]);
 
   const handleLogout = () => {
     navigate("/");
+  };
+
+  const handleStudentToggle = (studentId: number) => {
+    setSelectedStudents(prev =>
+      prev.includes(studentId)
+        ? prev.filter(id => id !== studentId)
+        : [...prev, studentId]
+    );
+  };
+
+  const handleSelectAll = () => {
+    if (selectedStudents.length === students.length) {
+      setSelectedStudents([]);
+    } else {
+      setSelectedStudents(students.map(s => s.id));
+    }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -71,6 +101,72 @@ export default function TeacherNotifications() {
                 />
               </div>
 
+              {/* Recipients */}
+              <div className="space-y-3">
+                <Label>Send To</Label>
+                <RadioGroup value={recipientType} onValueChange={setRecipientType} className="flex gap-4">
+                  <label className="flex items-center gap-3 p-4 border border-border rounded-lg cursor-pointer hover:bg-muted/50 transition-colors flex-1">
+                    <RadioGroupItem value="all" />
+                    <div className="flex items-center gap-2">
+                      <Users className="w-4 h-4 text-muted-foreground" />
+                      <div>
+                        <p className="font-medium">All Parents</p>
+                        <p className="text-xs text-muted-foreground">Send to entire class</p>
+                      </div>
+                    </div>
+                  </label>
+                  <label className="flex items-center gap-3 p-4 border border-border rounded-lg cursor-pointer hover:bg-muted/50 transition-colors flex-1">
+                    <RadioGroupItem value="selected" />
+                    <div className="flex items-center gap-2">
+                      <User className="w-4 h-4 text-muted-foreground" />
+                      <div>
+                        <p className="font-medium">Select Students</p>
+                        <p className="text-xs text-muted-foreground">Choose specific students</p>
+                      </div>
+                    </div>
+                  </label>
+                </RadioGroup>
+              </div>
+
+              {/* Student Selection */}
+              {recipientType === "selected" && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <Label>Select Students</Label>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleSelectAll}
+                      className="text-xs"
+                    >
+                      {selectedStudents.length === students.length ? "Deselect All" : "Select All"}
+                    </Button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto border border-border rounded-lg p-3">
+                    {students.map((student) => (
+                      <label
+                        key={student.id}
+                        className="flex items-center gap-2 p-2 rounded-md hover:bg-muted/50 cursor-pointer transition-colors"
+                      >
+                        <Checkbox
+                          checked={selectedStudents.includes(student.id)}
+                          onCheckedChange={() => handleStudentToggle(student.id)}
+                        />
+                        <span className="text-sm">
+                          {student.rollNo}. {student.name}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                  {selectedStudents.length > 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      {selectedStudents.length} student(s) selected
+                    </p>
+                  )}
+                </div>
+              )}
+
               {/* Priority */}
               <div className="space-y-3">
                 <Label>Priority</Label>
@@ -98,9 +194,9 @@ export default function TeacherNotifications() {
                 </RadioGroup>
               </div>
 
-              <Button type="submit" className="w-full sm:w-auto">
+              <Button type="submit" className="w-full sm:w-auto" disabled={recipientType === "selected" && selectedStudents.length === 0}>
                 <Send className="w-4 h-4 mr-2" />
-                Send to Parents
+                {recipientType === "all" ? "Send to All Parents" : `Send to ${selectedStudents.length} Parent(s)`}
               </Button>
             </form>
           </div>
@@ -126,6 +222,7 @@ export default function TeacherNotifications() {
                     )}
                     <div className="flex-1">
                       <h4 className="font-medium text-foreground">{notification.title}</h4>
+                      <p className="text-xs text-muted-foreground mt-0.5">To: {notification.recipients}</p>
                       <div className="flex items-center gap-2 mt-1">
                         <span className={`badge ${notification.priority === "urgent" ? "badge-warning" : "badge-info"}`}>
                           {notification.priority}
