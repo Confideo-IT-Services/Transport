@@ -2,8 +2,8 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Button } from "@/components/ui/button";
-import { Calendar, Check, X, Clock, Save } from "lucide-react";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Calendar as CalendarIcon, Check, X, Clock, Save, Search } from "lucide-react";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   Select,
   SelectContent,
@@ -13,6 +13,14 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import { Calendar } from "@/components/ui/calendar";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { format } from "date-fns";
+import { cn } from "@/lib/utils";
 
 type AttendanceStatus = "present" | "absent" | "leave";
 
@@ -43,10 +51,30 @@ const attendanceHistory = [
   { date: "Week 4", present: 41, absent: 4 },
 ];
 
+// Historical attendance data by date
+const historicalData: Record<string, { id: number; name: string; rollNo: string; status: AttendanceStatus }[]> = {
+  "2024-01-15": [
+    { id: 1, name: "Alex Johnson", rollNo: "01", status: "present" },
+    { id: 2, name: "Emma Williams", rollNo: "02", status: "absent" },
+    { id: 3, name: "Noah Brown", rollNo: "03", status: "present" },
+    { id: 4, name: "Olivia Davis", rollNo: "04", status: "present" },
+    { id: 5, name: "Liam Wilson", rollNo: "05", status: "leave" },
+  ],
+  "2024-01-16": [
+    { id: 1, name: "Alex Johnson", rollNo: "01", status: "present" },
+    { id: 2, name: "Emma Williams", rollNo: "02", status: "present" },
+    { id: 3, name: "Noah Brown", rollNo: "03", status: "absent" },
+    { id: 4, name: "Olivia Davis", rollNo: "04", status: "present" },
+    { id: 5, name: "Liam Wilson", rollNo: "05", status: "present" },
+  ],
+};
+
 export default function Attendance() {
   const navigate = useNavigate();
   const [students, setStudents] = useState<Student[]>(initialStudents);
   const [historyPeriod, setHistoryPeriod] = useState("1month");
+  const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
+  const [historyStudents, setHistoryStudents] = useState<typeof initialStudents | null>(null);
 
   const handleLogout = () => {
     navigate("/");
@@ -58,11 +86,39 @@ export default function Attendance() {
     );
   };
 
+  const handleDateSelect = (date: Date | undefined) => {
+    setSelectedDate(date);
+    if (date) {
+      const dateKey = format(date, "yyyy-MM-dd");
+      // In real app, fetch from backend
+      const data = historicalData[dateKey];
+      if (data) {
+        setHistoryStudents(data);
+      } else {
+        // Generate sample data for demo
+        setHistoryStudents(
+          initialStudents.map(s => ({
+            ...s,
+            status: ["present", "absent", "leave"][Math.floor(Math.random() * 3)] as AttendanceStatus
+          }))
+        );
+      }
+    } else {
+      setHistoryStudents(null);
+    }
+  };
+
   const stats = {
     present: students.filter((s) => s.status === "present").length,
     absent: students.filter((s) => s.status === "absent").length,
     leave: students.filter((s) => s.status === "leave").length,
   };
+
+  const historyStats = historyStudents ? {
+    present: historyStudents.filter((s) => s.status === "present").length,
+    absent: historyStudents.filter((s) => s.status === "absent").length,
+    leave: historyStudents.filter((s) => s.status === "leave").length,
+  } : null;
 
   return (
     <DashboardLayout role="teacher" userName="Sarah Johnson" onLogout={handleLogout}>
@@ -74,7 +130,7 @@ export default function Attendance() {
             <p className="text-muted-foreground mt-1">Mark and view attendance for Class 3A.</p>
           </div>
           <div className="flex items-center gap-2 text-muted-foreground">
-            <Calendar className="w-5 h-5" />
+            <CalendarIcon className="w-5 h-5" />
             <span className="font-medium">{new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}</span>
           </div>
         </div>
@@ -188,17 +244,119 @@ export default function Attendance() {
           </TabsContent>
 
           <TabsContent value="history" className="mt-6 space-y-6">
-            {/* Period Filter */}
-            <Select value={historyPeriod} onValueChange={setHistoryPeriod}>
-              <SelectTrigger className="w-48">
-                <SelectValue placeholder="Select period" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="1month">Last 1 Month</SelectItem>
-                <SelectItem value="2months">Last 2 Months</SelectItem>
-                <SelectItem value="3months">Last 3 Months</SelectItem>
-              </SelectContent>
-            </Select>
+            {/* Filters */}
+            <div className="flex flex-wrap gap-4">
+              <Select value={historyPeriod} onValueChange={setHistoryPeriod}>
+                <SelectTrigger className="w-48">
+                  <SelectValue placeholder="Select period" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="1month">Last 1 Month</SelectItem>
+                  <SelectItem value="2months">Last 2 Months</SelectItem>
+                  <SelectItem value="3months">Last 3 Months</SelectItem>
+                </SelectContent>
+              </Select>
+
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    className={cn(
+                      "w-[240px] justify-start text-left font-normal",
+                      !selectedDate && "text-muted-foreground"
+                    )}
+                  >
+                    <Search className="mr-2 h-4 w-4" />
+                    {selectedDate ? format(selectedDate, "PPP") : <span>Search by date</span>}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                  <Calendar
+                    mode="single"
+                    selected={selectedDate}
+                    onSelect={handleDateSelect}
+                    initialFocus
+                    className={cn("p-3 pointer-events-auto")}
+                  />
+                </PopoverContent>
+              </Popover>
+
+              {selectedDate && (
+                <Button variant="ghost" size="sm" onClick={() => { setSelectedDate(undefined); setHistoryStudents(null); }}>
+                  Clear Date
+                </Button>
+              )}
+            </div>
+
+            {/* Date-specific Attendance */}
+            {selectedDate && historyStudents && (
+              <div className="bg-card rounded-xl border border-border p-6 shadow-card">
+                <h3 className="section-title flex items-center gap-2">
+                  <CalendarIcon className="w-5 h-5 text-primary" />
+                  Attendance for {format(selectedDate, "MMMM d, yyyy")}
+                </h3>
+
+                {/* Stats for selected date */}
+                <div className="grid grid-cols-3 gap-4 mt-4 mb-6">
+                  <div className="bg-success/10 rounded-lg p-3 text-center border border-success/20">
+                    <p className="text-xl font-bold text-success">{historyStats?.present || 0}</p>
+                    <p className="text-xs text-muted-foreground">Present</p>
+                  </div>
+                  <div className="bg-destructive/10 rounded-lg p-3 text-center border border-destructive/20">
+                    <p className="text-xl font-bold text-destructive">{historyStats?.absent || 0}</p>
+                    <p className="text-xs text-muted-foreground">Absent</p>
+                  </div>
+                  <div className="bg-warning/10 rounded-lg p-3 text-center border border-warning/20">
+                    <p className="text-xl font-bold text-warning">{historyStats?.leave || 0}</p>
+                    <p className="text-xs text-muted-foreground">Leave</p>
+                  </div>
+                </div>
+
+                {/* Student list for selected date */}
+                <div className="data-table">
+                  <table className="w-full">
+                    <thead>
+                      <tr>
+                        <th>Roll No</th>
+                        <th>Student</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {historyStudents.map((student) => (
+                        <tr key={student.id}>
+                          <td>
+                            <span className="badge badge-info">{student.rollNo}</span>
+                          </td>
+                          <td>
+                            <div className="flex items-center gap-3">
+                              <Avatar className="w-8 h-8">
+                                <AvatarFallback className="bg-primary/10 text-primary text-sm">
+                                  {student.name.split(" ").map(n => n[0]).join("")}
+                                </AvatarFallback>
+                              </Avatar>
+                              <span className="font-medium">{student.name}</span>
+                            </div>
+                          </td>
+                          <td>
+                            <span className={`badge ${
+                              student.status === "present" ? "badge-success" : 
+                              student.status === "absent" ? "badge-destructive" : 
+                              "badge-warning"
+                            }`}>
+                              {student.status === "present" && <Check className="w-3 h-3 mr-1" />}
+                              {student.status === "absent" && <X className="w-3 h-3 mr-1" />}
+                              {student.status === "leave" && <Clock className="w-3 h-3 mr-1" />}
+                              {student.status}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
 
             {/* Chart */}
             <div className="bg-card rounded-xl border border-border p-6 shadow-card">
