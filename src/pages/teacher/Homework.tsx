@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Send, BookOpen, Calendar, Paperclip, Clock, CheckCircle } from "lucide-react";
+import { Send, BookOpen, Calendar, Paperclip, Clock, CheckCircle, Plus } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -14,6 +14,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { toast } from "sonner";
 
 const sentHomework = [
   { id: 1, subject: "Mathematics", title: "Algebra Worksheet", dueDate: "2024-01-20", status: "active", submissions: 38 },
@@ -23,15 +32,42 @@ const sentHomework = [
   { id: 5, subject: "Mathematics", title: "Geometry Problems", dueDate: "2024-01-25", status: "active", submissions: 12 },
 ];
 
+const defaultSubjects = [
+  { id: "mathematics", name: "Mathematics" },
+  { id: "english", name: "English" },
+  { id: "science", name: "Science" },
+  { id: "history", name: "History" },
+  { id: "geography", name: "Geography" },
+];
+
 export default function Homework() {
   const navigate = useNavigate();
   const [subject, setSubject] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [dueDate, setDueDate] = useState("");
+  const [subjects, setSubjects] = useState(defaultSubjects);
+  const [newSubjectName, setNewSubjectName] = useState("");
+  const [isAddSubjectOpen, setIsAddSubjectOpen] = useState(false);
 
   const handleLogout = () => {
     navigate("/");
+  };
+
+  const handleAddSubject = () => {
+    if (!newSubjectName.trim()) {
+      toast.error("Please enter a subject name");
+      return;
+    }
+    const subjectId = newSubjectName.toLowerCase().replace(/\s+/g, "-");
+    if (subjects.some(s => s.id === subjectId)) {
+      toast.error("Subject already exists");
+      return;
+    }
+    setSubjects([...subjects, { id: subjectId, name: newSubjectName.trim() }]);
+    setNewSubjectName("");
+    setIsAddSubjectOpen(false);
+    toast.success(`"${newSubjectName.trim()}" added to subjects`);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -65,18 +101,54 @@ export default function Homework() {
                 {/* Subject */}
                 <div className="space-y-2">
                   <Label htmlFor="subject">Subject</Label>
-                  <Select value={subject} onValueChange={setSubject}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select subject" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="mathematics">Mathematics</SelectItem>
-                      <SelectItem value="english">English</SelectItem>
-                      <SelectItem value="science">Science</SelectItem>
-                      <SelectItem value="history">History</SelectItem>
-                      <SelectItem value="geography">Geography</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <div className="flex gap-2">
+                    <Select value={subject} onValueChange={setSubject}>
+                      <SelectTrigger className="flex-1">
+                        <SelectValue placeholder="Select subject" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {subjects.map((subj) => (
+                          <SelectItem key={subj.id} value={subj.id}>
+                            {subj.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Dialog open={isAddSubjectOpen} onOpenChange={setIsAddSubjectOpen}>
+                      <DialogTrigger asChild>
+                        <Button type="button" variant="outline" size="icon">
+                          <Plus className="w-4 h-4" />
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent>
+                        <DialogHeader>
+                          <DialogTitle>Add New Subject</DialogTitle>
+                          <DialogDescription>
+                            Add a new subject to assign homework for.
+                          </DialogDescription>
+                        </DialogHeader>
+                        <div className="space-y-4 pt-4">
+                          <div className="space-y-2">
+                            <Label htmlFor="newSubject">Subject Name</Label>
+                            <Input
+                              id="newSubject"
+                              placeholder="e.g., Computer Science"
+                              value={newSubjectName}
+                              onChange={(e) => setNewSubjectName(e.target.value)}
+                            />
+                          </div>
+                          <div className="flex justify-end gap-2">
+                            <Button type="button" variant="outline" onClick={() => setIsAddSubjectOpen(false)}>
+                              Cancel
+                            </Button>
+                            <Button type="button" onClick={handleAddSubject}>
+                              Add Subject
+                            </Button>
+                          </div>
+                        </div>
+                      </DialogContent>
+                    </Dialog>
+                  </div>
                 </div>
 
                 {/* Title */}
