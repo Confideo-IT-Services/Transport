@@ -13,6 +13,7 @@ import {
   User,
   IndianRupee,
   School,
+  Users,
 } from "lucide-react";
 
 interface NavItem {
@@ -37,6 +38,12 @@ const navItems: NavItem[] = [
     roles: ["admin"]
   },
   { 
+    label: "Teachers", 
+    href: "/dashboard/teachers", 
+    icon: Users,
+    roles: ["admin"]
+  },
+  { 
     label: "Timetable", 
     href: "/dashboard/timetable", 
     icon: Calendar,
@@ -48,6 +55,12 @@ const navItems: NavItem[] = [
     href: "/dashboard/attendance", 
     icon: ClipboardCheck,
     roles: ["admin", "teacher"]
+  },
+  { 
+    label: "Homework", 
+    href: "/dashboard/homework", 
+    icon: BookOpen,
+    roles: ["teacher"]
   },
   { 
     label: "Fees", 
