@@ -36,12 +36,53 @@ const academicYears = [
   { id: 2, name: "2023-24", status: "completed", startDate: "Apr 2023", endDate: "Mar 2024" },
 ];
 
-const classes = [
-  { id: 1, name: "Class 1", sections: ["A", "B"], students: 85, classTeacher: "Mrs. Sharma" },
-  { id: 2, name: "Class 2", sections: ["A", "B", "C"], students: 126, classTeacher: "Mr. Singh" },
-  { id: 3, name: "Class 3", sections: ["A", "B"], students: 90, classTeacher: "Mrs. Gupta" },
-  { id: 4, name: "Class 4", sections: ["A", "B"], students: 88, classTeacher: "Mr. Kumar" },
-  { id: 5, name: "Class 5", sections: ["A", "B"], students: 92, classTeacher: "Mrs. Patel" },
+const classesData = [
+  { 
+    id: 1, 
+    name: "Class 1", 
+    classTeacher: "Mrs. Sharma",
+    sections: [
+      { name: "A", students: 42, classTeacher: "Mrs. Sharma" },
+      { name: "B", students: 43, classTeacher: "Mrs. Verma" },
+    ]
+  },
+  { 
+    id: 2, 
+    name: "Class 2", 
+    classTeacher: "Mr. Singh",
+    sections: [
+      { name: "A", students: 40, classTeacher: "Mr. Singh" },
+      { name: "B", students: 44, classTeacher: "Mrs. Rao" },
+      { name: "C", students: 42, classTeacher: "Mr. Das" },
+    ]
+  },
+  { 
+    id: 3, 
+    name: "Class 3", 
+    classTeacher: "Mrs. Gupta",
+    sections: [
+      { name: "A", students: 45, classTeacher: "Mrs. Gupta" },
+      { name: "B", students: 45, classTeacher: "Mr. Joshi" },
+    ]
+  },
+  { 
+    id: 4, 
+    name: "Class 4", 
+    classTeacher: "Mr. Kumar",
+    sections: [
+      { name: "A", students: 44, classTeacher: "Mr. Kumar" },
+      { name: "B", students: 44, classTeacher: "Mrs. Nair" },
+    ]
+  },
+  { 
+    id: 5, 
+    name: "Class 5", 
+    classTeacher: "Mrs. Patel",
+    sections: [
+      { name: "A", students: 46, classTeacher: "Mrs. Patel" },
+      { name: "B", students: 46, classTeacher: "Mr. Reddy" },
+    ]
+  },
 ];
 
 const subjects = [
@@ -66,6 +107,7 @@ export default function AcademicSetup() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
   const [isAddClassOpen, setIsAddClassOpen] = useState(false);
+  const [selectedClass, setSelectedClass] = useState<string>("");
 
   return (
     <UnifiedLayout>
@@ -176,47 +218,132 @@ export default function AcademicSetup() {
                 </Dialog>
               )}
             </div>
+
+            {/* Class Selector with Section Details */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg">View Class Details</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Select Class</Label>
+                  <Select value={selectedClass} onValueChange={setSelectedClass}>
+                    <SelectTrigger className="w-full md:w-64">
+                      <SelectValue placeholder="Choose a class to view details" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-card">
+                      {classesData.map((cls) => (
+                        <SelectItem key={cls.id} value={cls.name}>{cls.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {selectedClass && (
+                  <div className="mt-4 animate-fade-in">
+                    {(() => {
+                      const cls = classesData.find(c => c.name === selectedClass);
+                      if (!cls) return null;
+                      const totalStudents = cls.sections.reduce((sum, s) => sum + s.students, 0);
+                      
+                      return (
+                        <div className="space-y-4">
+                          <div className="flex items-center gap-4 p-4 bg-primary/5 rounded-lg border border-primary/20">
+                            <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center">
+                              <BookOpen className="w-6 h-6 text-primary" />
+                            </div>
+                            <div className="flex-1">
+                              <h3 className="font-semibold text-lg">{cls.name}</h3>
+                              <p className="text-sm text-muted-foreground">Class Teacher: {cls.classTeacher}</p>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-2xl font-bold text-primary">{cls.sections.length}</p>
+                              <p className="text-xs text-muted-foreground">Sections</p>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-2xl font-bold text-secondary">{totalStudents}</p>
+                              <p className="text-xs text-muted-foreground">Total Students</p>
+                            </div>
+                          </div>
+
+                          <div>
+                            <h4 className="font-medium mb-3">Section-wise Details</h4>
+                            <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+                              {cls.sections.map((section) => (
+                                <div 
+                                  key={section.name}
+                                  className="p-4 rounded-lg border border-border bg-card hover:bg-muted/30 transition-colors"
+                                >
+                                  <div className="flex items-center justify-between mb-2">
+                                    <Badge variant="outline" className="text-base px-3 py-1">
+                                      Section {section.name}
+                                    </Badge>
+                                    <span className="text-2xl font-bold text-foreground">{section.students}</span>
+                                  </div>
+                                  <p className="text-xs text-muted-foreground">Students</p>
+                                  <div className="mt-3 pt-3 border-t border-border">
+                                    <p className="text-xs text-muted-foreground">Section Teacher</p>
+                                    <p className="text-sm font-medium">{section.classTeacher}</p>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
             
-            <div className="grid gap-4">
-              {classes.map((cls) => (
-                <Card key={cls.id}>
-                  <CardContent className="py-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center">
-                          <BookOpen className="w-6 h-6 text-primary" />
+            {/* All Classes List */}
+            <div className="space-y-4">
+              <h3 className="font-medium">All Classes</h3>
+              <div className="grid gap-4">
+                {classesData.map((cls) => {
+                  const totalStudents = cls.sections.reduce((sum, s) => sum + s.students, 0);
+                  return (
+                    <Card key={cls.id} className="cursor-pointer hover:border-primary/50 transition-colors" onClick={() => setSelectedClass(cls.name)}>
+                      <CardContent className="py-4">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-4">
+                            <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center">
+                              <BookOpen className="w-6 h-6 text-primary" />
+                            </div>
+                            <div>
+                              <h3 className="font-semibold">{cls.name}</h3>
+                              <p className="text-sm text-muted-foreground">
+                                Class Teacher: {cls.classTeacher}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-6">
+                            <div className="text-center">
+                              <p className="text-2xl font-semibold">{cls.sections.length}</p>
+                              <p className="text-xs text-muted-foreground">Sections</p>
+                            </div>
+                            <div className="text-center">
+                              <p className="text-2xl font-semibold">{totalStudents}</p>
+                              <p className="text-xs text-muted-foreground">Students</p>
+                            </div>
+                            <div className="flex gap-2">
+                              {cls.sections.map((sec) => (
+                                <Badge key={sec.name} variant="outline">{sec.name}</Badge>
+                              ))}
+                            </div>
+                            {isAdmin && (
+                              <Button variant="ghost" size="icon">
+                                <ChevronRight className="w-5 h-5" />
+                              </Button>
+                            )}
+                          </div>
                         </div>
-                        <div>
-                          <h3 className="font-semibold">{cls.name}</h3>
-                          <p className="text-sm text-muted-foreground">
-                            Class Teacher: {cls.classTeacher}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-6">
-                        <div className="text-center">
-                          <p className="text-2xl font-semibold">{cls.sections.length}</p>
-                          <p className="text-xs text-muted-foreground">Sections</p>
-                        </div>
-                        <div className="text-center">
-                          <p className="text-2xl font-semibold">{cls.students}</p>
-                          <p className="text-xs text-muted-foreground">Students</p>
-                        </div>
-                        <div className="flex gap-2">
-                          {cls.sections.map((sec) => (
-                            <Badge key={sec} variant="outline">{sec}</Badge>
-                          ))}
-                        </div>
-                        {isAdmin && (
-                          <Button variant="ghost" size="icon">
-                            <ChevronRight className="w-5 h-5" />
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </div>
             </div>
           </TabsContent>
 
