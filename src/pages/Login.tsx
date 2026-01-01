@@ -1,38 +1,50 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { GraduationCap, Mail, Lock, Eye, EyeOff, Shield } from "lucide-react";
+import { GraduationCap, Mail, Lock, Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useAuth } from "@/contexts/AuthContext";
+import { useToast } from "@/hooks/use-toast";
 
 export default function Login() {
   const navigate = useNavigate();
+  const { login } = useAuth();
+  const { toast } = useToast();
   const [showPassword, setShowPassword] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleSuperAdminLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    navigate("/superadmin");
-  };
-
-  const handleAdminLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    navigate("/admin");
-  };
-
-  const handleTeacherLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    navigate("/teacher");
+    setIsLoading(true);
+    
+    try {
+      await login(email, password);
+      toast({
+        title: "Welcome back!",
+        description: "You have successfully logged in.",
+      });
+      navigate("/dashboard");
+    } catch (error) {
+      toast({
+        title: "Login failed",
+        description: "Please check your credentials and try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
       {/* Background decoration */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute -top-40 -right-40 w-80 h-80 bg-primary/5 rounded-full blur-3xl" />
-        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-secondary/5 rounded-full blur-3xl" />
+        <div className="absolute -top-40 -right-40 w-80 h-80 bg-primary/10 rounded-full blur-3xl" />
+        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-secondary/10 rounded-full blur-3xl" />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-accent/5 rounded-full blur-3xl" />
       </div>
 
       <div className="w-full max-w-md relative">
@@ -47,169 +59,92 @@ export default function Login() {
 
         {/* Login Card */}
         <div className="bg-card rounded-2xl shadow-soft border border-border p-8 animate-fade-in" style={{ animationDelay: "0.1s" }}>
-          <Tabs defaultValue="admin" className="w-full">
-            <TabsList className="grid w-full grid-cols-3 mb-6">
-              <TabsTrigger value="superadmin" className="text-xs sm:text-sm">Super Admin</TabsTrigger>
-              <TabsTrigger value="admin" className="text-xs sm:text-sm">School Admin</TabsTrigger>
-              <TabsTrigger value="teacher" className="text-xs sm:text-sm">Teacher</TabsTrigger>
-            </TabsList>
+          <div className="text-center mb-6">
+            <h2 className="text-xl font-semibold text-foreground">Welcome Back</h2>
+            <p className="text-sm text-muted-foreground mt-1">
+              Sign in to access your dashboard
+            </p>
+          </div>
 
-            <TabsContent value="superadmin">
-              <form onSubmit={handleSuperAdminLogin} className="space-y-4">
-                <div className="flex items-center gap-2 p-3 bg-primary/5 rounded-lg border border-primary/20 mb-4">
-                  <Shield className="w-5 h-5 text-primary" />
-                  <span className="text-sm text-muted-foreground">Platform Administrator Access</span>
-                </div>
-                
-                <div className="space-y-2">
-                  <Label htmlFor="super-email">Email</Label>
-                  <div className="relative">
-                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                    <Input
-                      id="super-email"
-                      type="text"
-                      placeholder="admin@allpulse.com"
-                      className="pl-10"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                    />
-                  </div>
-                </div>
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="email">Email / Mobile</Label>
+              <div className="relative">
+                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  id="email"
+                  type="text"
+                  placeholder="admin@school.edu or teacher@school.edu"
+                  className="pl-10"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                />
+              </div>
+            </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="super-password">Password</Label>
-                  <div className="relative">
-                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                    <Input
-                      id="super-password"
-                      type={showPassword ? "text" : "password"}
-                      placeholder="••••••••"
-                      className="pl-10 pr-10"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                    />
-                    <button
-                      type="button"
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                      onClick={() => setShowPassword(!showPassword)}
-                    >
-                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  </div>
-                </div>
+            <div className="space-y-2">
+              <Label htmlFor="password">Password</Label>
+              <div className="relative">
+                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  id="password"
+                  type={showPassword ? "text" : "password"}
+                  placeholder="••••••••"
+                  className="pl-10 pr-10"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+                <button
+                  type="button"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  onClick={() => setShowPassword(!showPassword)}
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
 
-                <Button type="submit" className="w-full" size="lg">
-                  Login as Super Admin
-                </Button>
-              </form>
-            </TabsContent>
+            <div className="flex items-center justify-between text-sm">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" className="rounded border-border" />
+                <span className="text-muted-foreground">Remember me</span>
+              </label>
+              <a href="#" className="text-primary hover:underline">Forgot password?</a>
+            </div>
 
-            <TabsContent value="admin">
-              <form onSubmit={handleAdminLogin} className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="admin-email">Email / Mobile</Label>
-                  <div className="relative">
-                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                    <Input
-                      id="admin-email"
-                      type="text"
-                      placeholder="admin@school.edu"
-                      className="pl-10"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                    />
-                  </div>
-                </div>
+            <Button type="submit" className="w-full" size="lg" disabled={isLoading}>
+              {isLoading ? "Signing in..." : "Sign In"}
+            </Button>
+          </form>
 
-                <div className="space-y-2">
-                  <Label htmlFor="admin-password">Password</Label>
-                  <div className="relative">
-                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                    <Input
-                      id="admin-password"
-                      type={showPassword ? "text" : "password"}
-                      placeholder="••••••••"
-                      className="pl-10 pr-10"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                    />
-                    <button
-                      type="button"
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                      onClick={() => setShowPassword(!showPassword)}
-                    >
-                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between text-sm">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" className="rounded border-border" />
-                    <span className="text-muted-foreground">Remember me</span>
-                  </label>
-                  <a href="#" className="text-primary hover:underline">Forgot password?</a>
-                </div>
-
-                <Button type="submit" className="w-full" size="lg">
-                  Login as Admin
-                </Button>
-              </form>
-            </TabsContent>
-
-            <TabsContent value="teacher">
-              <form onSubmit={handleTeacherLogin} className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="teacher-email">Email / Mobile</Label>
-                  <div className="relative">
-                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                    <Input
-                      id="teacher-email"
-                      type="text"
-                      placeholder="teacher@school.edu"
-                      className="pl-10"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="teacher-password">Password</Label>
-                  <div className="relative">
-                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                    <Input
-                      id="teacher-password"
-                      type={showPassword ? "text" : "password"}
-                      placeholder="••••••••"
-                      className="pl-10 pr-10"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                    />
-                    <button
-                      type="button"
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                      onClick={() => setShowPassword(!showPassword)}
-                    >
-                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between text-sm">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" className="rounded border-border" />
-                    <span className="text-muted-foreground">Remember me</span>
-                  </label>
-                  <a href="#" className="text-primary hover:underline">Forgot password?</a>
-                </div>
-
-                <Button type="submit" className="w-full" size="lg">
-                  Login as Teacher
-                </Button>
-              </form>
-            </TabsContent>
-          </Tabs>
+          {/* Demo Accounts */}
+          <div className="mt-6 pt-6 border-t border-border">
+            <p className="text-xs text-center text-muted-foreground mb-3">Demo Accounts</p>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setEmail("admin@school.edu");
+                  setPassword("demo123");
+                }}
+                className="text-xs p-2 rounded-lg bg-muted hover:bg-muted/80 transition-colors"
+              >
+                <span className="font-medium text-foreground">School Admin</span>
+                <p className="text-muted-foreground">admin@school.edu</p>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setEmail("teacher@school.edu");
+                  setPassword("demo123");
+                }}
+                className="text-xs p-2 rounded-lg bg-muted hover:bg-muted/80 transition-colors"
+              >
+                <span className="font-medium text-foreground">Class Teacher</span>
+                <p className="text-muted-foreground">teacher@school.edu</p>
+              </button>
+            </div>
+          </div>
         </div>
 
         {/* Footer */}
