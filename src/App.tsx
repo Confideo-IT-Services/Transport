@@ -4,6 +4,19 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Index from "./pages/Index";
+import Login from "./pages/Login";
+import AdminDashboard from "./pages/admin/AdminDashboard";
+import ClassManagement from "./pages/admin/ClassManagement";
+import StudentManagement from "./pages/admin/StudentManagement";
+import TeacherManagement from "./pages/admin/TeacherManagement";
+import Reports from "./pages/admin/Reports";
+import Notifications from "./pages/admin/Notifications";
+import TeacherDashboard from "./pages/teacher/TeacherDashboard";
+import MyClass from "./pages/teacher/MyClass";
+import Attendance from "./pages/teacher/Attendance";
+import Homework from "./pages/teacher/Homework";
+import TeacherNotifications from "./pages/teacher/TeacherNotifications";
+import ProgressReports from "./pages/teacher/ProgressReports";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -16,7 +29,24 @@ const App = () => (
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Index />} />
-          {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
+          <Route path="/login" element={<Login />} />
+          
+          {/* Admin Routes */}
+          <Route path="/admin" element={<AdminDashboard />} />
+          <Route path="/admin/classes" element={<ClassManagement />} />
+          <Route path="/admin/students" element={<StudentManagement />} />
+          <Route path="/admin/teachers" element={<TeacherManagement />} />
+          <Route path="/admin/reports" element={<Reports />} />
+          <Route path="/admin/notifications" element={<Notifications />} />
+          
+          {/* Teacher Routes */}
+          <Route path="/teacher" element={<TeacherDashboard />} />
+          <Route path="/teacher/class" element={<MyClass />} />
+          <Route path="/teacher/attendance" element={<Attendance />} />
+          <Route path="/teacher/homework" element={<Homework />} />
+          <Route path="/teacher/notifications" element={<TeacherNotifications />} />
+          <Route path="/teacher/reports" element={<ProgressReports />} />
+          
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
