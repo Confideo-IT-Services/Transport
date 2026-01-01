@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Send, Bell, Users, School, Clock } from "lucide-react";
+import { Send, Bell, Users, School, Clock, UserCog, AlertTriangle } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -14,12 +14,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { toast } from "sonner";
 
 const recentNotifications = [
   { id: 1, title: "School Holiday Announcement", target: "All Classes", time: "2 hours ago", status: "sent" },
   { id: 2, title: "Parent-Teacher Meeting", target: "Class 3, Class 4", time: "1 day ago", status: "sent" },
   { id: 3, title: "Exam Schedule Update", target: "All Classes", time: "2 days ago", status: "sent" },
-  { id: 4, title: "Sports Day Reminder", target: "Teachers Only", time: "3 days ago", status: "sent" },
+  { id: 4, title: "Staff Meeting Tomorrow", target: "All Teachers", time: "3 days ago", status: "sent" },
+  { id: 5, title: "New Curriculum Guidelines", target: "All Teachers", time: "4 days ago", status: "sent" },
 ];
 
 const classes = [
@@ -33,6 +36,7 @@ export default function Notifications() {
   const [selectedClasses, setSelectedClasses] = useState<string[]>([]);
   const [title, setTitle] = useState("");
   const [message, setMessage] = useState("");
+  const [priority, setPriority] = useState("normal");
 
   const handleLogout = () => {
     navigate("/");
@@ -44,6 +48,14 @@ export default function Notifications() {
         ? prev.filter((c) => c !== className)
         : [...prev, className]
     );
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const targetLabel = target === "all" ? "all classes" : target === "teachers" ? "all teachers" : `${selectedClasses.length} classes`;
+    toast.success(`Notification sent to ${targetLabel}!`);
+    setTitle("");
+    setMessage("");
   };
 
   return (
@@ -63,7 +75,7 @@ export default function Notifications() {
               Send Notification
             </h3>
             
-            <div className="space-y-6">
+            <form onSubmit={handleSubmit} className="space-y-6">
               {/* Target Selection */}
               <div className="space-y-3">
                 <Label>Send to</Label>
@@ -75,24 +87,37 @@ export default function Notifications() {
                     <SelectItem value="all">
                       <div className="flex items-center gap-2">
                         <School className="w-4 h-4" />
-                        All Classes
+                        All Classes (Parents)
                       </div>
                     </SelectItem>
                     <SelectItem value="selected">
                       <div className="flex items-center gap-2">
                         <Users className="w-4 h-4" />
-                        Selected Classes
+                        Selected Classes (Parents)
                       </div>
                     </SelectItem>
                     <SelectItem value="teachers">
                       <div className="flex items-center gap-2">
-                        <Users className="w-4 h-4" />
-                        Teachers Only
+                        <UserCog className="w-4 h-4" />
+                        All Teachers
                       </div>
                     </SelectItem>
                   </SelectContent>
                 </Select>
               </div>
+
+              {/* Teacher notification info */}
+              {target === "teachers" && (
+                <div className="flex items-start gap-3 p-4 bg-primary/5 rounded-lg border border-primary/20">
+                  <UserCog className="w-5 h-5 text-primary mt-0.5" />
+                  <div>
+                    <p className="font-medium text-foreground">Sending to All Teachers</p>
+                    <p className="text-sm text-muted-foreground">
+                      This notification will appear in all teachers' dashboards and notification panels.
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {/* Class Selection (if selected classes) */}
               {target === "selected" && (
@@ -112,6 +137,29 @@ export default function Notifications() {
                       </label>
                     ))}
                   </div>
+                </div>
+              )}
+
+              {/* Priority (for teacher notifications) */}
+              {target === "teachers" && (
+                <div className="space-y-3">
+                  <Label>Priority</Label>
+                  <RadioGroup value={priority} onValueChange={setPriority} className="flex gap-4">
+                    <label className="flex items-center gap-3 p-3 border border-border rounded-lg cursor-pointer hover:bg-muted/50 transition-colors flex-1">
+                      <RadioGroupItem value="normal" />
+                      <div className="flex items-center gap-2">
+                        <Bell className="w-4 h-4 text-muted-foreground" />
+                        <span className="text-sm font-medium">Normal</span>
+                      </div>
+                    </label>
+                    <label className="flex items-center gap-3 p-3 border border-border rounded-lg cursor-pointer hover:bg-muted/50 transition-colors flex-1">
+                      <RadioGroupItem value="urgent" />
+                      <div className="flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4 text-warning" />
+                        <span className="text-sm font-medium">Urgent</span>
+                      </div>
+                    </label>
+                  </RadioGroup>
                 </div>
               )}
 
@@ -138,11 +186,11 @@ export default function Notifications() {
                 />
               </div>
 
-              <Button className="w-full sm:w-auto">
+              <Button type="submit" className="w-full sm:w-auto">
                 <Send className="w-4 h-4 mr-2" />
-                Send Notification
+                {target === "teachers" ? "Send to Teachers" : "Send Notification"}
               </Button>
-            </div>
+            </form>
           </div>
 
           {/* Recent Notifications */}
@@ -161,7 +209,11 @@ export default function Notifications() {
                   <h4 className="font-medium text-foreground">{notification.title}</h4>
                   <div className="flex items-center gap-4 mt-2 text-sm text-muted-foreground">
                     <span className="flex items-center gap-1">
-                      <Users className="w-3 h-3" />
+                      {notification.target === "All Teachers" ? (
+                        <UserCog className="w-3 h-3" />
+                      ) : (
+                        <Users className="w-3 h-3" />
+                      )}
                       {notification.target}
                     </span>
                     <span className="flex items-center gap-1">

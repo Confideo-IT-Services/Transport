@@ -2,7 +2,7 @@ import { useNavigate } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { StatCard } from "@/components/dashboard/StatCard";
 import { QuickAction } from "@/components/dashboard/QuickAction";
-import { Users, UserCheck, UserX, BookOpen, ClipboardCheck, Bell, FileText } from "lucide-react";
+import { Users, UserCheck, UserX, BookOpen, ClipboardCheck, Bell, FileText, AlertTriangle, Megaphone } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 
 const weeklyAttendance = [
@@ -11,6 +11,13 @@ const weeklyAttendance = [
   { day: "Wed", present: 44, absent: 1 },
   { day: "Thu", present: 41, absent: 4 },
   { day: "Fri", present: 43, absent: 2 },
+];
+
+// Admin announcements for teachers
+const adminAnnouncements = [
+  { id: 1, title: "Staff Meeting Tomorrow", message: "All teachers are required to attend the staff meeting at 3 PM in the conference room.", time: "2 hours ago", priority: "urgent" },
+  { id: 2, title: "New Curriculum Guidelines", message: "Please review the updated curriculum guidelines shared via email.", time: "1 day ago", priority: "normal" },
+  { id: 3, title: "Report Submission Deadline", message: "Reminder: Progress reports for Q1 are due by Friday.", time: "2 days ago", priority: "normal" },
 ];
 
 export default function TeacherDashboard() {
@@ -111,6 +118,44 @@ export default function TeacherDashboard() {
                 onClick={() => navigate("/teacher/reports")}
               />
             </div>
+          </div>
+        </div>
+
+        {/* Admin Announcements */}
+        <div className="bg-card rounded-xl border border-border p-6 shadow-card">
+          <h3 className="section-title flex items-center gap-2">
+            <Megaphone className="w-5 h-5 text-primary" />
+            Announcements from School Admin
+          </h3>
+          <div className="space-y-4 mt-4">
+            {adminAnnouncements.map((announcement) => (
+              <div
+                key={announcement.id}
+                className={`p-4 rounded-lg border ${
+                  announcement.priority === "urgent"
+                    ? "bg-warning/5 border-warning/30"
+                    : "bg-muted/30 border-border"
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  {announcement.priority === "urgent" ? (
+                    <AlertTriangle className="w-5 h-5 text-warning mt-0.5" />
+                  ) : (
+                    <Bell className="w-5 h-5 text-muted-foreground mt-0.5" />
+                  )}
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <h4 className="font-medium text-foreground">{announcement.title}</h4>
+                      {announcement.priority === "urgent" && (
+                        <span className="badge badge-warning text-xs">Urgent</span>
+                      )}
+                    </div>
+                    <p className="text-sm text-muted-foreground mt-1">{announcement.message}</p>
+                    <p className="text-xs text-muted-foreground mt-2">{announcement.time}</p>
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
 
