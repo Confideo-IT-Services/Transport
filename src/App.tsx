@@ -18,6 +18,10 @@ import Attendance from "./pages/teacher/Attendance";
 import Homework from "./pages/teacher/Homework";
 import TeacherNotifications from "./pages/teacher/TeacherNotifications";
 import ProgressReports from "./pages/teacher/ProgressReports";
+import SuperAdminDashboard from "./pages/superadmin/SuperAdminDashboard";
+import SchoolManagement from "./pages/superadmin/SchoolManagement";
+import PlatformReports from "./pages/superadmin/PlatformReports";
+import PlatformSettings from "./pages/superadmin/PlatformSettings";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -32,6 +36,12 @@ const App = () => (
           <Route path="/" element={<Index />} />
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<StudentRegistration />} />
+          
+          {/* Super Admin Routes */}
+          <Route path="/superadmin" element={<SuperAdminDashboard />} />
+          <Route path="/superadmin/schools" element={<SchoolManagement />} />
+          <Route path="/superadmin/reports" element={<PlatformReports />} />
+          <Route path="/superadmin/settings" element={<PlatformSettings />} />
           
           {/* Admin Routes */}
           <Route path="/admin" element={<AdminDashboard />} />

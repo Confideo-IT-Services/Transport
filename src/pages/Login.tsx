@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { GraduationCap, Mail, Lock, Eye, EyeOff } from "lucide-react";
+import { GraduationCap, Mail, Lock, Eye, EyeOff, Shield } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,6 +11,11 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+
+  const handleSuperAdminLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    navigate("/superadmin");
+  };
 
   const handleAdminLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -43,10 +48,61 @@ export default function Login() {
         {/* Login Card */}
         <div className="bg-card rounded-2xl shadow-soft border border-border p-8 animate-fade-in" style={{ animationDelay: "0.1s" }}>
           <Tabs defaultValue="admin" className="w-full">
-            <TabsList className="grid w-full grid-cols-2 mb-6">
-              <TabsTrigger value="admin">School Admin</TabsTrigger>
-              <TabsTrigger value="teacher">Class Teacher</TabsTrigger>
+            <TabsList className="grid w-full grid-cols-3 mb-6">
+              <TabsTrigger value="superadmin" className="text-xs sm:text-sm">Super Admin</TabsTrigger>
+              <TabsTrigger value="admin" className="text-xs sm:text-sm">School Admin</TabsTrigger>
+              <TabsTrigger value="teacher" className="text-xs sm:text-sm">Teacher</TabsTrigger>
             </TabsList>
+
+            <TabsContent value="superadmin">
+              <form onSubmit={handleSuperAdminLogin} className="space-y-4">
+                <div className="flex items-center gap-2 p-3 bg-primary/5 rounded-lg border border-primary/20 mb-4">
+                  <Shield className="w-5 h-5 text-primary" />
+                  <span className="text-sm text-muted-foreground">Platform Administrator Access</span>
+                </div>
+                
+                <div className="space-y-2">
+                  <Label htmlFor="super-email">Email</Label>
+                  <div className="relative">
+                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                    <Input
+                      id="super-email"
+                      type="text"
+                      placeholder="admin@allpulse.com"
+                      className="pl-10"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="super-password">Password</Label>
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                    <Input
+                      id="super-password"
+                      type={showPassword ? "text" : "password"}
+                      placeholder="••••••••"
+                      className="pl-10 pr-10"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      onClick={() => setShowPassword(!showPassword)}
+                    >
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                <Button type="submit" className="w-full" size="lg">
+                  Login as Super Admin
+                </Button>
+              </form>
+            </TabsContent>
 
             <TabsContent value="admin">
               <form onSubmit={handleAdminLogin} className="space-y-4">

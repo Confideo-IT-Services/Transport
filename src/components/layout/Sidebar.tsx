@@ -21,7 +21,7 @@ interface NavItem {
 }
 
 interface SidebarProps {
-  role: "admin" | "teacher";
+  role: "admin" | "teacher" | "superadmin";
   onLogout: () => void;
 }
 
@@ -43,9 +43,20 @@ const teacherNavItems: NavItem[] = [
   { label: "Progress Reports", href: "/teacher/reports", icon: FileText },
 ];
 
+const superadminNavItems: NavItem[] = [
+  { label: "Dashboard", href: "/superadmin", icon: LayoutDashboard },
+  { label: "Schools", href: "/superadmin/schools", icon: School },
+  { label: "Reports", href: "/superadmin/reports", icon: BarChart3 },
+  { label: "Settings", href: "/superadmin/settings", icon: FileText },
+];
+
 export function Sidebar({ role, onLogout }: SidebarProps) {
   const location = useLocation();
-  const navItems = role === "admin" ? adminNavItems : teacherNavItems;
+  const navItems = role === "superadmin" 
+    ? superadminNavItems 
+    : role === "admin" 
+    ? adminNavItems 
+    : teacherNavItems;
 
   return (
     <aside className="fixed left-0 top-0 z-40 h-screen w-64 bg-sidebar border-r border-sidebar-border flex flex-col">
@@ -56,7 +67,7 @@ export function Sidebar({ role, onLogout }: SidebarProps) {
         </div>
         <div>
           <h1 className="text-xl font-bold text-sidebar-foreground">AllPulse</h1>
-          <p className="text-xs text-muted-foreground capitalize">{role} Portal</p>
+          <p className="text-xs text-muted-foreground capitalize">{role === "superadmin" ? "Super Admin" : role} Portal</p>
         </div>
       </div>
 
