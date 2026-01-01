@@ -4,14 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Send, BookOpen, Calendar, Paperclip, Clock, CheckCircle, Plus, MessageCircle } from "lucide-react";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Send, BookOpen, Calendar, Clock, CheckCircle, Plus, MessageCircle, Save, Filter, X, TrendingUp, Users } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
@@ -21,23 +15,57 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { toast } from "sonner";
+import { Progress } from "@/components/ui/progress";
+
+interface SubjectHomework {
+  subjectId: string;
+  subjectName: string;
+  description: string;
+}
+
+interface Student {
+  id: number;
+  name: string;
+  rollNo: string;
+  completed: boolean;
+}
 
 interface HomeworkItem {
   id: number;
-  subject: string;
-  title: string;
-  description: string;
+  subjects: SubjectHomework[];
   dueDate: string;
-  status: "active" | "completed";
-  submissions: number;
+  status: "active" | "completed" | "draft";
+  createdAt: string;
   sentToParents: boolean;
+  students: Student[];
 }
 
-const initialHomework: HomeworkItem[] = [
-  { id: 1, subject: "Mathematics", title: "Algebra Worksheet", description: "Complete exercises 1-20", dueDate: "2024-01-20", status: "active", submissions: 38, sentToParents: true },
-  { id: 2, subject: "English", title: "Essay Writing", description: "Write 500 words on environment", dueDate: "2024-01-18", status: "completed", submissions: 45, sentToParents: true },
-  { id: 3, subject: "Science", title: "Lab Report", description: "Write lab report on experiment", dueDate: "2024-01-22", status: "active", submissions: 25, sentToParents: false },
+interface StudentFrequency {
+  id: number;
+  name: string;
+  rollNo: string;
+  totalHomework: number;
+  completed: number;
+  percentage: number;
+}
+
+const defaultStudents: Student[] = [
+  { id: 1, name: "Aarav Sharma", rollNo: "01", completed: false },
+  { id: 2, name: "Priya Patel", rollNo: "02", completed: false },
+  { id: 3, name: "Rahul Kumar", rollNo: "03", completed: false },
+  { id: 4, name: "Ananya Singh", rollNo: "04", completed: false },
+  { id: 5, name: "Vikram Reddy", rollNo: "05", completed: false },
+  { id: 6, name: "Sneha Gupta", rollNo: "06", completed: false },
+  { id: 7, name: "Arjun Nair", rollNo: "07", completed: false },
+  { id: 8, name: "Kavya Iyer", rollNo: "08", completed: false },
 ];
 
 const defaultSubjects = [
@@ -49,15 +77,55 @@ const defaultSubjects = [
   { id: "computer", name: "Computer Science" },
 ];
 
+const initialHomework: HomeworkItem[] = [
+  {
+    id: 1,
+    subjects: [
+      { subjectId: "mathematics", subjectName: "Mathematics", description: "Complete exercises 1-20 from Chapter 5" },
+      { subjectId: "english", subjectName: "English", description: "Write an essay on 'My Favorite Festival'" },
+    ],
+    dueDate: "2024-01-20",
+    status: "active",
+    createdAt: "2024-01-15",
+    sentToParents: true,
+    students: defaultStudents.map((s, i) => ({ ...s, completed: i < 5 })),
+  },
+  {
+    id: 2,
+    subjects: [
+      { subjectId: "science", subjectName: "Science", description: "Draw and label the human digestive system" },
+    ],
+    dueDate: "2024-01-18",
+    status: "completed",
+    createdAt: "2024-01-12",
+    sentToParents: true,
+    students: defaultStudents.map(s => ({ ...s, completed: true })),
+  },
+];
+
 export default function HomeworkModule() {
-  const [subject, setSubject] = useState("");
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [dueDate, setDueDate] = useState("");
   const [subjects, setSubjects] = useState(defaultSubjects);
+  const [selectedSubjects, setSelectedSubjects] = useState<string[]>([]);
+  const [subjectDescriptions, setSubjectDescriptions] = useState<Record<string, string>>({});
+  const [dueDate, setDueDate] = useState("");
   const [newSubjectName, setNewSubjectName] = useState("");
   const [isAddSubjectOpen, setIsAddSubjectOpen] = useState(false);
   const [homework, setHomework] = useState<HomeworkItem[]>(initialHomework);
+  const [filterDate, setFilterDate] = useState("");
+  const [selectedHomework, setSelectedHomework] = useState<HomeworkItem | null>(null);
+  const [isCompletionDialogOpen, setIsCompletionDialogOpen] = useState(false);
+
+  const handleSubjectToggle = (subjectId: string) => {
+    setSelectedSubjects(prev =>
+      prev.includes(subjectId)
+        ? prev.filter(id => id !== subjectId)
+        : [...prev, subjectId]
+    );
+  };
+
+  const handleDescriptionChange = (subjectId: string, description: string) => {
+    setSubjectDescriptions(prev => ({ ...prev, [subjectId]: description }));
+  };
 
   const handleAddSubject = () => {
     if (!newSubjectName.trim()) {
@@ -75,58 +143,117 @@ export default function HomeworkModule() {
     toast.success(`"${newSubjectName.trim()}" added to subjects`);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (!subject || !title || !description || !dueDate) {
-      toast.error("Please fill all required fields");
+  const createHomework = (isDraft: boolean) => {
+    if (selectedSubjects.length === 0) {
+      toast.error("Please select at least one subject");
       return;
     }
 
-    const selectedSubject = subjects.find(s => s.id === subject);
+    const hasEmptyDescription = selectedSubjects.some(id => !subjectDescriptions[id]?.trim());
+    if (hasEmptyDescription && !isDraft) {
+      toast.error("Please add description for all selected subjects");
+      return;
+    }
+
+    if (!dueDate && !isDraft) {
+      toast.error("Please select a due date");
+      return;
+    }
+
+    const subjectsData: SubjectHomework[] = selectedSubjects.map(id => ({
+      subjectId: id,
+      subjectName: subjects.find(s => s.id === id)?.name || id,
+      description: subjectDescriptions[id] || "",
+    }));
+
     const newHomework: HomeworkItem = {
       id: Date.now(),
-      subject: selectedSubject?.name || subject,
-      title,
-      description,
-      dueDate,
-      status: "active",
-      submissions: 0,
+      subjects: subjectsData,
+      dueDate: dueDate || new Date().toISOString().split('T')[0],
+      status: isDraft ? "draft" : "active",
+      createdAt: new Date().toISOString().split('T')[0],
       sentToParents: false,
+      students: defaultStudents.map(s => ({ ...s, completed: false })),
     };
 
     setHomework([newHomework, ...homework]);
-    setSubject("");
-    setTitle("");
-    setDescription("");
+    setSelectedSubjects([]);
+    setSubjectDescriptions({});
     setDueDate("");
-    toast.success("Homework created successfully!");
+    toast.success(isDraft ? "Homework saved as draft" : "Homework created successfully!");
   };
 
   const handleSendToParents = (hw: HomeworkItem) => {
-    // Format message for WhatsApp
+    const subjectsList = hw.subjects.map(s => `📖 *${s.subjectName}*: ${s.description}`).join("\n\n");
+    
     const message = `📚 *Homework Alert*\n\n` +
-      `Subject: ${hw.subject}\n` +
-      `Title: ${hw.title}\n` +
-      `Description: ${hw.description}\n` +
-      `Due Date: ${new Date(hw.dueDate).toLocaleDateString()}\n\n` +
+      `${subjectsList}\n\n` +
+      `📅 Due Date: ${new Date(hw.dueDate).toLocaleDateString()}\n\n` +
       `Please ensure your child completes this homework on time.`;
 
-    // Open WhatsApp with the message (in production, this would loop through parent numbers)
     const encodedMessage = encodeURIComponent(message);
     window.open(`https://wa.me/?text=${encodedMessage}`, '_blank');
 
-    // Mark as sent
-    setHomework(homework.map(h => 
-      h.id === hw.id ? { ...h, sentToParents: true } : h
+    setHomework(homework.map(h =>
+      h.id === hw.id ? { ...h, sentToParents: true, status: h.status === "draft" ? "active" : h.status } : h
     ));
     toast.success("WhatsApp opened with homework details");
   };
 
+  const openCompletionDialog = (hw: HomeworkItem) => {
+    setSelectedHomework(hw);
+    setIsCompletionDialogOpen(true);
+  };
+
+  const toggleStudentCompletion = (studentId: number) => {
+    if (!selectedHomework) return;
+
+    const updatedStudents = selectedHomework.students.map(s =>
+      s.id === studentId ? { ...s, completed: !s.completed } : s
+    );
+
+    const updatedHomework = { ...selectedHomework, students: updatedStudents };
+    setSelectedHomework(updatedHomework);
+    setHomework(homework.map(h => h.id === selectedHomework.id ? updatedHomework : h));
+  };
+
+  const markAllComplete = () => {
+    if (!selectedHomework) return;
+    const updatedStudents = selectedHomework.students.map(s => ({ ...s, completed: true }));
+    const updatedHomework = { ...selectedHomework, students: updatedStudents, status: "completed" as const };
+    setSelectedHomework(updatedHomework);
+    setHomework(homework.map(h => h.id === selectedHomework.id ? updatedHomework : h));
+    toast.success("All students marked as complete");
+  };
+
+  const filteredHomework = homework.filter(h => {
+    if (!filterDate) return h.status !== "draft";
+    return h.status !== "draft" && h.createdAt === filterDate;
+  });
+
+  const drafts = homework.filter(h => h.status === "draft");
+
+  // Calculate student frequency
+  const studentFrequency: StudentFrequency[] = defaultStudents.map(student => {
+    const completedHomework = homework.filter(h => 
+      h.status !== "draft" && h.students.find(s => s.id === student.id)?.completed
+    );
+    const totalHomework = homework.filter(h => h.status !== "draft").length;
+    const percentage = totalHomework > 0 ? Math.round((completedHomework.length / totalHomework) * 100) : 0;
+
+    return {
+      id: student.id,
+      name: student.name,
+      rollNo: student.rollNo,
+      totalHomework,
+      completed: completedHomework.length,
+      percentage,
+    };
+  });
+
   return (
     <UnifiedLayout>
       <div className="space-y-6">
-        {/* Page Header */}
         <div>
           <h1 className="text-2xl font-bold text-foreground">Homework</h1>
           <p className="text-muted-foreground mt-1">Send and manage homework for your class.</p>
@@ -135,149 +262,179 @@ export default function HomeworkModule() {
         <Tabs defaultValue="send" className="w-full">
           <TabsList>
             <TabsTrigger value="send">Send Homework</TabsTrigger>
-            <TabsTrigger value="sent">Sent Homework</TabsTrigger>
+            <TabsTrigger value="drafts">Drafts ({drafts.length})</TabsTrigger>
+            <TabsTrigger value="sent">History</TabsTrigger>
+            <TabsTrigger value="frequency">Student Frequency</TabsTrigger>
           </TabsList>
 
+          {/* Send Homework Tab */}
           <TabsContent value="send" className="mt-6">
-            <div className="bg-card rounded-xl border border-border p-6 shadow-sm max-w-2xl">
-              <h3 className="text-lg font-semibold flex items-center gap-2 mb-6">
-                <Send className="w-5 h-5 text-primary" />
-                New Homework
-              </h3>
+            <div className="bg-card rounded-xl border border-border p-6 shadow-sm">
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-lg font-semibold flex items-center gap-2">
+                  <Send className="w-5 h-5 text-primary" />
+                  New Homework
+                </h3>
+                <Dialog open={isAddSubjectOpen} onOpenChange={setIsAddSubjectOpen}>
+                  <DialogTrigger asChild>
+                    <Button variant="outline" size="sm">
+                      <Plus className="w-4 h-4 mr-1" />
+                      Add Subject
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>Add New Subject</DialogTitle>
+                      <DialogDescription>Add a new subject to assign homework for.</DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4 pt-4">
+                      <div className="space-y-2">
+                        <Label>Subject Name</Label>
+                        <Input
+                          placeholder="e.g., Physical Education"
+                          value={newSubjectName}
+                          onChange={(e) => setNewSubjectName(e.target.value)}
+                        />
+                      </div>
+                      <div className="flex justify-end gap-2">
+                        <Button variant="outline" onClick={() => setIsAddSubjectOpen(false)}>Cancel</Button>
+                        <Button onClick={handleAddSubject}>Add Subject</Button>
+                      </div>
+                    </div>
+                  </DialogContent>
+                </Dialog>
+              </div>
 
-              <form onSubmit={handleSubmit} className="space-y-6">
-                {/* Subject */}
-                <div className="space-y-2">
-                  <Label htmlFor="subject">Subject *</Label>
-                  <div className="flex gap-2">
-                    <Select value={subject} onValueChange={setSubject}>
-                      <SelectTrigger className="flex-1">
-                        <SelectValue placeholder="Select subject" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {subjects.map((subj) => (
-                          <SelectItem key={subj.id} value={subj.id}>
-                            {subj.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <Dialog open={isAddSubjectOpen} onOpenChange={setIsAddSubjectOpen}>
-                      <DialogTrigger asChild>
-                        <Button type="button" variant="outline" size="icon">
-                          <Plus className="w-4 h-4" />
-                        </Button>
-                      </DialogTrigger>
-                      <DialogContent>
-                        <DialogHeader>
-                          <DialogTitle>Add New Subject</DialogTitle>
-                          <DialogDescription>
-                            Add a new subject to assign homework for.
-                          </DialogDescription>
-                        </DialogHeader>
-                        <div className="space-y-4 pt-4">
-                          <div className="space-y-2">
-                            <Label htmlFor="newSubject">Subject Name</Label>
-                            <Input
-                              id="newSubject"
-                              placeholder="e.g., Physical Education"
-                              value={newSubjectName}
-                              onChange={(e) => setNewSubjectName(e.target.value)}
-                            />
-                          </div>
-                          <div className="flex justify-end gap-2">
-                            <Button type="button" variant="outline" onClick={() => setIsAddSubjectOpen(false)}>
-                              Cancel
-                            </Button>
-                            <Button type="button" onClick={handleAddSubject}>
-                              Add Subject
-                            </Button>
-                          </div>
+              {/* Subject Selection */}
+              <div className="space-y-4 mb-6">
+                <Label>Select Subjects *</Label>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                  {subjects.map(subject => (
+                    <div
+                      key={subject.id}
+                      className={`p-3 rounded-lg border cursor-pointer transition-all ${
+                        selectedSubjects.includes(subject.id)
+                          ? "border-primary bg-primary/10"
+                          : "border-border hover:border-primary/50"
+                      }`}
+                      onClick={() => handleSubjectToggle(subject.id)}
+                    >
+                      <div className="flex items-center gap-2">
+                        <Checkbox checked={selectedSubjects.includes(subject.id)} />
+                        <span className="font-medium">{subject.name}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Subject Descriptions */}
+              {selectedSubjects.length > 0 && (
+                <div className="space-y-4 mb-6">
+                  <Label>Homework Details for Each Subject</Label>
+                  {selectedSubjects.map(subjectId => {
+                    const subject = subjects.find(s => s.id === subjectId);
+                    return (
+                      <div key={subjectId} className="p-4 bg-muted/30 rounded-lg space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium text-primary">{subject?.name}</span>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleSubjectToggle(subjectId)}
+                          >
+                            <X className="w-4 h-4" />
+                          </Button>
                         </div>
-                      </DialogContent>
-                    </Dialog>
-                  </div>
+                        <Textarea
+                          placeholder={`Enter homework description for ${subject?.name}...`}
+                          value={subjectDescriptions[subjectId] || ""}
+                          onChange={(e) => handleDescriptionChange(subjectId, e.target.value)}
+                          rows={2}
+                        />
+                      </div>
+                    );
+                  })}
                 </div>
+              )}
 
-                {/* Title */}
-                <div className="space-y-2">
-                  <Label htmlFor="title">Title *</Label>
+              {/* Due Date */}
+              <div className="space-y-2 mb-6">
+                <Label>Due Date *</Label>
+                <div className="relative max-w-xs">
+                  <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                   <Input
-                    id="title"
-                    placeholder="e.g., Chapter 5 Worksheet"
-                    value={title}
-                    onChange={(e) => setTitle(e.target.value)}
+                    type="date"
+                    className="pl-10"
+                    value={dueDate}
+                    onChange={(e) => setDueDate(e.target.value)}
                   />
                 </div>
+              </div>
 
-                {/* Description */}
-                <div className="space-y-2">
-                  <Label htmlFor="description">Description *</Label>
-                  <Textarea
-                    id="description"
-                    placeholder="Provide detailed instructions for the homework..."
-                    rows={4}
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                  />
-                </div>
-
-                {/* Due Date */}
-                <div className="space-y-2">
-                  <Label htmlFor="dueDate">Due Date *</Label>
-                  <div className="relative">
-                    <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                    <Input
-                      id="dueDate"
-                      type="date"
-                      className="pl-10"
-                      value={dueDate}
-                      onChange={(e) => setDueDate(e.target.value)}
-                    />
-                  </div>
-                </div>
-
-                {/* Attachment */}
-                <div className="space-y-2">
-                  <Label>Attachment (Optional)</Label>
-                  <div className="border-2 border-dashed border-border rounded-lg p-6 text-center hover:border-primary/50 transition-colors cursor-pointer">
-                    <Paperclip className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
-                    <p className="text-sm text-muted-foreground">
-                      Click to upload or drag and drop
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      PDF, DOC, or images up to 10MB
-                    </p>
-                  </div>
-                </div>
-
-                <Button type="submit" className="w-full sm:w-auto">
+              {/* Action Buttons */}
+              <div className="flex flex-wrap gap-3">
+                <Button onClick={() => createHomework(false)} disabled={selectedSubjects.length === 0}>
                   <Send className="w-4 h-4 mr-2" />
-                  Create Homework
+                  Create & Save
                 </Button>
-              </form>
+                <Button variant="outline" onClick={() => createHomework(true)} disabled={selectedSubjects.length === 0}>
+                  <Save className="w-4 h-4 mr-2" />
+                  Save as Draft
+                </Button>
+              </div>
             </div>
           </TabsContent>
 
+          {/* Drafts Tab */}
+          <TabsContent value="drafts" className="mt-6">
+            {drafts.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground">No drafts saved</div>
+            ) : (
+              <div className="space-y-4">
+                {drafts.map(hw => (
+                  <div key={hw.id} className="bg-card rounded-xl border border-border p-4">
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <div className="flex flex-wrap gap-2 mb-2">
+                          {hw.subjects.map(s => (
+                            <span key={s.subjectId} className="px-2 py-1 bg-muted rounded text-sm">
+                              {s.subjectName}
+                            </span>
+                          ))}
+                        </div>
+                        <p className="text-sm text-muted-foreground">Due: {new Date(hw.dueDate).toLocaleDateString()}</p>
+                      </div>
+                      <Button size="sm" onClick={() => handleSendToParents(hw)}>
+                        <MessageCircle className="w-4 h-4 mr-1" />
+                        Send to Parents
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </TabsContent>
+
+          {/* History Tab */}
           <TabsContent value="sent" className="mt-6 space-y-6">
-            {/* Stats */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div className="bg-card rounded-xl border border-border p-4 shadow-sm">
-                <p className="text-sm text-muted-foreground">Total Sent</p>
-                <p className="text-2xl font-bold text-foreground mt-1">{homework.length}</p>
+            {/* Filter */}
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <Filter className="w-4 h-4 text-muted-foreground" />
+                <Label>Filter by Date:</Label>
               </div>
-              <div className="bg-card rounded-xl border border-border p-4 shadow-sm">
-                <p className="text-sm text-muted-foreground">Active</p>
-                <p className="text-2xl font-bold text-primary mt-1">
-                  {homework.filter(h => h.status === "active").length}
-                </p>
-              </div>
-              <div className="bg-card rounded-xl border border-border p-4 shadow-sm">
-                <p className="text-sm text-muted-foreground">Completed</p>
-                <p className="text-2xl font-bold text-green-600 mt-1">
-                  {homework.filter(h => h.status === "completed").length}
-                </p>
-              </div>
+              <Input
+                type="date"
+                className="max-w-xs"
+                value={filterDate}
+                onChange={(e) => setFilterDate(e.target.value)}
+              />
+              {filterDate && (
+                <Button variant="ghost" size="sm" onClick={() => setFilterDate("")}>
+                  Clear
+                </Button>
+              )}
             </div>
 
             {/* Homework List */}
@@ -286,53 +443,134 @@ export default function HomeworkModule() {
                 <table className="w-full">
                   <thead className="bg-muted/50">
                     <tr>
-                      <th className="text-left p-4 font-medium text-muted-foreground">Subject</th>
-                      <th className="text-left p-4 font-medium text-muted-foreground">Title</th>
+                      <th className="text-left p-4 font-medium text-muted-foreground">Subjects</th>
                       <th className="text-left p-4 font-medium text-muted-foreground">Due Date</th>
+                      <th className="text-left p-4 font-medium text-muted-foreground">Completion</th>
                       <th className="text-left p-4 font-medium text-muted-foreground">Status</th>
                       <th className="text-left p-4 font-medium text-muted-foreground">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
-                    {homework.map((hw) => (
-                      <tr key={hw.id} className="hover:bg-muted/30">
+                    {filteredHomework.map(hw => {
+                      const completedCount = hw.students.filter(s => s.completed).length;
+                      const totalCount = hw.students.length;
+                      return (
+                        <tr key={hw.id} className="hover:bg-muted/30">
+                          <td className="p-4">
+                            <div className="flex flex-wrap gap-1">
+                              {hw.subjects.map(s => (
+                                <span key={s.subjectId} className="px-2 py-0.5 bg-primary/10 text-primary rounded text-xs">
+                                  {s.subjectName}
+                                </span>
+                              ))}
+                            </div>
+                          </td>
+                          <td className="p-4">
+                            <div className="flex items-center gap-2 text-muted-foreground">
+                              <Clock className="w-4 h-4" />
+                              {new Date(hw.dueDate).toLocaleDateString()}
+                            </div>
+                          </td>
+                          <td className="p-4">
+                            <div className="flex items-center gap-2">
+                              <Progress value={(completedCount / totalCount) * 100} className="w-20 h-2" />
+                              <span className="text-sm">{completedCount}/{totalCount}</span>
+                            </div>
+                          </td>
+                          <td className="p-4">
+                            <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                              hw.status === "completed"
+                                ? "bg-green-100 text-green-800"
+                                : "bg-yellow-100 text-yellow-800"
+                            }`}>
+                              {hw.status === "completed" ? <CheckCircle className="w-3 h-3 mr-1" /> : <Clock className="w-3 h-3 mr-1" />}
+                              {hw.status}
+                            </span>
+                          </td>
+                          <td className="p-4">
+                            <div className="flex gap-2">
+                              <Button size="sm" variant="outline" onClick={() => openCompletionDialog(hw)}>
+                                <Users className="w-4 h-4 mr-1" />
+                                Update
+                              </Button>
+                              <Button size="sm" variant={hw.sentToParents ? "ghost" : "default"} onClick={() => handleSendToParents(hw)}>
+                                <MessageCircle className="w-4 h-4" />
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </TabsContent>
+
+          {/* Student Frequency Tab */}
+          <TabsContent value="frequency" className="mt-6 space-y-6">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="bg-card rounded-xl border border-border p-4 shadow-sm">
+                <p className="text-sm text-muted-foreground">Total Homework Sent</p>
+                <p className="text-2xl font-bold text-foreground mt-1">{homework.filter(h => h.status !== "draft").length}</p>
+              </div>
+              <div className="bg-card rounded-xl border border-border p-4 shadow-sm">
+                <p className="text-sm text-muted-foreground">Average Completion</p>
+                <p className="text-2xl font-bold text-primary mt-1">
+                  {Math.round(studentFrequency.reduce((acc, s) => acc + s.percentage, 0) / studentFrequency.length)}%
+                </p>
+              </div>
+              <div className="bg-card rounded-xl border border-border p-4 shadow-sm">
+                <p className="text-sm text-muted-foreground">Students Below 50%</p>
+                <p className="text-2xl font-bold text-destructive mt-1">
+                  {studentFrequency.filter(s => s.percentage < 50).length}
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-card rounded-xl border border-border overflow-hidden">
+              <div className="p-4 border-b border-border">
+                <h3 className="font-semibold flex items-center gap-2">
+                  <TrendingUp className="w-5 h-5 text-primary" />
+                  Student Homework Completion Frequency
+                </h3>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-muted/50">
+                    <tr>
+                      <th className="text-left p-4 font-medium text-muted-foreground">Roll No</th>
+                      <th className="text-left p-4 font-medium text-muted-foreground">Student Name</th>
+                      <th className="text-left p-4 font-medium text-muted-foreground">Completed</th>
+                      <th className="text-left p-4 font-medium text-muted-foreground">Frequency</th>
+                      <th className="text-left p-4 font-medium text-muted-foreground">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {studentFrequency.map(student => (
+                      <tr key={student.id} className="hover:bg-muted/30">
+                        <td className="p-4 font-medium">{student.rollNo}</td>
+                        <td className="p-4">{student.name}</td>
+                        <td className="p-4">{student.completed} / {student.totalHomework}</td>
                         <td className="p-4">
                           <div className="flex items-center gap-2">
-                            <BookOpen className="w-4 h-4 text-muted-foreground" />
-                            {hw.subject}
-                          </div>
-                        </td>
-                        <td className="p-4 font-medium">{hw.title}</td>
-                        <td className="p-4">
-                          <div className="flex items-center gap-2 text-muted-foreground">
-                            <Clock className="w-4 h-4" />
-                            {new Date(hw.dueDate).toLocaleDateString()}
+                            <Progress
+                              value={student.percentage}
+                              className={`w-24 h-2 ${student.percentage < 50 ? "[&>div]:bg-destructive" : student.percentage < 75 ? "[&>div]:bg-yellow-500" : ""}`}
+                            />
+                            <span className="text-sm font-medium">{student.percentage}%</span>
                           </div>
                         </td>
                         <td className="p-4">
                           <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                            hw.status === "active" 
-                              ? "bg-yellow-100 text-yellow-800" 
-                              : "bg-green-100 text-green-800"
+                            student.percentage >= 75
+                              ? "bg-green-100 text-green-800"
+                              : student.percentage >= 50
+                              ? "bg-yellow-100 text-yellow-800"
+                              : "bg-red-100 text-red-800"
                           }`}>
-                            {hw.status === "active" ? (
-                              <Clock className="w-3 h-3 mr-1" />
-                            ) : (
-                              <CheckCircle className="w-3 h-3 mr-1" />
-                            )}
-                            {hw.status}
+                            {student.percentage >= 75 ? "Excellent" : student.percentage >= 50 ? "Average" : "Needs Attention"}
                           </span>
-                        </td>
-                        <td className="p-4">
-                          <Button
-                            size="sm"
-                            variant={hw.sentToParents ? "outline" : "default"}
-                            onClick={() => handleSendToParents(hw)}
-                            className="gap-1"
-                          >
-                            <MessageCircle className="w-4 h-4" />
-                            {hw.sentToParents ? "Resend" : "Send to Parents"}
-                          </Button>
                         </td>
                       </tr>
                     ))}
@@ -343,6 +581,53 @@ export default function HomeworkModule() {
           </TabsContent>
         </Tabs>
       </div>
+
+      {/* Completion Update Dialog */}
+      <Dialog open={isCompletionDialogOpen} onOpenChange={setIsCompletionDialogOpen}>
+        <DialogContent className="max-w-md max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Update Student Completion</DialogTitle>
+            <DialogDescription>
+              Mark students who have completed their homework.
+            </DialogDescription>
+          </DialogHeader>
+          {selectedHomework && (
+            <div className="space-y-4 pt-4">
+              <div className="flex justify-between items-center">
+                <span className="text-sm text-muted-foreground">
+                  {selectedHomework.students.filter(s => s.completed).length} / {selectedHomework.students.length} completed
+                </span>
+                <Button size="sm" variant="outline" onClick={markAllComplete}>
+                  Mark All Complete
+                </Button>
+              </div>
+              <div className="space-y-2 max-h-64 overflow-y-auto">
+                {selectedHomework.students.map(student => (
+                  <div
+                    key={student.id}
+                    className={`flex items-center justify-between p-3 rounded-lg cursor-pointer transition-all ${
+                      student.completed ? "bg-green-50 border border-green-200" : "bg-muted/30 border border-transparent"
+                    }`}
+                    onClick={() => toggleStudentCompletion(student.id)}
+                  >
+                    <div className="flex items-center gap-3">
+                      <Checkbox checked={student.completed} />
+                      <div>
+                        <p className="font-medium">{student.name}</p>
+                        <p className="text-xs text-muted-foreground">Roll No: {student.rollNo}</p>
+                      </div>
+                    </div>
+                    {student.completed && <CheckCircle className="w-5 h-5 text-green-600" />}
+                  </div>
+                ))}
+              </div>
+              <Button className="w-full" onClick={() => setIsCompletionDialogOpen(false)}>
+                Done
+              </Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </UnifiedLayout>
   );
 }
