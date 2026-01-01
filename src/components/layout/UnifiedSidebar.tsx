@@ -34,8 +34,7 @@ const navItems: NavItem[] = [
     label: "Academic Setup", 
     href: "/dashboard/academic", 
     icon: School,
-    roles: ["admin", "teacher"],
-    readOnly: ["teacher"]
+    roles: ["admin"]
   },
   { 
     label: "Timetable", 
@@ -54,8 +53,7 @@ const navItems: NavItem[] = [
     label: "Fees", 
     href: "/dashboard/fees", 
     icon: IndianRupee,
-    roles: ["admin", "teacher"],
-    readOnly: ["teacher"]
+    roles: ["admin"]
   },
   { 
     label: "Reports", 
