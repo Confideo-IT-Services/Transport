@@ -80,21 +80,23 @@ const initialClassesData = [
   },
 ];
 
-const availableSubjects = [
+const initialSubjects = [
   "Mathematics", "English", "Hindi", "Science", "Social Studies", "Computer", "Art", "Physical Education", "Music"
 ];
 
 const initialTeachers = [
-  { id: 1, name: "Mrs. Sharma", email: "sharma@school.com", phone: "9876543210", subjects: ["Mathematics"], classes: ["1A", "1B", "2A"] },
-  { id: 2, name: "Mr. Singh", email: "singh@school.com", phone: "9876543211", subjects: ["English", "Hindi"], classes: ["2A", "2B", "2C"] },
-  { id: 3, name: "Mrs. Gupta", email: "gupta@school.com", phone: "9876543212", subjects: ["Science"], classes: ["3A", "3B", "4A"] },
-  { id: 4, name: "Mr. Kumar", email: "kumar@school.com", phone: "9876543213", subjects: ["Social Studies"], classes: ["4A", "4B", "5A"] },
-  { id: 5, name: "Mrs. Patel", email: "patel@school.com", phone: "9876543214", subjects: ["Computer", "Art"], classes: ["5A", "5B"] },
+  { id: 1, name: "Mrs. Sharma", subjects: ["Mathematics"] },
+  { id: 2, name: "Mr. Singh", subjects: ["English", "Hindi"] },
+  { id: 3, name: "Mrs. Gupta", subjects: ["Science"] },
+  { id: 4, name: "Mr. Kumar", subjects: ["Social Studies"] },
+  { id: 5, name: "Mrs. Patel", subjects: ["Computer", "Art"] },
+  { id: 6, name: "Mrs. Verma", subjects: ["Mathematics"] },
+  { id: 7, name: "Mrs. Rao", subjects: ["English"] },
+  { id: 8, name: "Mr. Das", subjects: ["Hindi"] },
+  { id: 9, name: "Mr. Joshi", subjects: ["Science"] },
+  { id: 10, name: "Mrs. Nair", subjects: ["Social Studies"] },
+  { id: 11, name: "Mr. Reddy", subjects: ["Computer"] },
 ];
-
-const allClassesList = initialClassesData.flatMap(cls => 
-  cls.sections.map(sec => `${cls.name.replace("Class ", "")}${sec.name}`)
-);
 
 export default function AcademicSetup() {
   const { user } = useAuth();
@@ -103,32 +105,41 @@ export default function AcademicSetup() {
   const [isAddTeacherOpen, setIsAddTeacherOpen] = useState(false);
   const [selectedClass, setSelectedClass] = useState<string>("");
   const [teachers, setTeachers] = useState(initialTeachers);
+  const [subjects, setSubjects] = useState(initialSubjects);
   const [classesData, setClassesData] = useState(initialClassesData);
   
   // New teacher form state
   const [newTeacher, setNewTeacher] = useState({
     name: "",
-    email: "",
-    phone: "",
     subjects: [] as string[],
-    classes: [] as string[],
   });
+
+  // New subject state
+  const [newSubject, setNewSubject] = useState("");
 
   // Class teacher assignment state
   const [selectedSectionForAssign, setSelectedSectionForAssign] = useState<{className: string, sectionName: string} | null>(null);
   const [selectedTeacherForAssign, setSelectedTeacherForAssign] = useState<string>("");
 
   const handleAddTeacher = () => {
-    if (!newTeacher.name || newTeacher.subjects.length === 0 || newTeacher.classes.length === 0) {
+    if (!newTeacher.name.trim() || newTeacher.subjects.length === 0) {
       return;
     }
     const teacher = {
       id: teachers.length + 1,
-      ...newTeacher,
+      name: newTeacher.name.trim(),
+      subjects: newTeacher.subjects,
     };
     setTeachers([...teachers, teacher]);
-    setNewTeacher({ name: "", email: "", phone: "", subjects: [], classes: [] });
+    setNewTeacher({ name: "", subjects: [] });
     setIsAddTeacherOpen(false);
+  };
+
+  const handleAddSubject = () => {
+    const trimmed = newSubject.trim();
+    if (!trimmed || subjects.includes(trimmed)) return;
+    setSubjects([...subjects, trimmed]);
+    setNewSubject("");
   };
 
   const toggleSubject = (subject: string) => {
@@ -137,15 +148,6 @@ export default function AcademicSetup() {
       subjects: prev.subjects.includes(subject)
         ? prev.subjects.filter(s => s !== subject)
         : [...prev.subjects, subject]
-    }));
-  };
-
-  const toggleClass = (cls: string) => {
-    setNewTeacher(prev => ({
-      ...prev,
-      classes: prev.classes.includes(cls)
-        ? prev.classes.filter(c => c !== cls)
-        : [...prev.classes, cls]
     }));
   };
 
@@ -549,9 +551,13 @@ export default function AcademicSetup() {
               </CardContent>
             </Card>
           </TabsContent>
+          {/* Teacher Assignments */}
           <TabsContent value="teachers" className="space-y-4">
             <div className="flex justify-between items-center">
-              <h2 className="text-lg font-medium">Teacher Assignments</h2>
+              <div>
+                <h2 className="text-lg font-medium">Teacher Assignments</h2>
+                <p className="text-sm text-muted-foreground">Add teachers and assign subjects they teach</p>
+              </div>
               {isAdmin && (
                 <Dialog open={isAddTeacherOpen} onOpenChange={setIsAddTeacherOpen}>
                   <DialogTrigger asChild>
@@ -560,7 +566,7 @@ export default function AcademicSetup() {
                       Add New Teacher
                     </Button>
                   </DialogTrigger>
-                  <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+                  <DialogContent className="max-w-md">
                     <DialogHeader>
                       <DialogTitle>Add New Teacher</DialogTitle>
                     </DialogHeader>
@@ -574,26 +580,9 @@ export default function AcademicSetup() {
                         />
                       </div>
                       <div className="space-y-2">
-                        <Label>Email</Label>
-                        <Input 
-                          type="email"
-                          placeholder="e.g., john@school.com" 
-                          value={newTeacher.email}
-                          onChange={(e) => setNewTeacher(prev => ({ ...prev, email: e.target.value }))}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Phone</Label>
-                        <Input 
-                          placeholder="e.g., 9876543210" 
-                          value={newTeacher.phone}
-                          onChange={(e) => setNewTeacher(prev => ({ ...prev, phone: e.target.value }))}
-                        />
-                      </div>
-                      <div className="space-y-2">
                         <Label>Subjects Teaching *</Label>
-                        <div className="flex gap-2 flex-wrap p-3 border rounded-lg bg-muted/30">
-                          {availableSubjects.map((subject) => (
+                        <div className="flex gap-2 flex-wrap p-3 border rounded-lg bg-muted/30 max-h-40 overflow-y-auto">
+                          {subjects.map((subject) => (
                             <Badge 
                               key={subject}
                               variant={newTeacher.subjects.includes(subject) ? "default" : "outline"}
@@ -610,30 +599,31 @@ export default function AcademicSetup() {
                           </p>
                         )}
                       </div>
+                      {/* Add new subject inline */}
                       <div className="space-y-2">
-                        <Label>Classes Assigned *</Label>
-                        <div className="flex gap-2 flex-wrap p-3 border rounded-lg bg-muted/30 max-h-32 overflow-y-auto">
-                          {allClassesList.map((cls) => (
-                            <Badge 
-                              key={cls}
-                              variant={newTeacher.classes.includes(cls) ? "default" : "outline"}
-                              className="cursor-pointer transition-colors"
-                              onClick={() => toggleClass(cls)}
-                            >
-                              {cls}
-                            </Badge>
-                          ))}
+                        <Label className="text-xs text-muted-foreground">Subject not listed? Add it:</Label>
+                        <div className="flex gap-2">
+                          <Input 
+                            placeholder="New subject name" 
+                            value={newSubject}
+                            onChange={(e) => setNewSubject(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && handleAddSubject()}
+                          />
+                          <Button 
+                            type="button" 
+                            variant="outline" 
+                            size="sm"
+                            onClick={handleAddSubject}
+                            disabled={!newSubject.trim()}
+                          >
+                            <Plus className="w-4 h-4" />
+                          </Button>
                         </div>
-                        {newTeacher.classes.length > 0 && (
-                          <p className="text-xs text-muted-foreground">
-                            Selected: {newTeacher.classes.join(", ")}
-                          </p>
-                        )}
                       </div>
                       <Button 
                         className="w-full" 
                         onClick={handleAddTeacher}
-                        disabled={!newTeacher.name || newTeacher.subjects.length === 0 || newTeacher.classes.length === 0}
+                        disabled={!newTeacher.name.trim() || newTeacher.subjects.length === 0}
                       >
                         <GraduationCap className="w-4 h-4 mr-2" />
                         Add Teacher
@@ -644,57 +634,91 @@ export default function AcademicSetup() {
               )}
             </div>
 
-            {/* Teacher Cards with Subject & Class Info */}
-            <div className="grid gap-4 md:grid-cols-2">
-              {teachers.map((teacher) => (
-                <Card key={teacher.id} className="hover:border-primary/30 transition-colors">
-                  <CardContent className="pt-6">
-                    <div className="flex items-start gap-4">
-                      <div className="w-14 h-14 rounded-full bg-gradient-to-br from-primary/20 to-secondary/20 flex items-center justify-center">
-                        <GraduationCap className="w-7 h-7 text-primary" />
-                      </div>
-                      <div className="flex-1">
-                        <h3 className="font-semibold text-lg">{teacher.name}</h3>
-                        {teacher.email && (
-                          <p className="text-xs text-muted-foreground">{teacher.email}</p>
+            {/* Teacher Table */}
+            <Card>
+              <CardContent className="pt-6">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Teacher Name</TableHead>
+                      <TableHead>Subjects</TableHead>
+                      {isAdmin && <TableHead className="text-right">Action</TableHead>}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {teachers.map((teacher) => (
+                      <TableRow key={teacher.id}>
+                        <TableCell>
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-primary/20 to-secondary/20 flex items-center justify-center">
+                              <GraduationCap className="w-5 h-5 text-primary" />
+                            </div>
+                            <span className="font-medium">{teacher.name}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex gap-1.5 flex-wrap">
+                            {teacher.subjects.map((sub) => (
+                              <Badge key={sub} variant="secondary" className="text-xs">
+                                {sub}
+                              </Badge>
+                            ))}
+                          </div>
+                        </TableCell>
+                        {isAdmin && (
+                          <TableCell className="text-right">
+                            <Button variant="ghost" size="icon">
+                              <Edit className="w-4 h-4" />
+                            </Button>
+                          </TableCell>
                         )}
-                        <div className="mt-3 space-y-3">
-                          <div>
-                            <p className="text-xs font-medium text-muted-foreground mb-1.5 flex items-center gap-1">
-                              <BookOpen className="w-3 h-3" /> Subjects Teaching
-                            </p>
-                            <div className="flex gap-1.5 flex-wrap">
-                              {teacher.subjects.map((sub) => (
-                                <Badge key={sub} variant="secondary" className="text-xs">
-                                  {sub}
-                                </Badge>
-                              ))}
-                            </div>
-                          </div>
-                          <div>
-                            <p className="text-xs font-medium text-muted-foreground mb-1.5 flex items-center gap-1">
-                              <Users className="w-3 h-3" /> Classes Assigned
-                            </p>
-                            <div className="flex gap-1.5 flex-wrap">
-                              {teacher.classes.map((cls) => (
-                                <Badge key={cls} className="text-xs bg-primary/10 text-primary hover:bg-primary/20 border-primary/20">
-                                  Class {cls}
-                                </Badge>
-                              ))}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                      {isAdmin && (
-                        <Button variant="ghost" size="icon">
-                          <Edit className="w-4 h-4" />
-                        </Button>
-                      )}
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+
+            {/* Available Subjects */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <BookOpen className="w-5 h-5 text-primary" />
+                  Available Subjects
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="flex gap-2 flex-wrap">
+                  {subjects.map((subject) => (
+                    <Badge key={subject} variant="outline" className="text-sm py-1.5 px-3">
+                      {subject}
+                    </Badge>
+                  ))}
+                </div>
+                {isAdmin && (
+                  <div className="mt-4 pt-4 border-t">
+                    <Label className="text-sm text-muted-foreground mb-2 block">Add New Subject</Label>
+                    <div className="flex gap-2">
+                      <Input 
+                        placeholder="Enter subject name" 
+                        value={newSubject}
+                        onChange={(e) => setNewSubject(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleAddSubject()}
+                        className="max-w-xs"
+                      />
+                      <Button 
+                        variant="outline" 
+                        onClick={handleAddSubject}
+                        disabled={!newSubject.trim() || subjects.includes(newSubject.trim())}
+                      >
+                        <Plus className="w-4 h-4 mr-2" />
+                        Add
+                      </Button>
                     </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </TabsContent>
         </Tabs>
       </div>
