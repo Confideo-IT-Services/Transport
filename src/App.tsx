@@ -26,6 +26,8 @@ import SchoolManagement from "./pages/superadmin/SchoolManagement";
 import PlatformReports from "./pages/superadmin/PlatformReports";
 import PlatformSettings from "./pages/superadmin/PlatformSettings";
 
+import SuperAdminLogin from "./pages/superadmin/SuperAdminLogin";
+
 const queryClient = new QueryClient();
 
 const App = () => (
@@ -51,6 +53,7 @@ const App = () => (
             <Route path="/dashboard/profile" element={<ProfilePage />} />
             
             {/* Super Admin Routes */}
+            <Route path="/superadmin/login" element={<SuperAdminLogin />} />
             <Route path="/superadmin" element={<SuperAdminDashboard />} />
             <Route path="/superadmin/schools" element={<SchoolManagement />} />
             <Route path="/superadmin/reports" element={<PlatformReports />} />

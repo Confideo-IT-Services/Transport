@@ -145,6 +145,17 @@ export default function Login() {
               </button>
             </div>
           </div>
+
+          {/* Super Admin Link */}
+          <div className="mt-4 text-center">
+            <button
+              type="button"
+              onClick={() => navigate("/superadmin/login")}
+              className="text-xs text-muted-foreground hover:text-primary transition-colors"
+            >
+              Super Admin Login →
+            </button>
+          </div>
         </div>
 
         {/* Footer */}
