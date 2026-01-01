@@ -5,9 +5,17 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Send, Bell, AlertTriangle, Clock, Users, User } from "lucide-react";
+import { Send, Bell, AlertTriangle, Clock, Users, User, UserX, Calendar } from "lucide-react";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { toast } from "sonner";
 
 const recentNotifications = [
   { id: 1, title: "Field Trip Permission", priority: "normal", time: "2 hours ago", recipients: "All Parents" },
@@ -27,6 +35,30 @@ const students = [
   { id: 8, name: "Kavya Nair", rollNo: "08" },
 ];
 
+const notificationTemplates = [
+  { 
+    id: "absence", 
+    label: "Absence Notification", 
+    icon: UserX,
+    title: "Student Absence Notification",
+    message: "Dear Parent, we would like to inform you that your child was marked absent today. Please contact the school if this was not expected."
+  },
+  { 
+    id: "leave", 
+    label: "Leave Notification", 
+    icon: Calendar,
+    title: "Leave Application Received",
+    message: "Dear Parent, we have received the leave application for your child. The leave has been recorded in our system."
+  },
+  { 
+    id: "custom", 
+    label: "Custom Message", 
+    icon: Bell,
+    title: "",
+    message: ""
+  },
+];
+
 export default function TeacherNotifications() {
   const navigate = useNavigate();
   const [title, setTitle] = useState("");
@@ -34,6 +66,7 @@ export default function TeacherNotifications() {
   const [priority, setPriority] = useState("normal");
   const [recipientType, setRecipientType] = useState("all");
   const [selectedStudents, setSelectedStudents] = useState<number[]>([]);
+  const [notificationType, setNotificationType] = useState("custom");
 
   const handleLogout = () => {
     navigate("/");
@@ -55,9 +88,19 @@ export default function TeacherNotifications() {
     }
   };
 
+  const handleNotificationTypeChange = (value: string) => {
+    setNotificationType(value);
+    const template = notificationTemplates.find(t => t.id === value);
+    if (template && value !== "custom") {
+      setTitle(template.title);
+      setMessage(template.message);
+      setPriority(value === "absence" ? "urgent" : "normal");
+    }
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    // Handle submission
+    toast.success("Notification sent successfully!");
   };
 
   return (
@@ -78,6 +121,31 @@ export default function TeacherNotifications() {
             </h3>
 
             <form onSubmit={handleSubmit} className="space-y-6">
+              {/* Notification Type */}
+              <div className="space-y-2">
+                <Label>Quick Templates</Label>
+                <Select value={notificationType} onValueChange={handleNotificationTypeChange}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select notification type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {notificationTemplates.map((template) => (
+                      <SelectItem key={template.id} value={template.id}>
+                        <div className="flex items-center gap-2">
+                          <template.icon className="w-4 h-4" />
+                          {template.label}
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {notificationType !== "custom" && (
+                  <p className="text-xs text-muted-foreground">
+                    Template selected. You can modify the message below.
+                  </p>
+                )}
+              </div>
+
               {/* Title */}
               <div className="space-y-2">
                 <Label htmlFor="title">Title</Label>
