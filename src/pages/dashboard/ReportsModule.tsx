@@ -5,9 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { 
   BarChart, 
@@ -51,15 +49,10 @@ import {
   Users, 
   IndianRupee, 
   ClipboardCheck,
-  FileText,
   Send,
-  Eye,
   Plus,
-  GraduationCap,
   BookOpen,
-  Upload,
   CheckCircle2,
-  Clock,
   Pencil,
   X,
   Save,
@@ -107,15 +100,6 @@ interface Student {
   class: string;
 }
 
-interface ProgressReport {
-  id: number;
-  studentId: number;
-  term: string;
-  uploadDate: string;
-  remarks: string;
-  sentToParent: boolean;
-}
-
 interface Subject {
   id: number;
   name: string;
@@ -148,23 +132,6 @@ interface UnitTest {
   results: UnitTestResult[];
 }
 
-interface ExamResult {
-  studentId: number;
-  marks: number;
-  grade: string;
-  sentToParent: boolean;
-}
-
-interface Exam {
-  id: number;
-  name: string;
-  type: "quarterly" | "half-yearly" | "annual";
-  date: string;
-  subject: string;
-  maxMarks: number;
-  results: ExamResult[];
-}
-
 // Initial Data
 const initialStudents: Student[] = [
   { id: 1, name: "Alex Johnson", rollNo: "01", parentPhone: "9876543210", class: "Class 5A" },
@@ -183,12 +150,6 @@ const defaultSubjects: Subject[] = [
   { id: 3, name: "English", maxMarks: 25 },
   { id: 4, name: "Hindi", maxMarks: 25 },
   { id: 5, name: "Social Studies", maxMarks: 25 },
-];
-
-const initialProgressReports: ProgressReport[] = [
-  { id: 1, studentId: 1, term: "Term 1", uploadDate: "2024-04-15", remarks: "Excellent progress in all subjects", sentToParent: true },
-  { id: 2, studentId: 2, term: "Term 1", uploadDate: "2024-04-15", remarks: "Good improvement in Mathematics", sentToParent: true },
-  { id: 3, studentId: 3, term: "Term 1", uploadDate: "2024-04-16", remarks: "Needs focus on Science concepts", sentToParent: false },
 ];
 
 const initialUnitTests: UnitTest[] = [
@@ -232,30 +193,6 @@ const initialUnitTests: UnitTest[] = [
   },
 ];
 
-const initialExams: Exam[] = [
-  {
-    id: 1,
-    name: "Half Yearly Exam",
-    type: "half-yearly",
-    date: "2024-03-25",
-    subject: "All Subjects",
-    maxMarks: 100,
-    results: [
-      { studentId: 1, marks: 92, grade: "A+", sentToParent: true },
-      { studentId: 2, marks: 85, grade: "A", sentToParent: true },
-    ],
-  },
-  {
-    id: 2,
-    name: "Annual Exam",
-    type: "annual",
-    date: "2024-04-20",
-    subject: "All Subjects",
-    maxMarks: 100,
-    results: [],
-  },
-];
-
 export default function ReportsModule() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
@@ -265,13 +202,6 @@ export default function ReportsModule() {
   // Available Subjects
   const [availableSubjects, setAvailableSubjects] = useState<Subject[]>(defaultSubjects);
   const [newSubjectName, setNewSubjectName] = useState("");
-  
-  // Progress Reports State
-  const [progressReports, setProgressReports] = useState<ProgressReport[]>(initialProgressReports);
-  const [selectedStudentForReport, setSelectedStudentForReport] = useState("");
-  const [reportTerm, setReportTerm] = useState("");
-  const [reportRemarks, setReportRemarks] = useState("");
-  const [showAddReport, setShowAddReport] = useState(false);
   
   // Unit Tests State
   const [unitTests, setUnitTests] = useState<UnitTest[]>(initialUnitTests);
@@ -286,20 +216,6 @@ export default function ReportsModule() {
     selectedSubjects: [] as number[],
   });
   const [studentSubjectMarks, setStudentSubjectMarks] = useState<{ [studentId: number]: { [subjectId: number]: number } }>({});
-  
-  // Exams State
-  const [exams, setExams] = useState<Exam[]>(initialExams);
-  const [showAddExam, setShowAddExam] = useState(false);
-  const [showAddExamMarks, setShowAddExamMarks] = useState(false);
-  const [selectedExam, setSelectedExam] = useState<Exam | null>(null);
-  const [newExam, setNewExam] = useState({
-    name: "",
-    type: "quarterly" as Exam["type"],
-    date: "",
-    subject: "",
-    maxMarks: 100,
-  });
-  const [examStudentMarks, setExamStudentMarks] = useState<{ [key: number]: number }>({});
 
   const students = initialStudents;
 
@@ -488,144 +404,6 @@ export default function ReportsModule() {
     toast({ title: "All Results Sent", description: `Sent ${test.name} results to all parents.` });
   };
 
-  // Progress Report functions
-  const sendProgressReportToParent = (report: ProgressReport) => {
-    const student = getStudentById(report.studentId);
-    if (!student) return;
-
-    const message = encodeURIComponent(
-      `📊 *Progress Report - ${report.term}*\n\n` +
-      `Student: ${student.name}\n` +
-      `Class: ${student.class}\n` +
-      `Roll No: ${student.rollNo}\n\n` +
-      `📝 *Teacher's Remarks:*\n${report.remarks}\n\n` +
-      `Report Date: ${new Date(report.uploadDate).toLocaleDateString()}`
-    );
-
-    window.open(`https://wa.me/91${student.parentPhone}?text=${message}`, "_blank");
-    
-    setProgressReports(prev => prev.map(r => 
-      r.id === report.id ? { ...r, sentToParent: true } : r
-    ));
-    
-    toast({ title: "Report Sent", description: `Progress report sent to ${student.name}'s parent.` });
-  };
-
-  const handleAddProgressReport = () => {
-    if (!selectedStudentForReport || !reportTerm || !reportRemarks) {
-      toast({ title: "Missing Information", description: "Please fill all required fields.", variant: "destructive" });
-      return;
-    }
-
-    const newReport: ProgressReport = {
-      id: progressReports.length + 1,
-      studentId: parseInt(selectedStudentForReport),
-      term: reportTerm,
-      uploadDate: new Date().toISOString().split("T")[0],
-      remarks: reportRemarks,
-      sentToParent: false,
-    };
-
-    setProgressReports([...progressReports, newReport]);
-    setShowAddReport(false);
-    setSelectedStudentForReport("");
-    setReportTerm("");
-    setReportRemarks("");
-    toast({ title: "Report Added", description: "Progress report has been added." });
-  };
-
-  // Annual Exam functions
-  const handleAddExam = () => {
-    if (!newExam.name || !newExam.date || !newExam.subject) {
-      toast({ title: "Missing Information", description: "Please fill all required fields.", variant: "destructive" });
-      return;
-    }
-
-    const exam: Exam = {
-      id: exams.length + 1,
-      ...newExam,
-      results: [],
-    };
-
-    setExams([...exams, exam]);
-    setShowAddExam(false);
-    setNewExam({ name: "", type: "quarterly", date: "", subject: "", maxMarks: 100 });
-    toast({ title: "Exam Added", description: "New exam has been created." });
-  };
-
-  const handleSaveExamMarks = () => {
-    if (!selectedExam) return;
-
-    const newResults: ExamResult[] = Object.entries(examStudentMarks).map(([studentId, marks]) => ({
-      studentId: parseInt(studentId),
-      marks,
-      grade: calculateGrade(marks, selectedExam.maxMarks),
-      sentToParent: false,
-    }));
-
-    setExams(prev => prev.map(e => {
-      if (e.id === selectedExam.id) {
-        return { ...e, results: [...e.results, ...newResults] };
-      }
-      return e;
-    }));
-
-    setShowAddExamMarks(false);
-    setSelectedExam(null);
-    setExamStudentMarks({});
-    toast({ title: "Marks Saved", description: "Student marks have been recorded." });
-  };
-
-  const sendExamResultToParent = (exam: Exam, studentId: number) => {
-    const student = getStudentById(studentId);
-    const result = exam.results.find(r => r.studentId === studentId);
-    if (!student || !result) return;
-
-    const percentage = ((result.marks / exam.maxMarks) * 100).toFixed(1);
-    const message = encodeURIComponent(
-      `📝 *${exam.name} Result*\n\n` +
-      `Student: ${student.name}\n` +
-      `Class: ${student.class}\n\n` +
-      `Marks: ${result.marks}/${exam.maxMarks} (${percentage}%)\n` +
-      `Grade: ${result.grade}`
-    );
-
-    window.open(`https://wa.me/91${student.parentPhone}?text=${message}`, "_blank");
-    
-    setExams(prev => prev.map(e => {
-      if (e.id === exam.id) {
-        return {
-          ...e,
-          results: e.results.map(r => 
-            r.studentId === studentId ? { ...r, sentToParent: true } : r
-          )
-        };
-      }
-      return e;
-    }));
-    
-    toast({ title: "Result Sent", description: `Result sent to ${student.name}'s parent.` });
-  };
-
-  const sendAllExamResults = (exam: Exam) => {
-    setExams(prev => prev.map(e => {
-      if (e.id === exam.id) {
-        return { ...e, results: e.results.map(r => ({ ...r, sentToParent: true })) };
-      }
-      return e;
-    }));
-    toast({ title: "All Results Sent", description: `Sent ${exam.name} results to all parents.` });
-  };
-
-  const getExamTypeColor = (type: Exam["type"]) => {
-    switch (type) {
-      case "quarterly": return "bg-purple-100 text-purple-700";
-      case "half-yearly": return "bg-orange-100 text-orange-700";
-      case "annual": return "bg-green-100 text-green-700";
-      default: return "bg-muted text-muted-foreground";
-    }
-  };
-
   return (
     <UnifiedLayout>
       <div className="space-y-6">
@@ -655,22 +433,14 @@ export default function ReportsModule() {
 
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid w-full max-w-2xl grid-cols-4">
+          <TabsList className="grid w-full max-w-md grid-cols-2">
             <TabsTrigger value="analytics" className="flex items-center gap-2">
               <TrendingUp className="w-4 h-4" />
               Analytics
             </TabsTrigger>
-            <TabsTrigger value="progress" className="flex items-center gap-2">
-              <FileText className="w-4 h-4" />
-              Progress Reports
-            </TabsTrigger>
             <TabsTrigger value="unit-tests" className="flex items-center gap-2">
               <BookOpen className="w-4 h-4" />
               Unit Tests
-            </TabsTrigger>
-            <TabsTrigger value="exams" className="flex items-center gap-2">
-              <GraduationCap className="w-4 h-4" />
-              Annual Exams
             </TabsTrigger>
           </TabsList>
 
@@ -814,102 +584,6 @@ export default function ReportsModule() {
                   </div>
                 </CardContent>
               </Card>
-            </div>
-          </TabsContent>
-
-          {/* Progress Reports Tab */}
-          <TabsContent value="progress" className="space-y-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-semibold">Student Progress Reports</h2>
-                <p className="text-sm text-muted-foreground">Upload and share term-wise progress reports with parents</p>
-              </div>
-              <Dialog open={showAddReport} onOpenChange={setShowAddReport}>
-                <DialogTrigger asChild>
-                  <Button><Plus className="w-4 h-4 mr-2" />Add Progress Report</Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Add Progress Report</DialogTitle>
-                  </DialogHeader>
-                  <div className="space-y-4 mt-4">
-                    <div className="space-y-2">
-                      <Label>Select Student</Label>
-                      <Select value={selectedStudentForReport} onValueChange={setSelectedStudentForReport}>
-                        <SelectTrigger><SelectValue placeholder="Choose a student" /></SelectTrigger>
-                        <SelectContent>
-                          {students.map((student) => (
-                            <SelectItem key={student.id} value={student.id.toString()}>{student.rollNo}. {student.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Term</Label>
-                      <Select value={reportTerm} onValueChange={setReportTerm}>
-                        <SelectTrigger><SelectValue placeholder="Select term" /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="Term 1">Term 1</SelectItem>
-                          <SelectItem value="Term 2">Term 2</SelectItem>
-                          <SelectItem value="Term 3">Term 3</SelectItem>
-                          <SelectItem value="Annual">Annual</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Upload Report (PDF)</Label>
-                      <div className="border-2 border-dashed border-border rounded-lg p-6 text-center hover:border-primary/50 transition-colors cursor-pointer">
-                        <Upload className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
-                        <p className="text-sm font-medium">Click to upload</p>
-                        <p className="text-xs text-muted-foreground">PDF files only</p>
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Teacher Remarks</Label>
-                      <Textarea placeholder="Add remarks about student's progress..." value={reportRemarks} onChange={(e) => setReportRemarks(e.target.value)} rows={3} />
-                    </div>
-                    <Button onClick={handleAddProgressReport} className="w-full">Save Report</Button>
-                  </div>
-                </DialogContent>
-              </Dialog>
-            </div>
-
-            <div className="grid gap-4">
-              {students.map((student) => {
-                const studentReports = progressReports.filter(r => r.studentId === student.id);
-                return (
-                  <Card key={student.id}>
-                    <CardContent className="py-4">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <Avatar className="w-10 h-10">
-                            <AvatarFallback className="bg-primary/10 text-primary">{student.name.split(" ").map(n => n[0]).join("")}</AvatarFallback>
-                          </Avatar>
-                          <div>
-                            <p className="font-medium">{student.name}</p>
-                            <p className="text-sm text-muted-foreground">Roll: {student.rollNo} • {student.class}</p>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {studentReports.length > 0 ? (
-                            studentReports.map(report => (
-                              <div key={report.id} className="flex items-center gap-2">
-                                <Badge variant="outline">{report.term}</Badge>
-                                <Button variant="ghost" size="icon" className="h-8 w-8"><Eye className="w-4 h-4" /></Button>
-                                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => sendProgressReportToParent(report)}>
-                                  {report.sentToParent ? <CheckCircle2 className="w-4 h-4 text-green-600" /> : <Send className="w-4 h-4" />}
-                                </Button>
-                              </div>
-                            ))
-                          ) : (
-                            <span className="text-sm text-muted-foreground">No reports uploaded</span>
-                          )}
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                );
-              })}
             </div>
           </TabsContent>
 
@@ -1069,117 +743,6 @@ export default function ReportsModule() {
               ))}
             </div>
           </TabsContent>
-
-          {/* Annual Exams Tab */}
-          <TabsContent value="exams" className="space-y-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-semibold">Annual & Term Exams</h2>
-                <p className="text-sm text-muted-foreground">Manage quarterly, half-yearly, and annual exam results</p>
-              </div>
-              <Dialog open={showAddExam} onOpenChange={setShowAddExam}>
-                <DialogTrigger asChild>
-                  <Button><Plus className="w-4 h-4 mr-2" />Add Exam</Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Add New Exam</DialogTitle>
-                  </DialogHeader>
-                  <div className="space-y-4 mt-4">
-                    <div className="space-y-2">
-                      <Label>Exam Name</Label>
-                      <Input placeholder="e.g., Quarterly Exam 1" value={newExam.name} onChange={(e) => setNewExam({ ...newExam, name: e.target.value })} />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Exam Type</Label>
-                      <Select value={newExam.type} onValueChange={(value: Exam["type"]) => setNewExam({ ...newExam, type: value })}>
-                        <SelectTrigger><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="quarterly">Quarterly</SelectItem>
-                          <SelectItem value="half-yearly">Half Yearly</SelectItem>
-                          <SelectItem value="annual">Annual</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Subject</Label>
-                      <Input placeholder="e.g., All Subjects" value={newExam.subject} onChange={(e) => setNewExam({ ...newExam, subject: e.target.value })} />
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label>Date</Label>
-                        <Input type="date" value={newExam.date} onChange={(e) => setNewExam({ ...newExam, date: e.target.value })} />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Max Marks</Label>
-                        <Input type="number" value={newExam.maxMarks} onChange={(e) => setNewExam({ ...newExam, maxMarks: parseInt(e.target.value) || 100 })} />
-                      </div>
-                    </div>
-                    <Button onClick={handleAddExam} className="w-full">Create Exam</Button>
-                  </div>
-                </DialogContent>
-              </Dialog>
-            </div>
-
-            <div className="grid gap-4">
-              {exams.map((exam) => (
-                <Card key={exam.id}>
-                  <CardHeader className="pb-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-lg bg-green-100 flex items-center justify-center">
-                          <GraduationCap className="w-5 h-5 text-green-600" />
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <CardTitle className="text-base">{exam.name}</CardTitle>
-                            <Badge className={getExamTypeColor(exam.type)}>{exam.type.replace("-", " ")}</Badge>
-                          </div>
-                          <p className="text-sm text-muted-foreground">{exam.subject} • {new Date(exam.date).toLocaleDateString()} • Max: {exam.maxMarks}</p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {exam.results.length === 0 ? (
-                          <Badge variant="outline" className="text-orange-600 border-orange-200 bg-orange-50"><Clock className="w-3 h-3 mr-1" />Pending</Badge>
-                        ) : (
-                          <Badge variant="outline">{exam.results.length} results</Badge>
-                        )}
-                        <Button variant="outline" size="sm" onClick={() => { setSelectedExam(exam); setShowAddExamMarks(true); }}>
-                          <Plus className="w-4 h-4 mr-1" />Add Marks
-                        </Button>
-                        {exam.results.length > 0 && (
-                          <Button size="sm" onClick={() => sendAllExamResults(exam)}><Send className="w-4 h-4 mr-1" />Send All</Button>
-                        )}
-                      </div>
-                    </div>
-                  </CardHeader>
-                  {exam.results.length > 0 && (
-                    <CardContent>
-                      <div className="space-y-2">
-                        {exam.results.map((result) => {
-                          const student = getStudentById(result.studentId);
-                          if (!student) return null;
-                          const percentage = ((result.marks / exam.maxMarks) * 100).toFixed(1);
-                          return (
-                            <div key={result.studentId} className="flex items-center justify-between p-2 rounded-lg bg-muted/50">
-                              <div className="flex items-center gap-3">
-                                <span className="text-sm font-medium">{student.name}</span>
-                                <Badge variant="outline">{result.marks}/{exam.maxMarks} ({percentage}%)</Badge>
-                                <Badge className={result.grade.startsWith("A") ? "bg-green-100 text-green-700" : "bg-yellow-100 text-yellow-700"}>{result.grade}</Badge>
-                              </div>
-                              <Button variant="ghost" size="sm" onClick={() => sendExamResultToParent(exam, result.studentId)}>
-                                {result.sentToParent ? <CheckCircle2 className="w-4 h-4 text-green-600" /> : <Send className="w-4 h-4" />}
-                              </Button>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </CardContent>
-                  )}
-                </Card>
-              ))}
-            </div>
-          </TabsContent>
         </Tabs>
 
         {/* Add Marks Dialog for Unit Tests */}
@@ -1227,43 +790,6 @@ export default function ReportsModule() {
                 </Table>
               </div>
               <Button onClick={handleSaveUnitTestMarks} className="w-full">Save Marks</Button>
-            </div>
-          </DialogContent>
-        </Dialog>
-
-        {/* Add Marks Dialog for Annual Exams */}
-        <Dialog open={showAddExamMarks} onOpenChange={setShowAddExamMarks}>
-          <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle>Add Marks - {selectedExam?.name}</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4 mt-4">
-              {students.filter(s => !selectedExam?.results.find(r => r.studentId === s.id)).map(student => (
-                <div key={student.id} className="flex items-center justify-between p-3 border border-border rounded-lg">
-                  <div className="flex items-center gap-3">
-                    <Avatar className="w-8 h-8">
-                      <AvatarFallback className="bg-primary/10 text-primary text-sm">{student.name.split(" ").map(n => n[0]).join("")}</AvatarFallback>
-                    </Avatar>
-                    <div>
-                      <p className="text-sm font-medium">{student.name}</p>
-                      <p className="text-xs text-muted-foreground">Roll: {student.rollNo}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Input
-                      type="number"
-                      placeholder="Marks"
-                      className="w-24"
-                      max={selectedExam?.maxMarks}
-                      min={0}
-                      value={examStudentMarks[student.id] || ""}
-                      onChange={(e) => setExamStudentMarks({ ...examStudentMarks, [student.id]: parseInt(e.target.value) || 0 })}
-                    />
-                    <span className="text-sm text-muted-foreground">/ {selectedExam?.maxMarks}</span>
-                  </div>
-                </div>
-              ))}
-              <Button onClick={handleSaveExamMarks} className="w-full">Save Marks</Button>
             </div>
           </DialogContent>
         </Dialog>
