@@ -29,18 +29,17 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Edit, Users, BookOpen, Calendar, ChevronRight, GraduationCap } from "lucide-react";
+import { Plus, Edit, Users, BookOpen, Calendar, ChevronRight, GraduationCap, UserCheck } from "lucide-react";
 
 const academicYears = [
   { id: 1, name: "2024-25", status: "active", startDate: "Apr 2024", endDate: "Mar 2025" },
   { id: 2, name: "2023-24", status: "completed", startDate: "Apr 2023", endDate: "Mar 2024" },
 ];
 
-const classesData = [
+const initialClassesData = [
   { 
     id: 1, 
     name: "Class 1", 
-    classTeacher: "Mrs. Sharma",
     sections: [
       { name: "A", students: 42, classTeacher: "Mrs. Sharma" },
       { name: "B", students: 43, classTeacher: "Mrs. Verma" },
@@ -49,7 +48,6 @@ const classesData = [
   { 
     id: 2, 
     name: "Class 2", 
-    classTeacher: "Mr. Singh",
     sections: [
       { name: "A", students: 40, classTeacher: "Mr. Singh" },
       { name: "B", students: 44, classTeacher: "Mrs. Rao" },
@@ -59,7 +57,6 @@ const classesData = [
   { 
     id: 3, 
     name: "Class 3", 
-    classTeacher: "Mrs. Gupta",
     sections: [
       { name: "A", students: 45, classTeacher: "Mrs. Gupta" },
       { name: "B", students: 45, classTeacher: "Mr. Joshi" },
@@ -68,7 +65,6 @@ const classesData = [
   { 
     id: 4, 
     name: "Class 4", 
-    classTeacher: "Mr. Kumar",
     sections: [
       { name: "A", students: 44, classTeacher: "Mr. Kumar" },
       { name: "B", students: 44, classTeacher: "Mrs. Nair" },
@@ -77,7 +73,6 @@ const classesData = [
   { 
     id: 5, 
     name: "Class 5", 
-    classTeacher: "Mrs. Patel",
     sections: [
       { name: "A", students: 46, classTeacher: "Mrs. Patel" },
       { name: "B", students: 46, classTeacher: "Mr. Reddy" },
@@ -97,7 +92,7 @@ const initialTeachers = [
   { id: 5, name: "Mrs. Patel", email: "patel@school.com", phone: "9876543214", subjects: ["Computer", "Art"], classes: ["5A", "5B"] },
 ];
 
-const allClasses = classesData.flatMap(cls => 
+const allClassesList = initialClassesData.flatMap(cls => 
   cls.sections.map(sec => `${cls.name.replace("Class ", "")}${sec.name}`)
 );
 
@@ -108,6 +103,7 @@ export default function AcademicSetup() {
   const [isAddTeacherOpen, setIsAddTeacherOpen] = useState(false);
   const [selectedClass, setSelectedClass] = useState<string>("");
   const [teachers, setTeachers] = useState(initialTeachers);
+  const [classesData, setClassesData] = useState(initialClassesData);
   
   // New teacher form state
   const [newTeacher, setNewTeacher] = useState({
@@ -117,6 +113,10 @@ export default function AcademicSetup() {
     subjects: [] as string[],
     classes: [] as string[],
   });
+
+  // Class teacher assignment state
+  const [selectedSectionForAssign, setSelectedSectionForAssign] = useState<{className: string, sectionName: string} | null>(null);
+  const [selectedTeacherForAssign, setSelectedTeacherForAssign] = useState<string>("");
 
   const handleAddTeacher = () => {
     if (!newTeacher.name || newTeacher.subjects.length === 0 || newTeacher.classes.length === 0) {
@@ -149,6 +149,38 @@ export default function AcademicSetup() {
     }));
   };
 
+  const handleAssignClassTeacher = () => {
+    if (!selectedSectionForAssign || !selectedTeacherForAssign) return;
+    
+    setClassesData(prev => prev.map(cls => {
+      if (cls.name === selectedSectionForAssign.className) {
+        return {
+          ...cls,
+          sections: cls.sections.map(sec => {
+            if (sec.name === selectedSectionForAssign.sectionName) {
+              return { ...sec, classTeacher: selectedTeacherForAssign };
+            }
+            return sec;
+          })
+        };
+      }
+      return cls;
+    }));
+    
+    setSelectedSectionForAssign(null);
+    setSelectedTeacherForAssign("");
+  };
+
+  // Generate all class-section combinations for assignment
+  const allSections = classesData.flatMap(cls => 
+    cls.sections.map(sec => ({
+      className: cls.name,
+      sectionName: sec.name,
+      fullName: `${cls.name} - Section ${sec.name}`,
+      currentTeacher: sec.classTeacher
+    }))
+  );
+
   return (
     <UnifiedLayout>
       <div className="space-y-6">
@@ -173,6 +205,7 @@ export default function AcademicSetup() {
           <TabsList>
             <TabsTrigger value="years">Academic Years</TabsTrigger>
             <TabsTrigger value="classes">Classes & Sections</TabsTrigger>
+            <TabsTrigger value="class-teachers">Class Teacher Assignment</TabsTrigger>
             <TabsTrigger value="teachers">Teacher Assignments</TabsTrigger>
           </TabsList>
 
@@ -293,7 +326,7 @@ export default function AcademicSetup() {
                             </div>
                             <div className="flex-1">
                               <h3 className="font-semibold text-lg">{cls.name}</h3>
-                              <p className="text-sm text-muted-foreground">Class Teacher: {cls.classTeacher}</p>
+                              <p className="text-sm text-muted-foreground">Class Teacher: {cls.sections[0]?.classTeacher}</p>
                             </div>
                             <div className="text-right">
                               <p className="text-2xl font-bold text-primary">{cls.sections.length}</p>
@@ -353,7 +386,7 @@ export default function AcademicSetup() {
                             <div>
                               <h3 className="font-semibold">{cls.name}</h3>
                               <p className="text-sm text-muted-foreground">
-                                Class Teacher: {cls.classTeacher}
+                                {cls.sections.length} Section{cls.sections.length > 1 ? 's' : ''}
                               </p>
                             </div>
                           </div>
@@ -386,7 +419,136 @@ export default function AcademicSetup() {
             </div>
           </TabsContent>
 
-          {/* Teacher Assignments */}
+          {/* Class Teacher Assignment */}
+          <TabsContent value="class-teachers" className="space-y-4">
+            <div className="flex justify-between items-center">
+              <div>
+                <h2 className="text-lg font-medium">Class Teacher Assignment</h2>
+                <p className="text-sm text-muted-foreground">Assign class teachers to each section</p>
+              </div>
+            </div>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <UserCheck className="w-5 h-5 text-primary" />
+                  Assign Class Teacher
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>Select Class & Section</Label>
+                    <Select 
+                      value={selectedSectionForAssign ? `${selectedSectionForAssign.className}|${selectedSectionForAssign.sectionName}` : ""}
+                      onValueChange={(val) => {
+                        const [className, sectionName] = val.split("|");
+                        setSelectedSectionForAssign({ className, sectionName });
+                      }}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Choose class & section" />
+                      </SelectTrigger>
+                      <SelectContent className="bg-card">
+                        {allSections.map((sec) => (
+                          <SelectItem key={sec.fullName} value={`${sec.className}|${sec.sectionName}`}>
+                            {sec.fullName}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Select Teacher</Label>
+                    <Select value={selectedTeacherForAssign} onValueChange={setSelectedTeacherForAssign}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Choose teacher" />
+                      </SelectTrigger>
+                      <SelectContent className="bg-card">
+                        {teachers.map((t) => (
+                          <SelectItem key={t.id} value={t.name}>{t.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                {selectedSectionForAssign && (
+                  <div className="p-3 bg-muted/30 rounded-lg border">
+                    <p className="text-sm">
+                      <span className="text-muted-foreground">Current Class Teacher: </span>
+                      <span className="font-medium">
+                        {allSections.find(s => s.className === selectedSectionForAssign.className && s.sectionName === selectedSectionForAssign.sectionName)?.currentTeacher || "Not Assigned"}
+                      </span>
+                    </p>
+                  </div>
+                )}
+                {isAdmin && (
+                  <Button 
+                    onClick={handleAssignClassTeacher}
+                    disabled={!selectedSectionForAssign || !selectedTeacherForAssign}
+                  >
+                    <UserCheck className="w-4 h-4 mr-2" />
+                    Assign Class Teacher
+                  </Button>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Current Assignments Table */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg">Current Class Teacher Assignments</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Class</TableHead>
+                      <TableHead>Section</TableHead>
+                      <TableHead>Class Teacher</TableHead>
+                      <TableHead>Students</TableHead>
+                      {isAdmin && <TableHead className="text-right">Action</TableHead>}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {allSections.map((section) => (
+                      <TableRow key={section.fullName}>
+                        <TableCell className="font-medium">{section.className}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline">Section {section.sectionName}</Badge>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                              <GraduationCap className="w-4 h-4 text-primary" />
+                            </div>
+                            <span>{section.currentTeacher}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          {classesData.find(c => c.name === section.className)?.sections.find(s => s.name === section.sectionName)?.students || 0}
+                        </TableCell>
+                        {isAdmin && (
+                          <TableCell className="text-right">
+                            <Button 
+                              variant="ghost" 
+                              size="sm"
+                              onClick={() => {
+                                setSelectedSectionForAssign({ className: section.className, sectionName: section.sectionName });
+                              }}
+                            >
+                              <Edit className="w-4 h-4 mr-1" />
+                              Change
+                            </Button>
+                          </TableCell>
+                        )}
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          </TabsContent>
           <TabsContent value="teachers" className="space-y-4">
             <div className="flex justify-between items-center">
               <h2 className="text-lg font-medium">Teacher Assignments</h2>
@@ -451,7 +613,7 @@ export default function AcademicSetup() {
                       <div className="space-y-2">
                         <Label>Classes Assigned *</Label>
                         <div className="flex gap-2 flex-wrap p-3 border rounded-lg bg-muted/30 max-h-32 overflow-y-auto">
-                          {allClasses.map((cls) => (
+                          {allClassesList.map((cls) => (
                             <Badge 
                               key={cls}
                               variant={newTeacher.classes.includes(cls) ? "default" : "outline"}
