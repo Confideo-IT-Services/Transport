@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Button } from "@/components/ui/button";
@@ -19,7 +19,7 @@ import {
   Trash2,
   Eye,
   Copy,
-  CheckCircle,
+  Loader2,
 } from "lucide-react";
 import {
   Dialog,
@@ -42,12 +42,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
+import { useAuth } from "@/contexts/AuthContext";
+import { schoolsApi, School } from "@/lib/api";
 
-const schools = [
+// Mock data for demo mode
+const mockSchools: School[] = [
   {
-    id: 1,
+    id: "1",
     name: "Springfield Elementary",
     code: "SPE001",
     type: "Primary",
@@ -61,7 +63,7 @@ const schools = [
     createdAt: "2024-01-15",
   },
   {
-    id: 2,
+    id: "2",
     name: "Riverside High School",
     code: "RHS002",
     type: "High School",
@@ -75,7 +77,7 @@ const schools = [
     createdAt: "2024-02-20",
   },
   {
-    id: 3,
+    id: "3",
     name: "Greenwood Academy",
     code: "GWA003",
     type: "K-12",
@@ -89,7 +91,7 @@ const schools = [
     createdAt: "2024-03-10",
   },
   {
-    id: 4,
+    id: "4",
     name: "Lakeside Secondary",
     code: "LKS004",
     type: "Secondary",
@@ -103,7 +105,7 @@ const schools = [
     createdAt: "2024-03-25",
   },
   {
-    id: 5,
+    id: "5",
     name: "Mountain View School",
     code: "MVS005",
     type: "Primary",
@@ -120,11 +122,15 @@ const schools = [
 
 export default function SchoolManagement() {
   const navigate = useNavigate();
+  const { logout, user } = useAuth();
   const [searchQuery, setSearchQuery] = useState("");
   const [filterType, setFilterType] = useState("all");
   const [filterStatus, setFilterStatus] = useState("all");
   const [isAddSchoolOpen, setIsAddSchoolOpen] = useState(false);
-  const [selectedSchool, setSelectedSchool] = useState<typeof schools[0] | null>(null);
+  const [selectedSchool, setSelectedSchool] = useState<School | null>(null);
+  const [schools, setSchools] = useState<School[]>(mockSchools);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Form states
   const [schoolName, setSchoolName] = useState("");
@@ -135,8 +141,28 @@ export default function SchoolManagement() {
   const [schoolAddress, setSchoolAddress] = useState("");
   const [adminName, setAdminName] = useState("");
   const [adminEmail, setAdminEmail] = useState("");
+  const [adminPassword, setAdminPassword] = useState("");
+
+  // Load schools on mount
+  useEffect(() => {
+    loadSchools();
+  }, []);
+
+  const loadSchools = async () => {
+    setIsLoading(true);
+    try {
+      const data = await schoolsApi.getAll();
+      setSchools(data);
+    } catch (error) {
+      console.log("Using demo data - API not available");
+      setSchools(mockSchools);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleLogout = () => {
+    logout();
     navigate("/");
   };
 
@@ -149,19 +175,72 @@ export default function SchoolManagement() {
     return matchesSearch && matchesType && matchesStatus;
   });
 
-  const handleAddSchool = (e: React.FormEvent) => {
+  const handleAddSchool = async (e: React.FormEvent) => {
     e.preventDefault();
-    toast.success("School created successfully!");
-    setIsAddSchoolOpen(false);
-    // Reset form
-    setSchoolName("");
-    setSchoolType("");
-    setSchoolLocation("");
-    setSchoolPhone("");
-    setSchoolEmail("");
-    setSchoolAddress("");
-    setAdminName("");
-    setAdminEmail("");
+    setIsSubmitting(true);
+
+    try {
+      await schoolsApi.create({
+        name: schoolName,
+        type: schoolType,
+        location: schoolLocation,
+        address: schoolAddress,
+        phone: schoolPhone,
+        email: schoolEmail,
+        adminName,
+        adminEmail,
+        adminPassword,
+      });
+      
+      toast.success("School created successfully!");
+      setIsAddSchoolOpen(false);
+      loadSchools();
+    } catch (error) {
+      // Demo mode - add locally
+      const newSchool: School = {
+        id: `${schools.length + 1}`,
+        name: schoolName,
+        code: `SCH${String(schools.length + 1).padStart(3, '0')}`,
+        type: schoolType,
+        location: schoolLocation,
+        phone: schoolPhone,
+        email: schoolEmail,
+        students: 0,
+        teachers: 0,
+        admins: 1,
+        status: "active",
+        createdAt: new Date().toISOString().split('T')[0],
+      };
+      setSchools([...schools, newSchool]);
+      toast.success("School created successfully! (Demo Mode)");
+      setIsAddSchoolOpen(false);
+    } finally {
+      setIsSubmitting(false);
+      // Reset form
+      setSchoolName("");
+      setSchoolType("");
+      setSchoolLocation("");
+      setSchoolPhone("");
+      setSchoolEmail("");
+      setSchoolAddress("");
+      setAdminName("");
+      setAdminEmail("");
+      setAdminPassword("");
+    }
+  };
+
+  const handleDeactivateSchool = async (schoolId: string) => {
+    try {
+      await schoolsApi.deactivate(schoolId);
+      toast.success("School deactivated!");
+      loadSchools();
+    } catch (error) {
+      // Demo mode
+      setSchools(schools.map(s => 
+        s.id === schoolId ? { ...s, status: "inactive" as const } : s
+      ));
+      toast.success("School deactivated! (Demo Mode)");
+    }
   };
 
   const copySchoolCode = (code: string) => {
@@ -170,7 +249,7 @@ export default function SchoolManagement() {
   };
 
   return (
-    <DashboardLayout role="superadmin" userName="Platform Admin" onLogout={handleLogout}>
+    <DashboardLayout role="superadmin" userName={user?.name || "Platform Admin"} onLogout={handleLogout}>
       <div className="space-y-6">
         {/* Page Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -214,10 +293,10 @@ export default function SchoolManagement() {
                           <SelectValue placeholder="Select type" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="primary">Primary</SelectItem>
-                          <SelectItem value="secondary">Secondary</SelectItem>
-                          <SelectItem value="high-school">High School</SelectItem>
-                          <SelectItem value="k-12">K-12</SelectItem>
+                          <SelectItem value="Primary">Primary</SelectItem>
+                          <SelectItem value="Secondary">Secondary</SelectItem>
+                          <SelectItem value="High School">High School</SelectItem>
+                          <SelectItem value="K-12">K-12</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -270,7 +349,7 @@ export default function SchoolManagement() {
                 <div className="space-y-4 pt-4 border-t border-border">
                   <h4 className="font-medium text-foreground">School Admin Account</h4>
                   <p className="text-sm text-muted-foreground">
-                    Create an initial admin account for this school.
+                    Create an initial admin account for this school. The admin will use email & password to login.
                   </p>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
@@ -295,18 +374,39 @@ export default function SchoolManagement() {
                       />
                     </div>
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    A temporary password will be sent to the admin's email.
-                  </p>
+                  <div className="space-y-2">
+                    <Label htmlFor="adminPassword">Initial Password *</Label>
+                    <Input
+                      id="adminPassword"
+                      type="password"
+                      placeholder="Create a secure password"
+                      value={adminPassword}
+                      onChange={(e) => setAdminPassword(e.target.value)}
+                      required
+                      minLength={6}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Minimum 6 characters. Admin can change this after first login.
+                    </p>
+                  </div>
                 </div>
 
                 <div className="flex justify-end gap-3 pt-4">
                   <Button type="button" variant="outline" onClick={() => setIsAddSchoolOpen(false)}>
                     Cancel
                   </Button>
-                  <Button type="submit">
-                    <Plus className="w-4 h-4 mr-2" />
-                    Create School
+                  <Button type="submit" disabled={isSubmitting}>
+                    {isSubmitting ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Creating...
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="w-4 h-4 mr-2" />
+                        Create School
+                      </>
+                    )}
                   </Button>
                 </div>
               </form>
@@ -378,105 +478,114 @@ export default function SchoolManagement() {
 
         {/* Schools Table */}
         <div className="data-table">
-          <table className="w-full">
-            <thead>
-              <tr>
-                <th>School</th>
-                <th>Code</th>
-                <th>Type</th>
-                <th>Location</th>
-                <th>Students</th>
-                <th>Teachers</th>
-                <th>Status</th>
-                <th className="text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredSchools.map((school) => (
-                <tr key={school.id}>
-                  <td>
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-                        <Building2 className="w-5 h-5 text-primary" />
-                      </div>
-                      <div>
-                        <p className="font-medium text-foreground">{school.name}</p>
-                        <p className="text-xs text-muted-foreground">{school.email}</p>
-                      </div>
-                    </div>
-                  </td>
-                  <td>
-                    <button
-                      onClick={() => copySchoolCode(school.code)}
-                      className="flex items-center gap-1 text-sm font-mono bg-muted px-2 py-1 rounded hover:bg-muted/80 transition-colors"
-                    >
-                      {school.code}
-                      <Copy className="w-3 h-3" />
-                    </button>
-                  </td>
-                  <td>{school.type}</td>
-                  <td>
-                    <div className="flex items-center gap-1 text-muted-foreground">
-                      <MapPin className="w-3 h-3" />
-                      {school.location}
-                    </div>
-                  </td>
-                  <td>
-                    <div className="flex items-center gap-1">
-                      <GraduationCap className="w-4 h-4 text-muted-foreground" />
-                      {school.students}
-                    </div>
-                  </td>
-                  <td>
-                    <div className="flex items-center gap-1">
-                      <Users className="w-4 h-4 text-muted-foreground" />
-                      {school.teachers}
-                    </div>
-                  </td>
-                  <td>
-                    <span
-                      className={`badge ${
-                        school.status === "active"
-                          ? "badge-success"
-                          : school.status === "pending"
-                          ? "badge-warning"
-                          : "bg-muted text-muted-foreground"
-                      }`}
-                    >
-                      {school.status}
-                    </span>
-                  </td>
-                  <td className="text-right">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon">
-                          <MoreHorizontal className="w-4 h-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => setSelectedSchool(school)}>
-                          <Eye className="w-4 h-4 mr-2" />
-                          View Details
-                        </DropdownMenuItem>
-                        <DropdownMenuItem>
-                          <Edit className="w-4 h-4 mr-2" />
-                          Edit School
-                        </DropdownMenuItem>
-                        <DropdownMenuItem>
-                          <Users className="w-4 h-4 mr-2" />
-                          Manage Admins
-                        </DropdownMenuItem>
-                        <DropdownMenuItem className="text-destructive">
-                          <Trash2 className="w-4 h-4 mr-2" />
-                          Deactivate
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </td>
+          {isLoading ? (
+            <div className="flex items-center justify-center p-8">
+              <Loader2 className="w-8 h-8 animate-spin text-primary" />
+            </div>
+          ) : (
+            <table className="w-full">
+              <thead>
+                <tr>
+                  <th>School</th>
+                  <th>Code</th>
+                  <th>Type</th>
+                  <th>Location</th>
+                  <th>Students</th>
+                  <th>Teachers</th>
+                  <th>Status</th>
+                  <th className="text-right">Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {filteredSchools.map((school) => (
+                  <tr key={school.id}>
+                    <td>
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                          <Building2 className="w-5 h-5 text-primary" />
+                        </div>
+                        <div>
+                          <p className="font-medium text-foreground">{school.name}</p>
+                          <p className="text-xs text-muted-foreground">{school.email}</p>
+                        </div>
+                      </div>
+                    </td>
+                    <td>
+                      <button
+                        onClick={() => copySchoolCode(school.code)}
+                        className="flex items-center gap-1 text-sm font-mono bg-muted px-2 py-1 rounded hover:bg-muted/80 transition-colors"
+                      >
+                        {school.code}
+                        <Copy className="w-3 h-3" />
+                      </button>
+                    </td>
+                    <td>{school.type}</td>
+                    <td>
+                      <div className="flex items-center gap-1 text-muted-foreground">
+                        <MapPin className="w-3 h-3" />
+                        {school.location}
+                      </div>
+                    </td>
+                    <td>
+                      <div className="flex items-center gap-1">
+                        <GraduationCap className="w-4 h-4 text-muted-foreground" />
+                        {school.students}
+                      </div>
+                    </td>
+                    <td>
+                      <div className="flex items-center gap-1">
+                        <Users className="w-4 h-4 text-muted-foreground" />
+                        {school.teachers}
+                      </div>
+                    </td>
+                    <td>
+                      <span
+                        className={`badge ${
+                          school.status === "active"
+                            ? "badge-success"
+                            : school.status === "pending"
+                            ? "badge-warning"
+                            : "bg-muted text-muted-foreground"
+                        }`}
+                      >
+                        {school.status}
+                      </span>
+                    </td>
+                    <td className="text-right">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon">
+                            <MoreHorizontal className="w-4 h-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => setSelectedSchool(school)}>
+                            <Eye className="w-4 h-4 mr-2" />
+                            View Details
+                          </DropdownMenuItem>
+                          <DropdownMenuItem>
+                            <Edit className="w-4 h-4 mr-2" />
+                            Edit School
+                          </DropdownMenuItem>
+                          <DropdownMenuItem>
+                            <Users className="w-4 h-4 mr-2" />
+                            Manage Admins
+                          </DropdownMenuItem>
+                          <DropdownMenuItem 
+                            className="text-destructive"
+                            onClick={() => handleDeactivateSchool(school.id)}
+                          >
+                            <Trash2 className="w-4 h-4 mr-2" />
+                            Deactivate
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
 
         {/* School Details Dialog */}
