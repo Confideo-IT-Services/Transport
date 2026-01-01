@@ -9,6 +9,7 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import Index from "./pages/Index";
 import Login from "./pages/Login";
 import NotFound from "./pages/NotFound";
+import StudentRegistration from "./pages/register/StudentRegistration";
 
 // Unified Dashboard pages
 import UnifiedDashboard from "./pages/dashboard/UnifiedDashboard";
@@ -21,14 +22,16 @@ import NotificationsModule from "./pages/dashboard/NotificationsModule";
 import ProfilePage from "./pages/dashboard/ProfilePage";
 import TeacherManagement from "./pages/dashboard/TeacherManagement";
 import HomeworkModule from "./pages/dashboard/HomeworkModule";
+import StudentManagement from "./pages/dashboard/StudentManagement";
 
-// Super Admin pages (separate from unified dashboard)
+// Super Admin pages
 import SuperAdminDashboard from "./pages/superadmin/SuperAdminDashboard";
 import SchoolManagement from "./pages/superadmin/SchoolManagement";
 import PlatformReports from "./pages/superadmin/PlatformReports";
 import PlatformSettings from "./pages/superadmin/PlatformSettings";
-
 import SuperAdminLogin from "./pages/superadmin/SuperAdminLogin";
+import IDCardTemplate from "./pages/superadmin/IDCardTemplate";
+import IDCardGeneration from "./pages/superadmin/IDCardGeneration";
 
 const queryClient = new QueryClient();
 
@@ -43,6 +46,7 @@ const App = () => (
             {/* Public Routes */}
             <Route path="/" element={<Index />} />
             <Route path="/login" element={<Login />} />
+            <Route path="/register" element={<StudentRegistration />} />
             
             {/* Unified Dashboard Routes (School Admin & Teacher) */}
             <Route path="/dashboard" element={<UnifiedDashboard />} />
@@ -55,6 +59,7 @@ const App = () => (
             <Route path="/dashboard/profile" element={<ProfilePage />} />
             <Route path="/dashboard/teachers" element={<TeacherManagement />} />
             <Route path="/dashboard/homework" element={<HomeworkModule />} />
+            <Route path="/dashboard/students" element={<StudentManagement />} />
             
             {/* Super Admin Routes */}
             <Route path="/superadmin/login" element={<SuperAdminLogin />} />
@@ -62,6 +67,8 @@ const App = () => (
             <Route path="/superadmin/schools" element={<SchoolManagement />} />
             <Route path="/superadmin/reports" element={<PlatformReports />} />
             <Route path="/superadmin/settings" element={<PlatformSettings />} />
+            <Route path="/superadmin/id-templates" element={<IDCardTemplate />} />
+            <Route path="/superadmin/id-cards" element={<IDCardGeneration />} />
             
             {/* Legacy redirects */}
             <Route path="/admin" element={<Navigate to="/dashboard" replace />} />
