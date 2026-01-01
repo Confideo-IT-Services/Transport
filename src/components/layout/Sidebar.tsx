@@ -12,6 +12,8 @@ import {
   UserCheck,
   LogOut,
   School,
+  CreditCard,
+  Palette,
 } from "lucide-react";
 
 interface NavItem {
@@ -46,6 +48,8 @@ const teacherNavItems: NavItem[] = [
 const superadminNavItems: NavItem[] = [
   { label: "Dashboard", href: "/superadmin", icon: LayoutDashboard },
   { label: "Schools", href: "/superadmin/schools", icon: School },
+  { label: "ID Templates", href: "/superadmin/id-templates", icon: Palette },
+  { label: "Generate ID Cards", href: "/superadmin/id-cards", icon: CreditCard },
   { label: "Reports", href: "/superadmin/reports", icon: BarChart3 },
   { label: "Settings", href: "/superadmin/settings", icon: FileText },
 ];
