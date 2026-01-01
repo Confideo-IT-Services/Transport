@@ -42,25 +42,29 @@ export default function TeacherDashboard() {
             title="Total Students"
             value={45}
             icon={Users}
-            variant="primary"
+            iconColor="text-primary"
+            iconBg="bg-primary/10"
           />
           <StatCard
             title="Present Today"
             value={42}
             icon={UserCheck}
-            variant="success"
+            iconColor="text-secondary"
+            iconBg="bg-secondary/10"
           />
           <StatCard
             title="Absent Today"
             value={3}
             icon={UserX}
-            variant="warning"
+            iconColor="text-accent"
+            iconBg="bg-accent/10"
           />
           <StatCard
             title="Homework This Week"
             value={8}
             icon={BookOpen}
-            variant="info"
+            iconColor="text-primary"
+            iconBg="bg-primary/10"
           />
         </div>
 
