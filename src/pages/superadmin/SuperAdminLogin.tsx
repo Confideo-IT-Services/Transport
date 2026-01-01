@@ -4,10 +4,12 @@ import { Shield, Mail, Lock, Eye, EyeOff, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 
 export default function SuperAdminLogin() {
   const navigate = useNavigate();
+  const { login } = useAuth();
   const { toast } = useToast();
   const [showPassword, setShowPassword] = useState(false);
   const [email, setEmail] = useState("");
@@ -18,15 +20,23 @@ export default function SuperAdminLogin() {
     e.preventDefault();
     setIsLoading(true);
     
-    // Simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    
-    toast({
-      title: "Welcome, Super Admin!",
-      description: "You have successfully logged in.",
-    });
-    navigate("/superadmin");
-    setIsLoading(false);
+    try {
+      await login({ email, password, role: "superadmin" });
+      
+      toast({
+        title: "Welcome, Super Admin!",
+        description: "You have successfully logged in.",
+      });
+      navigate("/superadmin");
+    } catch (error) {
+      toast({
+        title: "Login failed",
+        description: "Please check your credentials and try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -70,11 +80,12 @@ export default function SuperAdminLogin() {
                 <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <Input
                   id="email"
-                  type="text"
+                  type="email"
                   placeholder="superadmin@allpulse.com"
                   className="pl-10"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
+                  required
                 />
               </div>
             </div>
@@ -90,6 +101,7 @@ export default function SuperAdminLogin() {
                   className="pl-10 pr-10"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
+                  required
                 />
                 <button
                   type="button"

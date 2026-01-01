@@ -1,66 +1,140 @@
-import { createContext, useContext, useState, ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import { authApi, getToken, setToken, removeToken, User } from "@/lib/api";
 
-export type UserRole = "admin" | "teacher";
+export type UserRole = "superadmin" | "admin" | "teacher";
 
-export interface User {
-  id: string;
-  name: string;
-  email: string;
-  role: UserRole;
-  schoolName?: string;
-  className?: string;
-}
+export type { User };
 
 interface AuthContextType {
   user: User | null;
-  login: (email: string, password: string) => Promise<void>;
+  isLoading: boolean;
+  login: (credentials: { 
+    email?: string; 
+    username?: string; 
+    password: string; 
+    role: UserRole 
+  }) => Promise<void>;
   logout: () => void;
   isAuthenticated: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// Mock users for demo
-const mockUsers: Record<string, User> = {
-  "admin@school.edu": {
-    id: "1",
-    name: "Raj Kumar",
-    email: "admin@school.edu",
-    role: "admin",
-    schoolName: "Delhi Public School",
-  },
-  "teacher@school.edu": {
-    id: "2",
-    name: "Priya Sharma",
-    email: "teacher@school.edu",
-    role: "teacher",
-    schoolName: "Delhi Public School",
-    className: "Class 5A",
-  },
-};
-
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(() => {
-    const saved = localStorage.getItem("allpulse_user");
-    return saved ? JSON.parse(saved) : null;
-  });
+  const [user, setUser] = useState<User | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const login = async (email: string, _password: string) => {
-    // Simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    
-    const foundUser = mockUsers[email.toLowerCase()] || mockUsers["admin@school.edu"];
-    setUser(foundUser);
-    localStorage.setItem("allpulse_user", JSON.stringify(foundUser));
+  // Check for existing token on mount
+  useEffect(() => {
+    const checkAuth = async () => {
+      const token = getToken();
+      if (token) {
+        try {
+          // Try to verify the token
+          const savedUser = localStorage.getItem("allpulse_user");
+          if (savedUser) {
+            setUser(JSON.parse(savedUser));
+          }
+        } catch (error) {
+          // Token invalid, clean up
+          removeToken();
+          localStorage.removeItem("allpulse_user");
+        }
+      }
+      setIsLoading(false);
+    };
+
+    checkAuth();
+  }, []);
+
+  const login = async ({ email, username, password, role }: { 
+    email?: string; 
+    username?: string; 
+    password: string; 
+    role: UserRole 
+  }) => {
+    let response;
+
+    try {
+      switch (role) {
+        case 'superadmin':
+          if (!email) throw new Error('Email is required');
+          response = await authApi.superadminLogin(email, password);
+          break;
+        case 'admin':
+          if (!email) throw new Error('Email is required');
+          response = await authApi.adminLogin(email, password);
+          break;
+        case 'teacher':
+          if (!username) throw new Error('Username is required');
+          response = await authApi.teacherLogin(username, password);
+          break;
+        default:
+          throw new Error('Invalid role');
+      }
+
+      setToken(response.token);
+      setUser(response.user);
+      localStorage.setItem("allpulse_user", JSON.stringify(response.user));
+    } catch (error) {
+      // For demo mode, use mock data when API is not available
+      console.log('API not available, using demo mode');
+      
+      const mockUsers: Record<string, User> = {
+        "superadmin@allpulse.com": {
+          id: "1",
+          name: "Platform Admin",
+          email: "superadmin@allpulse.com",
+          role: "superadmin",
+        },
+        "admin@school.edu": {
+          id: "2",
+          name: "Raj Kumar",
+          email: "admin@school.edu",
+          role: "admin",
+          schoolId: "school-1",
+          schoolName: "Delhi Public School",
+        },
+        "teacher": {
+          id: "3",
+          name: "Priya Sharma",
+          username: "teacher",
+          role: "teacher",
+          schoolId: "school-1",
+          schoolName: "Delhi Public School",
+        },
+      };
+
+      // Demo login logic
+      let foundUser: User | undefined;
+      
+      if (role === 'superadmin' && email) {
+        foundUser = mockUsers["superadmin@allpulse.com"];
+      } else if (role === 'admin' && email) {
+        foundUser = mockUsers["admin@school.edu"];
+      } else if (role === 'teacher' && username) {
+        foundUser = mockUsers["teacher"];
+      }
+
+      if (foundUser) {
+        const mockToken = `demo-token-${Date.now()}`;
+        setToken(mockToken);
+        setUser(foundUser);
+        localStorage.setItem("allpulse_user", JSON.stringify(foundUser));
+      } else {
+        throw new Error('Invalid credentials');
+      }
+    }
   };
 
   const logout = () => {
     setUser(null);
+    removeToken();
     localStorage.removeItem("allpulse_user");
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, isAuthenticated: !!user }}>
+    <AuthContext.Provider value={{ user, isLoading, login, logout, isAuthenticated: !!user }}>
       {children}
     </AuthContext.Provider>
   );

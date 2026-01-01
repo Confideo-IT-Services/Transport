@@ -19,6 +19,7 @@ import FeesModule from "./pages/dashboard/FeesModule";
 import ReportsModule from "./pages/dashboard/ReportsModule";
 import NotificationsModule from "./pages/dashboard/NotificationsModule";
 import ProfilePage from "./pages/dashboard/ProfilePage";
+import TeacherManagement from "./pages/dashboard/TeacherManagement";
 
 // Super Admin pages (separate from unified dashboard)
 import SuperAdminDashboard from "./pages/superadmin/SuperAdminDashboard";
@@ -51,6 +52,7 @@ const App = () => (
             <Route path="/dashboard/reports" element={<ReportsModule />} />
             <Route path="/dashboard/notifications" element={<NotificationsModule />} />
             <Route path="/dashboard/profile" element={<ProfilePage />} />
+            <Route path="/dashboard/teachers" element={<TeacherManagement />} />
             
             {/* Super Admin Routes */}
             <Route path="/superadmin/login" element={<SuperAdminLogin />} />
