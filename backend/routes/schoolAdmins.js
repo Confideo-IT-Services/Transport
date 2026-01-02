@@ -1,0 +1,46 @@
+const express = require('express');
+const bcrypt = require('bcryptjs');
+const { v4: uuidv4 } = require('uuid');
+const router = express.Router();
+const db = require('../config/database');
+const { authenticateToken, requireSuperAdmin } = require('../middleware/auth');
+
+// Create school admin (Super Admin only)
+router.post('/', authenticateToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const { schoolId, email, password, name } = req.body;
+
+    if (!schoolId || !email || !password || !name) {
+      return res.status(400).json({ error: 'All fields are required' });
+    }
+
+    // Check if school exists
+    const [schools] = await db.query('SELECT id FROM schools WHERE id = ?', [schoolId]);
+    if (schools.length === 0) {
+      return res.status(404).json({ error: 'School not found' });
+    }
+
+    // Check if email already exists
+    const [existingUsers] = await db.query('SELECT id FROM users WHERE email = ?', [email]);
+    if (existingUsers.length > 0) {
+      return res.status(400).json({ error: 'Email already exists' });
+    }
+
+    // Create admin
+    const adminId = uuidv4();
+    const hashedPassword = await bcrypt.hash(password, 10);
+    
+    await db.query(
+      `INSERT INTO users (id, email, password, name, role, school_id, is_active, created_at)
+       VALUES (?, ?, ?, ?, 'admin', ?, true, NOW())`,
+      [adminId, email, hashedPassword, name, schoolId]
+    );
+
+    res.status(201).json({ success: true });
+  } catch (error) {
+    console.error('Create school admin error:', error);
+    res.status(500).json({ error: 'Failed to create admin' });
+  }
+});
+
+module.exports = router;
