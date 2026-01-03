@@ -23,6 +23,7 @@ import ProfilePage from "./pages/dashboard/ProfilePage";
 import TeacherManagement from "./pages/dashboard/TeacherManagement";
 import HomeworkModule from "./pages/dashboard/HomeworkModule";
 import StudentManagement from "./pages/dashboard/StudentManagement";
+import RegistrationLinksManagement from "./pages/dashboard/RegistrationLinksManagement";
 
 // Super Admin pages
 import SuperAdminDashboard from "./pages/superadmin/SuperAdminDashboard";
@@ -60,6 +61,7 @@ const App = () => (
             <Route path="/dashboard/teachers" element={<TeacherManagement />} />
             <Route path="/dashboard/homework" element={<HomeworkModule />} />
             <Route path="/dashboard/students" element={<StudentManagement />} />
+            <Route path="/dashboard/students/registration-links" element={<RegistrationLinksManagement />} />
             
             {/* Super Admin Routes */}
             <Route path="/superadmin/login" element={<SuperAdminLogin />} />

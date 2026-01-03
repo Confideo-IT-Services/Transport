@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { UnifiedLayout } from "@/components/layout/UnifiedLayout";
 import { useAuth } from "@/contexts/AuthContext";
 import { StatCard } from "@/components/dashboard/StatCard";
@@ -14,31 +14,65 @@ import {
   Bell
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
-
-const adminClassData = [
-  { name: "Class 1", students: 45 },
-  { name: "Class 2", students: 42 },
-  { name: "Class 3", students: 48 },
-  { name: "Class 4", students: 40 },
-  { name: "Class 5", students: 44 },
-];
-
-const attendanceData = [
-  { name: "Present", value: 85, color: "hsl(142 71% 45%)" },
-  { name: "Absent", value: 10, color: "hsl(0 84% 60%)" },
-  { name: "Leave", value: 5, color: "hsl(38 92% 50%)" },
-];
-
-const recentActivities = [
-  { id: 1, action: "Attendance marked for Class 5A", time: "10 mins ago", icon: ClipboardCheck },
-  { id: 2, action: "New student registered", time: "1 hour ago", icon: GraduationCap },
-  { id: 3, action: "Fee reminder sent", time: "2 hours ago", icon: Bell },
-  { id: 4, action: "Timetable updated", time: "3 hours ago", icon: Calendar },
-];
+import { classesApi, studentsApi, teachersApi } from "@/lib/api";
 
 export default function UnifiedDashboard() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
+  
+  const [loading, setLoading] = useState(true);
+  const [classes, setClasses] = useState<any[]>([]);
+  const [students, setStudents] = useState<any[]>([]);
+  const [teachers, setTeachers] = useState<any[]>([]);
+  const [pendingStudents, setPendingStudents] = useState<any[]>([]);
+  
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        setLoading(true);
+        if (isAdmin) {
+          const [classesData, studentsData, teachersData, pendingData] = await Promise.all([
+            classesApi.getAll(),
+            studentsApi.getAll(),
+            teachersApi.getAll(),
+            studentsApi.getPending().catch(() => [])
+          ]);
+          setClasses(classesData);
+          setStudents(studentsData);
+          setTeachers(teachersData);
+          setPendingStudents(pendingData);
+        }
+      } catch (error) {
+        console.error('Error loading dashboard data:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    if (isAdmin) {
+      loadData();
+    } else {
+      setLoading(false);
+    }
+  }, [isAdmin]);
+  
+  // Calculate stats for admin
+  const totalClasses = classes.length;
+  const totalStudents = students.filter(s => s.status === 'approved').length;
+  const totalTeachers = teachers.filter(t => t.isActive).length;
+  const pendingApprovals = pendingStudents.length;
+  
+  // Prepare class data for chart
+  const adminClassData = classes.map(cls => ({
+    name: cls.section ? `${cls.name} ${cls.section}` : cls.name,
+    students: cls.studentCount || 0
+  }));
+  
+  // For attendance data, we'll show empty state since there's no attendance API yet
+  const attendanceData: { name: string; value: number; color: string }[] = [];
+  
+  // Recent activities - empty for now
+  const recentActivities: any[] = [];
 
   return (
     <UnifiedLayout>
@@ -74,36 +108,36 @@ export default function UnifiedDashboard() {
             <>
               <StatCard
                 title="Total Classes"
-                value="12"
+                value={loading ? "..." : totalClasses.toString()}
                 icon={BookOpen}
-                trend="+2 this year"
+                trend=""
                 trendUp={true}
                 iconColor="text-primary"
                 iconBg="bg-primary/10"
               />
               <StatCard
                 title="Total Students"
-                value="524"
+                value={loading ? "..." : totalStudents.toString()}
                 icon={GraduationCap}
-                trend="+18 this month"
+                trend=""
                 trendUp={true}
                 iconColor="text-secondary"
                 iconBg="bg-secondary/10"
               />
               <StatCard
                 title="Total Teachers"
-                value="28"
+                value={loading ? "..." : totalTeachers.toString()}
                 icon={Users}
-                trend="All active"
+                trend=""
                 trendUp={true}
                 iconColor="text-accent"
                 iconBg="bg-accent/10"
               />
               <StatCard
                 title="Pending Approvals"
-                value="5"
+                value={loading ? "..." : pendingApprovals.toString()}
                 icon={Clock}
-                trend="2 new today"
+                trend=""
                 trendUp={false}
                 iconColor="text-destructive"
                 iconBg="bg-destructive/10"
@@ -113,7 +147,7 @@ export default function UnifiedDashboard() {
             <>
               <StatCard
                 title="My Class Students"
-                value="42"
+                value="0"
                 icon={Users}
                 trend={user?.className || ""}
                 trendUp={true}
@@ -122,27 +156,27 @@ export default function UnifiedDashboard() {
               />
               <StatCard
                 title="Present Today"
-                value="38"
+                value="0"
                 icon={ClipboardCheck}
-                trend="90% attendance"
+                trend=""
                 trendUp={true}
                 iconColor="text-secondary"
                 iconBg="bg-secondary/10"
               />
               <StatCard
                 title="Absent Today"
-                value="4"
+                value="0"
                 icon={TrendingUp}
-                trend="Parents notified"
+                trend=""
                 trendUp={false}
                 iconColor="text-destructive"
                 iconBg="bg-destructive/10"
               />
               <StatCard
                 title="Homework This Week"
-                value="8"
+                value="0"
                 icon={BookOpen}
-                trend="3 pending review"
+                trend=""
                 trendUp={true}
                 iconColor="text-accent"
                 iconBg="bg-accent/10"
@@ -162,47 +196,34 @@ export default function UnifiedDashboard() {
             </CardHeader>
             <CardContent>
               {isAdmin ? (
-                <ResponsiveContainer width="100%" height={250}>
-                  <BarChart data={adminClassData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                    <XAxis dataKey="name" stroke="hsl(var(--muted-foreground))" fontSize={12} />
-                    <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} />
-                    <Tooltip 
-                      contentStyle={{ 
-                        background: "hsl(var(--card))", 
-                        border: "1px solid hsl(var(--border))",
-                        borderRadius: "8px"
-                      }} 
-                    />
-                    <Bar dataKey="students" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
+                loading ? (
+                  <div className="flex items-center justify-center h-[250px]">
+                    <p className="text-muted-foreground">Loading...</p>
+                  </div>
+                ) : adminClassData.length > 0 ? (
+                  <ResponsiveContainer width="100%" height={250}>
+                    <BarChart data={adminClassData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                      <XAxis dataKey="name" stroke="hsl(var(--muted-foreground))" fontSize={12} />
+                      <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} />
+                      <Tooltip 
+                        contentStyle={{ 
+                          background: "hsl(var(--card))", 
+                          border: "1px solid hsl(var(--border))",
+                          borderRadius: "8px"
+                        }} 
+                      />
+                      <Bar dataKey="students" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="flex items-center justify-center h-[250px]">
+                    <p className="text-muted-foreground">No class data available</p>
+                  </div>
+                )
               ) : (
-                <div className="space-y-3">
-                  {[
-                    { time: "08:00 - 08:45", subject: "Mathematics", room: "Room 101" },
-                    { time: "08:45 - 09:30", subject: "English", room: "Room 101" },
-                    { time: "09:45 - 10:30", subject: "Science", room: "Lab 2" },
-                    { time: "10:30 - 11:15", subject: "Hindi", room: "Room 101" },
-                    { time: "11:30 - 12:15", subject: "Social Studies", room: "Room 101" },
-                  ].map((period, i) => (
-                    <div 
-                      key={i} 
-                      className={`flex items-center justify-between p-3 rounded-lg ${
-                        i === 0 ? "bg-primary/10 border border-primary/20" : "bg-muted/50"
-                      }`}
-                    >
-                      <div>
-                        <p className={`font-medium ${i === 0 ? "text-primary" : "text-foreground"}`}>
-                          {period.subject}
-                        </p>
-                        <p className="text-sm text-muted-foreground">{period.room}</p>
-                      </div>
-                      <p className={`text-sm ${i === 0 ? "text-primary font-medium" : "text-muted-foreground"}`}>
-                        {period.time}
-                      </p>
-                    </div>
-                  ))}
+                <div className="flex items-center justify-center h-[250px]">
+                  <p className="text-muted-foreground">Schedule data will be available here</p>
                 </div>
               )}
             </CardContent>
@@ -216,39 +237,47 @@ export default function UnifiedDashboard() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="flex items-center justify-center">
-                <ResponsiveContainer width="100%" height={250}>
-                  <PieChart>
-                    <Pie
-                      data={attendanceData}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={60}
-                      outerRadius={100}
-                      paddingAngle={5}
-                      dataKey="value"
-                    >
-                      {attendanceData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.color} />
-                      ))}
-                    </Pie>
-                    <Tooltip />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-              <div className="flex justify-center gap-6 mt-4">
-                {attendanceData.map((item) => (
-                  <div key={item.name} className="flex items-center gap-2">
-                    <div 
-                      className="w-3 h-3 rounded-full" 
-                      style={{ backgroundColor: item.color }}
-                    />
-                    <span className="text-sm text-muted-foreground">
-                      {item.name} ({item.value}%)
-                    </span>
+              {attendanceData.length > 0 ? (
+                <>
+                  <div className="flex items-center justify-center">
+                    <ResponsiveContainer width="100%" height={250}>
+                      <PieChart>
+                        <Pie
+                          data={attendanceData}
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={60}
+                          outerRadius={100}
+                          paddingAngle={5}
+                          dataKey="value"
+                        >
+                          {attendanceData.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={entry.color} />
+                          ))}
+                        </Pie>
+                        <Tooltip />
+                      </PieChart>
+                    </ResponsiveContainer>
                   </div>
-                ))}
-              </div>
+                  <div className="flex justify-center gap-6 mt-4">
+                    {attendanceData.map((item) => (
+                      <div key={item.name} className="flex items-center gap-2">
+                        <div 
+                          className="w-3 h-3 rounded-full" 
+                          style={{ backgroundColor: item.color }}
+                        />
+                        <span className="text-sm text-muted-foreground">
+                          {item.name} ({item.value}%)
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <div className="flex items-center justify-center h-[250px]">
+                  <p className="text-muted-foreground">Attendance data will be available here</p>
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -259,19 +288,25 @@ export default function UnifiedDashboard() {
             <CardTitle className="text-lg">Recent Activity</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="space-y-4">
-              {recentActivities.map((activity) => (
-                <div key={activity.id} className="flex items-center gap-4">
-                  <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center">
-                    <activity.icon className="w-5 h-5 text-muted-foreground" />
+            {recentActivities.length > 0 ? (
+              <div className="space-y-4">
+                {recentActivities.map((activity) => (
+                  <div key={activity.id} className="flex items-center gap-4">
+                    <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center">
+                      <activity.icon className="w-5 h-5 text-muted-foreground" />
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-foreground">{activity.action}</p>
+                      <p className="text-xs text-muted-foreground">{activity.time}</p>
+                    </div>
                   </div>
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-foreground">{activity.action}</p>
-                    <p className="text-xs text-muted-foreground">{activity.time}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            ) : (
+              <div className="flex items-center justify-center py-8">
+                <p className="text-muted-foreground">No recent activity</p>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>

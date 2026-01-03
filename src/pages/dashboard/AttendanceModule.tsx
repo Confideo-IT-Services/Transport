@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { UnifiedLayout } from "@/components/layout/UnifiedLayout";
 import { useAuth } from "@/contexts/AuthContext";
+import { classesApi, studentsApi, attendanceApi } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -54,115 +55,160 @@ interface AttendanceRecord {
   markedAt: Date;
 }
 
-const allStudents: Student[] = [
-  { id: 1, name: "Aarav Sharma", rollNo: 1, status: "not-marked" },
-  { id: 2, name: "Ananya Patel", rollNo: 2, status: "not-marked" },
-  { id: 3, name: "Arjun Kumar", rollNo: 3, status: "not-marked" },
-  { id: 4, name: "Diya Singh", rollNo: 4, status: "not-marked" },
-  { id: 5, name: "Ishaan Gupta", rollNo: 5, status: "not-marked" },
-  { id: 6, name: "Kavya Reddy", rollNo: 6, status: "not-marked" },
-  { id: 7, name: "Lakshmi Nair", rollNo: 7, status: "not-marked" },
-  { id: 8, name: "Manav Joshi", rollNo: 8, status: "not-marked" },
-  { id: 9, name: "Neha Verma", rollNo: 9, status: "not-marked" },
-  { id: 10, name: "Omkar Desai", rollNo: 10, status: "not-marked" },
-  { id: 11, name: "Priya Menon", rollNo: 11, status: "not-marked" },
-  { id: 12, name: "Rahul Iyer", rollNo: 12, status: "not-marked" },
-];
-
-const teacherAttendance = [
-  { id: 1, name: "Mrs. Sharma", checkIn: "07:45", checkOut: "14:30", status: "present" },
-  { id: 2, name: "Mr. Singh", checkIn: "07:50", checkOut: "14:25", status: "present" },
-  { id: 3, name: "Mrs. Gupta", checkIn: "-", checkOut: "-", status: "leave" },
-  { id: 4, name: "Mr. Kumar", checkIn: "08:15", checkOut: "-", status: "late" },
-  { id: 5, name: "Mrs. Patel", checkIn: "07:55", checkOut: "14:30", status: "present" },
-];
-
-const monthlyStats = [
-  { month: "Jan", present: 22, absent: 2, leave: 1 },
-  { month: "Feb", present: 20, absent: 1, leave: 2 },
-  { month: "Mar", present: 21, absent: 2, leave: 2 },
-  { month: "Apr", present: 18, absent: 3, leave: 1 },
-];
-
-// Simulated saved attendance records
-const savedAttendanceRecords: AttendanceRecord[] = [
-  {
-    date: new Date(new Date().setDate(new Date().getDate() - 1)),
-    classId: "5A",
-    students: [
-      { id: 1, status: "present" },
-      { id: 2, status: "present" },
-      { id: 3, status: "absent" },
-      { id: 4, status: "present" },
-      { id: 5, status: "leave" },
-      { id: 6, status: "present" },
-      { id: 7, status: "present" },
-      { id: 8, status: "absent" },
-      { id: 9, status: "present" },
-      { id: 10, status: "present" },
-      { id: 11, status: "present" },
-      { id: 12, status: "leave" },
-    ],
-    markedAt: new Date(new Date().setDate(new Date().getDate() - 1)),
-  },
-  {
-    date: new Date(new Date().setDate(new Date().getDate() - 2)),
-    classId: "5A",
-    students: [
-      { id: 1, status: "present" },
-      { id: 2, status: "absent" },
-      { id: 3, status: "present" },
-      { id: 4, status: "present" },
-      { id: 5, status: "present" },
-      { id: 6, status: "present" },
-      { id: 7, status: "leave" },
-      { id: 8, status: "present" },
-      { id: 9, status: "present" },
-      { id: 10, status: "absent" },
-      { id: 11, status: "present" },
-      { id: 12, status: "present" },
-    ],
-    markedAt: new Date(new Date().setDate(new Date().getDate() - 2)),
-  },
-];
+// Removed all hardcoded data - will be fetched from API
 
 export default function AttendanceModule() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
   const [date, setDate] = useState<Date | undefined>(new Date());
   const [historyDate, setHistoryDate] = useState<Date | undefined>(undefined);
-  const [selectedClass, setSelectedClass] = useState("5A");
-  const [studentAttendance, setStudentAttendance] = useState<Student[]>(allStudents);
+  const [selectedClass, setSelectedClass] = useState("");
+  const [selectedClassId, setSelectedClassId] = useState("");
+  const [classes, setClasses] = useState<any[]>([]);
+  const [studentAttendance, setStudentAttendance] = useState<Student[]>([]);
   const [isSelfCheckedIn, setIsSelfCheckedIn] = useState(false);
   const [leaveReason, setLeaveReason] = useState("");
-  const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>(savedAttendanceRecords);
+  const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
   const [todayAttendanceTaken, setTodayAttendanceTaken] = useState(false);
+  const [teacherAttendance, setTeacherAttendance] = useState<any[]>([]);
+  const [monthlyStats, setMonthlyStats] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingTeachers, setIsLoadingTeachers] = useState(false);
 
   const today = new Date();
 
-  // Check if today's attendance is already taken
+  // Load classes on mount
   useEffect(() => {
-    const todayRecord = attendanceRecords.find(
-      r => isSameDay(r.date, today) && r.classId === selectedClass
-    );
-    
-    if (todayRecord) {
-      setTodayAttendanceTaken(true);
-      // Load saved attendance
-      const loadedStudents = allStudents.map(student => {
-        const savedStatus = todayRecord.students.find(s => s.id === student.id);
-        return {
-          ...student,
-          status: (savedStatus?.status as Student["status"]) || "not-marked"
-        };
-      });
-      setStudentAttendance(loadedStudents);
-    } else {
-      setTodayAttendanceTaken(false);
-      // Reset to not-marked for new day
-      setStudentAttendance(allStudents.map(s => ({ ...s, status: "not-marked" })));
-    }
-  }, [selectedClass]);
+    const loadClasses = async () => {
+      if (!isAdmin) return;
+      try {
+        const classesData = await classesApi.getAll();
+        setClasses(classesData || []);
+        if (classesData && classesData.length > 0) {
+          const firstClass = classesData[0];
+          setSelectedClass(`${firstClass.name}${firstClass.section ? ` - Section ${firstClass.section}` : ''}`);
+          setSelectedClassId(firstClass.id);
+        }
+      } catch (error) {
+        console.error('Error loading classes:', error);
+        toast({
+          title: "Error",
+          description: "Failed to load classes",
+          variant: "destructive"
+        });
+      }
+    };
+    loadClasses();
+  }, [isAdmin]);
+
+  // Load teacher attendance
+  useEffect(() => {
+    const loadTeacherAttendance = async () => {
+      if (!isAdmin) return;
+      setIsLoadingTeachers(true);
+      try {
+        const todayStr = format(today, "yyyy-MM-dd");
+        const data = await attendanceApi.getTeacherAttendance(todayStr);
+        setTeacherAttendance(data || []);
+      } catch (error) {
+        console.error('Error loading teacher attendance:', error);
+        setTeacherAttendance([]);
+      } finally {
+        setIsLoadingTeachers(false);
+      }
+    };
+    loadTeacherAttendance();
+  }, [isAdmin, today]);
+
+  // Load monthly stats
+  useEffect(() => {
+    const loadMonthlyStats = async () => {
+      if (!isAdmin) return;
+      try {
+        const currentDate = new Date();
+        const year = currentDate.getFullYear().toString();
+        const data = await attendanceApi.getMonthlyStats(selectedClassId || undefined, undefined, year);
+        setMonthlyStats(data || []);
+      } catch (error) {
+        console.error('Error loading monthly stats:', error);
+        setMonthlyStats([]);
+      }
+    };
+    loadMonthlyStats();
+  }, [isAdmin, selectedClassId]);
+
+  // Load students when class is selected
+  useEffect(() => {
+    const loadStudents = async () => {
+      if (!selectedClassId) {
+        setStudentAttendance([]);
+        setAttendanceRecords([]);
+        return;
+      }
+      setIsLoading(true);
+      try {
+        // Load students for the class
+        const studentsData = await studentsApi.getAll();
+        const classStudents = (studentsData || []).filter((s: any) => s.classId === selectedClassId);
+        setStudentAttendance(classStudents.map((s: any, index: number) => ({
+          id: parseInt(s.id) || index + 1,
+          name: s.name,
+          rollNo: s.rollNo || index + 1,
+          status: "not-marked" as const
+        })));
+
+        // Load today's attendance if exists
+        const todayStr = format(today, "yyyy-MM-dd");
+        try {
+          const attendanceData = await attendanceApi.getStudentAttendance(selectedClassId, todayStr);
+          if (attendanceData && attendanceData.students) {
+            setTodayAttendanceTaken(true);
+            setStudentAttendance(prev => prev.map(student => {
+              const savedStatus = attendanceData.students.find((s: any) => s.id === student.id.toString() || s.id === student.id);
+              return {
+                ...student,
+                status: (savedStatus?.status as Student["status"]) || "not-marked"
+              };
+            }));
+          } else {
+            setTodayAttendanceTaken(false);
+          }
+        } catch (error) {
+          // No attendance for today, that's okay
+          setTodayAttendanceTaken(false);
+        }
+
+        // Load attendance history
+        try {
+          const historyData = await attendanceApi.getStudentAttendanceHistory(selectedClassId);
+          if (historyData && Array.isArray(historyData)) {
+            setAttendanceRecords(historyData.map((record: any) => ({
+              date: new Date(record.date),
+              classId: record.classId || selectedClassId,
+              students: record.students || [],
+              markedAt: new Date(record.markedAt || record.date)
+            })));
+          }
+        } catch (error) {
+          console.error('Error loading attendance history:', error);
+          setAttendanceRecords([]);
+        }
+      } catch (error) {
+        console.error('Error loading students:', error);
+        setStudentAttendance([]);
+        toast({
+          title: "Error",
+          description: "Failed to load students",
+          variant: "destructive"
+        });
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    loadStudents();
+  }, [selectedClassId, today]);
+
+  // This is now handled in the loadStudents useEffect above
 
   const updateStudentStatus = (id: number, status: Student["status"]) => {
     setStudentAttendance(prev => 
@@ -174,7 +220,16 @@ export default function AttendanceModule() {
     setStudentAttendance(prev => prev.map(s => ({ ...s, status: "present" })));
   };
 
-  const saveAttendance = () => {
+  const saveAttendance = async () => {
+    if (!selectedClassId) {
+      toast({
+        title: "Error",
+        description: "Please select a class",
+        variant: "destructive"
+      });
+      return;
+    }
+
     const unmarked = studentAttendance.filter(s => s.status === "not-marked");
     if (unmarked.length > 0) {
       toast({
@@ -185,39 +240,55 @@ export default function AttendanceModule() {
       return;
     }
 
-    const newRecord: AttendanceRecord = {
-      date: today,
-      classId: selectedClass,
-      students: studentAttendance.map(s => ({ id: s.id, status: s.status })),
-      markedAt: new Date(),
-    };
+    try {
+      const todayStr = format(today, "yyyy-MM-dd");
+      await attendanceApi.saveStudentAttendance({
+        classId: selectedClassId,
+        date: todayStr,
+        students: studentAttendance.map(s => ({ id: s.id.toString(), status: s.status }))
+      });
 
-    // Update or add record
-    const existingIndex = attendanceRecords.findIndex(
-      r => isSameDay(r.date, today) && r.classId === selectedClass
-    );
+      // Update local state
+      const newRecord: AttendanceRecord = {
+        date: today,
+        classId: selectedClassId,
+        students: studentAttendance.map(s => ({ id: s.id, status: s.status })),
+        markedAt: new Date(),
+      };
 
-    if (existingIndex >= 0) {
-      const updated = [...attendanceRecords];
-      updated[existingIndex] = newRecord;
-      setAttendanceRecords(updated);
-      toast({ title: "Attendance Updated", description: `Attendance for Class ${selectedClass} has been updated.` });
-    } else {
-      setAttendanceRecords([...attendanceRecords, newRecord]);
-      toast({ title: "Attendance Saved", description: `Attendance for Class ${selectedClass} has been saved.` });
+      const existingIndex = attendanceRecords.findIndex(
+        r => isSameDay(r.date, today) && r.classId === selectedClassId
+      );
+
+      if (existingIndex >= 0) {
+        const updated = [...attendanceRecords];
+        updated[existingIndex] = newRecord;
+        setAttendanceRecords(updated);
+        toast({ title: "Attendance Updated", description: `Attendance for ${selectedClass} has been updated.` });
+      } else {
+        setAttendanceRecords([...attendanceRecords, newRecord]);
+        toast({ title: "Attendance Saved", description: `Attendance for ${selectedClass} has been saved.` });
+      }
+      
+      setTodayAttendanceTaken(true);
+    } catch (error: any) {
+      console.error('Error saving attendance:', error);
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to save attendance",
+        variant: "destructive"
+      });
     }
-    
-    setTodayAttendanceTaken(true);
   };
 
   // Get history for selected date
   const getHistoryForDate = (d: Date) => {
-    return attendanceRecords.find(r => isSameDay(r.date, d) && r.classId === selectedClass);
+    return attendanceRecords.find(r => isSameDay(r.date, d) && r.classId === selectedClassId);
   };
 
   // Dates with attendance records (for calendar highlighting)
   const attendanceDates = attendanceRecords
-    .filter(r => r.classId === selectedClass)
+    .filter(r => r.classId === selectedClassId)
     .map(r => r.date);
 
   const presentCount = studentAttendance.filter(s => s.status === "present").length;
@@ -264,7 +335,7 @@ export default function AttendanceModule() {
                         <CheckCircle2 className="w-6 h-6 text-secondary" />
                       </div>
                       <div>
-                        <p className="text-2xl font-bold">24</p>
+                        <p className="text-2xl font-bold">{teacherAttendance.filter(t => t.status === "present").length}</p>
                         <p className="text-sm text-muted-foreground">Present</p>
                       </div>
                     </div>
@@ -277,7 +348,7 @@ export default function AttendanceModule() {
                         <XCircle className="w-6 h-6 text-destructive" />
                       </div>
                       <div>
-                        <p className="text-2xl font-bold">1</p>
+                        <p className="text-2xl font-bold">{teacherAttendance.filter(t => t.status === "absent" || t.status === "leave").length}</p>
                         <p className="text-sm text-muted-foreground">Absent</p>
                       </div>
                     </div>
@@ -290,7 +361,7 @@ export default function AttendanceModule() {
                         <AlertCircle className="w-6 h-6 text-accent" />
                       </div>
                       <div>
-                        <p className="text-2xl font-bold">2</p>
+                        <p className="text-2xl font-bold">{teacherAttendance.filter(t => t.status === "leave").length}</p>
                         <p className="text-sm text-muted-foreground">On Leave</p>
                       </div>
                     </div>
@@ -303,7 +374,7 @@ export default function AttendanceModule() {
                         <Clock className="w-6 h-6 text-primary" />
                       </div>
                       <div>
-                        <p className="text-2xl font-bold">1</p>
+                        <p className="text-2xl font-bold">{teacherAttendance.filter(t => t.status === "late").length}</p>
                         <p className="text-sm text-muted-foreground">Late</p>
                       </div>
                     </div>
@@ -327,31 +398,45 @@ export default function AttendanceModule() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {teacherAttendance.map((teacher) => (
-                        <TableRow key={teacher.id}>
-                          <TableCell className="font-medium">{teacher.name}</TableCell>
-                          <TableCell>{teacher.checkIn}</TableCell>
-                          <TableCell>{teacher.checkOut}</TableCell>
-                          <TableCell>
-                            <Badge 
-                              variant={
-                                teacher.status === "present" ? "default" :
-                                teacher.status === "late" ? "secondary" :
-                                teacher.status === "leave" ? "outline" : "destructive"
-                              }
-                              className={
-                                teacher.status === "present" ? "bg-secondary" : 
-                                teacher.status === "late" ? "bg-accent text-accent-foreground" : ""
-                              }
-                            >
-                              {teacher.status}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <Button variant="ghost" size="sm">View History</Button>
+                      {isLoadingTeachers ? (
+                        <TableRow>
+                          <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                            Loading teacher attendance...
                           </TableCell>
                         </TableRow>
-                      ))}
+                      ) : teacherAttendance.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                            No teacher attendance data available
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        teacherAttendance.map((teacher) => (
+                          <TableRow key={teacher.id}>
+                            <TableCell className="font-medium">{teacher.name || teacher.teacherName}</TableCell>
+                            <TableCell>{teacher.checkIn || teacher.checkInTime || "-"}</TableCell>
+                            <TableCell>{teacher.checkOut || teacher.checkOutTime || "-"}</TableCell>
+                            <TableCell>
+                              <Badge 
+                                variant={
+                                  teacher.status === "present" ? "default" :
+                                  teacher.status === "late" ? "secondary" :
+                                  teacher.status === "leave" ? "outline" : "destructive"
+                                }
+                                className={
+                                  teacher.status === "present" ? "bg-secondary" : 
+                                  teacher.status === "late" ? "bg-accent text-accent-foreground" : ""
+                                }
+                              >
+                                {teacher.status}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <Button variant="ghost" size="sm">View History</Button>
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      )}
                     </TableBody>
                   </Table>
                 </CardContent>
@@ -399,7 +484,7 @@ export default function AttendanceModule() {
                     <Button 
                       variant="outline" 
                       className="w-full justify-start"
-                      onClick={() => setStudentAttendance(allStudents.map(s => ({ ...s, status: "not-marked" })))}
+                      onClick={() => setStudentAttendance(prev => prev.map(s => ({ ...s, status: "not-marked" })))}
                     >
                       <XCircle className="w-4 h-4 mr-2 text-muted-foreground" />
                       Reset All
@@ -461,14 +546,23 @@ export default function AttendanceModule() {
                     </CardTitle>
                     <div className="flex items-center gap-2">
                       {isAdmin && (
-                        <Select value={selectedClass} onValueChange={setSelectedClass}>
+                        <Select 
+                          value={selectedClassId} 
+                          onValueChange={(value) => {
+                            setSelectedClassId(value);
+                            const selected = classes.find(c => c.id === value);
+                            setSelectedClass(selected ? `${selected.name}${selected.section ? ` - Section ${selected.section}` : ''}` : "");
+                          }}
+                        >
                           <SelectTrigger className="w-32">
-                            <SelectValue />
+                            <SelectValue placeholder="Select class" />
                           </SelectTrigger>
                           <SelectContent className="bg-card">
-                            <SelectItem value="5A">Class 5A</SelectItem>
-                            <SelectItem value="5B">Class 5B</SelectItem>
-                            <SelectItem value="4A">Class 4A</SelectItem>
+                            {classes.map((cls) => (
+                              <SelectItem key={cls.id} value={cls.id}>
+                                {cls.name}{cls.section ? ` - Section ${cls.section}` : ''}
+                              </SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                       )}
@@ -476,17 +570,26 @@ export default function AttendanceModule() {
                   </div>
                 </CardHeader>
                 <CardContent>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="w-16">Roll</TableHead>
-                        <TableHead>Student Name</TableHead>
-                        <TableHead className="text-center">Status</TableHead>
-                        <TableHead className="text-right">Mark Attendance</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {studentAttendance.map((student) => (
+                  {isLoading ? (
+                    <div className="text-center py-12 text-muted-foreground">
+                      <p>Loading students...</p>
+                    </div>
+                  ) : studentAttendance.length === 0 ? (
+                    <div className="text-center py-12 text-muted-foreground">
+                      <p>{selectedClassId ? "No students found for this class" : "Please select a class"}</p>
+                    </div>
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-16">Roll</TableHead>
+                          <TableHead>Student Name</TableHead>
+                          <TableHead className="text-center">Status</TableHead>
+                          <TableHead className="text-right">Mark Attendance</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {studentAttendance.map((student) => (
                         <TableRow key={student.id} className={student.status === "not-marked" ? "bg-muted/30" : ""}>
                           <TableCell className="font-medium">{student.rollNo}</TableCell>
                           <TableCell>{student.name}</TableCell>
@@ -532,9 +635,10 @@ export default function AttendanceModule() {
                             </div>
                           </TableCell>
                         </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
                   <div className="mt-4 flex justify-between items-center">
                     <p className="text-sm text-muted-foreground">
                       {studentAttendance.filter(s => s.status === "not-marked").length > 0 
@@ -646,18 +750,24 @@ export default function AttendanceModule() {
                   <CardTitle className="text-lg">My Attendance History</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="grid grid-cols-4 gap-4">
-                    {monthlyStats.map((stat) => (
-                      <div key={stat.month} className="text-center p-4 rounded-lg bg-muted/50">
-                        <p className="font-semibold text-lg">{stat.month}</p>
-                        <div className="mt-2 space-y-1 text-sm">
-                          <p className="text-secondary">Present: {stat.present}</p>
-                          <p className="text-destructive">Absent: {stat.absent}</p>
-                          <p className="text-accent">Leave: {stat.leave}</p>
+                  {monthlyStats.length === 0 ? (
+                    <div className="text-center py-12 text-muted-foreground">
+                      <p>No monthly statistics available</p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-4 gap-4">
+                      {monthlyStats.map((stat) => (
+                        <div key={stat.month} className="text-center p-4 rounded-lg bg-muted/50">
+                          <p className="font-semibold text-lg">{stat.month}</p>
+                          <div className="mt-2 space-y-1 text-sm">
+                            <p className="text-secondary">Present: {stat.present || 0}</p>
+                            <p className="text-destructive">Absent: {stat.absent || 0}</p>
+                            <p className="text-accent">Leave: {stat.leave || 0}</p>
+                          </div>
                         </div>
-                      </div>
-                    ))}
-                  </div>
+                      ))}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </TabsContent>
@@ -717,7 +827,7 @@ export default function AttendanceModule() {
                         <div className="text-center py-12 text-muted-foreground">
                           <Info className="w-12 h-12 mx-auto mb-4 opacity-50" />
                           <p>No attendance record for this date</p>
-                          <p className="text-sm mt-2">Class {selectedClass}</p>
+                          <p className="text-sm mt-2">{selectedClass || "No class selected"}</p>
                         </div>
                       );
                     }
@@ -756,11 +866,11 @@ export default function AttendanceModule() {
                             </TableHeader>
                             <TableBody>
                               {record.students.map((s) => {
-                                const student = allStudents.find(st => st.id === s.id);
+                                const student = studentAttendance.find(st => st.id === s.id || st.id.toString() === s.id.toString());
                                 return (
                                   <TableRow key={s.id}>
-                                    <TableCell>{student?.rollNo}</TableCell>
-                                    <TableCell>{student?.name}</TableCell>
+                                    <TableCell>{student?.rollNo || s.id}</TableCell>
+                                    <TableCell>{student?.name || `Student ${s.id}`}</TableCell>
                                     <TableCell className="text-right">
                                       <Badge 
                                         className={

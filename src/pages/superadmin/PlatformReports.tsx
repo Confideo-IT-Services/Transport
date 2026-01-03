@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { BarChart3, Download, Building2, Users, GraduationCap, TrendingUp } from "lucide-react";
+import { schoolsApi } from "@/lib/api";
 import {
   Select,
   SelectContent,
@@ -25,33 +26,79 @@ import {
   Cell,
 } from "recharts";
 
-const monthlyGrowth = [
-  { month: "Jan", schools: 8, students: 2400, teachers: 180 },
-  { month: "Feb", schools: 12, students: 3600, teachers: 260 },
-  { month: "Mar", schools: 18, students: 5400, teachers: 380 },
-  { month: "Apr", schools: 22, students: 6800, teachers: 480 },
-  { month: "May", schools: 28, students: 8800, teachers: 610 },
-  { month: "Jun", schools: 35, students: 12450, teachers: 856 },
-];
-
-const schoolsByRegion = [
-  { region: "Northeast", count: 12 },
-  { region: "Southeast", count: 8 },
-  { region: "Midwest", count: 6 },
-  { region: "Southwest", count: 5 },
-  { region: "West", count: 4 },
-];
-
-const schoolTypeDistribution = [
-  { name: "Primary", value: 18, color: "hsl(var(--primary))" },
-  { name: "Secondary", value: 12, color: "hsl(var(--secondary))" },
-  { name: "High School", value: 8, color: "hsl(var(--accent))" },
-  { name: "K-12", value: 5, color: "hsl(var(--muted-foreground))" },
-];
-
 export default function PlatformReports() {
   const navigate = useNavigate();
   const [period, setPeriod] = useState("6months");
+  const [stats, setStats] = useState({
+    totalSchools: 0,
+    totalStudents: 0,
+    totalTeachers: 0,
+    avgStudentsPerSchool: 0,
+  });
+  const [schools, setSchools] = useState<any[]>([]);
+  const [monthlyGrowth, setMonthlyGrowth] = useState<any[]>([]);
+  const [schoolsByRegion, setSchoolsByRegion] = useState<any[]>([]);
+  const [schoolTypeDistribution, setSchoolTypeDistribution] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    loadReportData();
+  }, [period]);
+
+  const loadReportData = async () => {
+    try {
+      setIsLoading(true);
+      const schoolsData = await schoolsApi.getAll();
+      
+      // Calculate stats
+      const totalSchools = schoolsData.length;
+      const totalStudents = schoolsData.reduce((sum, s) => sum + (s.students || 0), 0);
+      const totalTeachers = schoolsData.reduce((sum, s) => sum + (s.teachers || 0), 0);
+      const avgStudentsPerSchool = totalSchools > 0 ? Math.round(totalStudents / totalSchools) : 0;
+
+      setStats({
+        totalSchools,
+        totalStudents,
+        totalTeachers,
+        avgStudentsPerSchool,
+      });
+
+      setSchools(schoolsData);
+
+      // Generate monthly growth data from real data
+      // For now, show empty until we have time-based data
+      setMonthlyGrowth([]);
+      setSchoolsByRegion([]);
+      
+      // Generate school type distribution from real data
+      const typeDist = schoolsData.reduce((acc, school) => {
+        const type = school.type || 'Unknown';
+        const existing = acc.find(item => item.name === type);
+        if (existing) {
+          existing.value++;
+        } else {
+          acc.push({ 
+            name: type, 
+            value: 1, 
+            color: type === 'Primary' ? "hsl(var(--primary))" :
+                   type === 'Secondary' ? "hsl(var(--secondary))" :
+                   type === 'High School' ? "hsl(var(--accent))" :
+                   "hsl(var(--muted-foreground))"
+          });
+        }
+        return acc;
+      }, [] as any[]);
+      setSchoolTypeDistribution(typeDist);
+    } catch (error) {
+      console.error('Failed to load report data:', error);
+      setStats({ totalSchools: 0, totalStudents: 0, totalTeachers: 0, avgStudentsPerSchool: 0 });
+      setMonthlyGrowth([]);
+      setSchoolsByRegion([]);
+      setSchoolTypeDistribution([]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleLogout = () => {
     navigate("/");
@@ -91,60 +138,44 @@ export default function PlatformReports() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Total Schools</p>
-                <p className="text-2xl font-bold text-foreground mt-1">35</p>
+                <p className="text-2xl font-bold text-foreground mt-1">{stats.totalSchools}</p>
               </div>
               <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
                 <Building2 className="w-5 h-5 text-primary" />
               </div>
-            </div>
-            <div className="flex items-center gap-1 mt-2 text-xs text-success">
-              <TrendingUp className="w-3 h-3" />
-              +25% this period
             </div>
           </div>
           <div className="bg-card rounded-xl border border-border p-4 shadow-card">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Total Students</p>
-                <p className="text-2xl font-bold text-foreground mt-1">12,450</p>
+                <p className="text-2xl font-bold text-foreground mt-1">{stats.totalStudents.toLocaleString()}</p>
               </div>
               <div className="w-10 h-10 rounded-lg bg-secondary/10 flex items-center justify-center">
                 <GraduationCap className="w-5 h-5 text-secondary" />
               </div>
-            </div>
-            <div className="flex items-center gap-1 mt-2 text-xs text-success">
-              <TrendingUp className="w-3 h-3" />
-              +41% this period
             </div>
           </div>
           <div className="bg-card rounded-xl border border-border p-4 shadow-card">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Total Teachers</p>
-                <p className="text-2xl font-bold text-foreground mt-1">856</p>
+                <p className="text-2xl font-bold text-foreground mt-1">{stats.totalTeachers.toLocaleString()}</p>
               </div>
               <div className="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center">
                 <Users className="w-5 h-5 text-accent" />
               </div>
-            </div>
-            <div className="flex items-center gap-1 mt-2 text-xs text-success">
-              <TrendingUp className="w-3 h-3" />
-              +38% this period
             </div>
           </div>
           <div className="bg-card rounded-xl border border-border p-4 shadow-card">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Avg Students/School</p>
-                <p className="text-2xl font-bold text-foreground mt-1">356</p>
+                <p className="text-2xl font-bold text-foreground mt-1">{stats.avgStudentsPerSchool}</p>
               </div>
               <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center">
                 <BarChart3 className="w-5 h-5 text-muted-foreground" />
               </div>
-            </div>
-            <div className="flex items-center gap-1 mt-2 text-xs text-success">
-              <TrendingUp className="w-3 h-3" />
-              +12% this period
             </div>
           </div>
         </div>
@@ -153,8 +184,9 @@ export default function PlatformReports() {
         <div className="bg-card rounded-xl border border-border p-6 shadow-card">
           <h3 className="section-title">Platform Growth</h3>
           <div className="h-80 mt-4">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={monthlyGrowth}>
+            {monthlyGrowth.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={monthlyGrowth}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                 <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" fontSize={12} />
                 <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} />
@@ -183,6 +215,11 @@ export default function PlatformReports() {
                 />
               </AreaChart>
             </ResponsiveContainer>
+            ) : (
+              <div className="flex items-center justify-center h-full text-muted-foreground">
+                No growth data available
+              </div>
+            )}
           </div>
         </div>
 
@@ -192,8 +229,9 @@ export default function PlatformReports() {
           <div className="bg-card rounded-xl border border-border p-6 shadow-card">
             <h3 className="section-title">Schools by Region</h3>
             <div className="h-64 mt-4">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={schoolsByRegion} layout="vertical">
+              {schoolsByRegion.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={schoolsByRegion} layout="vertical">
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                   <XAxis type="number" stroke="hsl(var(--muted-foreground))" fontSize={12} />
                   <YAxis
@@ -213,51 +251,64 @@ export default function PlatformReports() {
                   <Bar dataKey="count" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]} />
                 </BarChart>
               </ResponsiveContainer>
+              ) : (
+                <div className="flex items-center justify-center h-full text-muted-foreground">
+                  No region data available
+                </div>
+              )}
             </div>
           </div>
 
           {/* School Type Distribution */}
           <div className="bg-card rounded-xl border border-border p-6 shadow-card">
             <h3 className="section-title">School Type Distribution</h3>
-            <div className="h-64 mt-4 flex items-center">
-              <ResponsiveContainer width="50%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={schoolTypeDistribution}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={50}
-                    outerRadius={80}
-                    paddingAngle={2}
-                    dataKey="value"
-                  >
-                    {schoolTypeDistribution.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.color} />
-                    ))}
-                  </Pie>
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: "hsl(var(--card))",
-                      border: "1px solid hsl(var(--border))",
-                      borderRadius: "8px",
-                    }}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
-              <div className="flex-1 space-y-3">
-                {schoolTypeDistribution.map((item, index) => (
-                  <div key={index} className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div
-                        className="w-3 h-3 rounded-full"
-                        style={{ backgroundColor: item.color }}
+            <div className="h-64 mt-4">
+              {schoolTypeDistribution.length > 0 ? (
+                <div className="flex items-center h-full">
+                  <ResponsiveContainer width="50%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={schoolTypeDistribution}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={50}
+                        outerRadius={80}
+                        paddingAngle={2}
+                        dataKey="value"
+                      >
+                        {schoolTypeDistribution.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: "hsl(var(--card))",
+                          border: "1px solid hsl(var(--border))",
+                          borderRadius: "8px",
+                        }}
                       />
-                      <span className="text-sm">{item.name}</span>
-                    </div>
-                    <span className="font-medium">{item.value}</span>
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="flex-1 space-y-3">
+                    {schoolTypeDistribution.map((item, index) => (
+                      <div key={index} className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <div
+                            className="w-3 h-3 rounded-full"
+                            style={{ backgroundColor: item.color }}
+                          />
+                          <span className="text-sm">{item.name}</span>
+                        </div>
+                        <span className="font-medium">{item.value}</span>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
+                </div>
+              ) : (
+                <div className="flex items-center justify-center h-full text-muted-foreground">
+                  No data available
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -278,26 +329,31 @@ export default function PlatformReports() {
                 </tr>
               </thead>
               <tbody>
-                {[
-                  { rank: 1, name: "Riverside High School", students: 1200, teachers: 85, attendance: "96%", growth: "+18%" },
-                  { rank: 2, name: "Lakeside Secondary", students: 890, teachers: 62, attendance: "94%", growth: "+15%" },
-                  { rank: 3, name: "Greenwood Academy", students: 680, teachers: 48, attendance: "93%", growth: "+12%" },
-                  { rank: 4, name: "Springfield Elementary", students: 450, teachers: 32, attendance: "95%", growth: "+10%" },
-                  { rank: 5, name: "Mountain View School", students: 320, teachers: 24, attendance: "92%", growth: "+8%" },
-                ].map((school) => (
-                  <tr key={school.rank} className="border-b border-border last:border-0">
-                    <td className="py-3 px-4">
-                      <span className="w-6 h-6 rounded-full bg-primary/10 text-primary text-sm font-medium flex items-center justify-center">
-                        {school.rank}
-                      </span>
+                {schools.length > 0 ? (
+                  schools
+                    .sort((a, b) => (b.students || 0) - (a.students || 0))
+                    .slice(0, 5)
+                    .map((school, index) => (
+                      <tr key={school.id} className="border-b border-border last:border-0">
+                        <td className="py-3 px-4">
+                          <span className="w-6 h-6 rounded-full bg-primary/10 text-primary text-sm font-medium flex items-center justify-center">
+                            {index + 1}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 font-medium">{school.name}</td>
+                        <td className="py-3 px-4">{school.students || 0}</td>
+                        <td className="py-3 px-4">{school.teachers || 0}</td>
+                        <td className="py-3 px-4">-</td>
+                        <td className="py-3 px-4 text-muted-foreground">-</td>
+                      </tr>
+                    ))
+                ) : (
+                  <tr>
+                    <td colSpan={6} className="py-8 text-center text-muted-foreground">
+                      No schools data available
                     </td>
-                    <td className="py-3 px-4 font-medium">{school.name}</td>
-                    <td className="py-3 px-4">{school.students}</td>
-                    <td className="py-3 px-4">{school.teachers}</td>
-                    <td className="py-3 px-4">{school.attendance}</td>
-                    <td className="py-3 px-4 text-success font-medium">{school.growth}</td>
                   </tr>
-                ))}
+                )}
               </tbody>
             </table>
           </div>

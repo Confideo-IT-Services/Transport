@@ -15,7 +15,7 @@ router.post('/', authenticateToken, requireSuperAdmin, async (req, res) => {
     }
 
     // Check if school exists
-    const [schools] = await db.query('SELECT id FROM schools WHERE id = ?', [schoolId]);
+    const [schools] = await db.query('SELECT id, name FROM schools WHERE id = ?', [schoolId]);
     if (schools.length === 0) {
       return res.status(404).json({ error: 'School not found' });
     }
@@ -30,15 +30,27 @@ router.post('/', authenticateToken, requireSuperAdmin, async (req, res) => {
     const adminId = uuidv4();
     const hashedPassword = await bcrypt.hash(password, 10);
     
-    await db.query(
+    const [result] = await db.query(
       `INSERT INTO users (id, email, password, name, role, school_id, is_active, created_at)
        VALUES (?, ?, ?, ?, 'admin', ?, true, NOW())`,
       [adminId, email, hashedPassword, name, schoolId]
     );
 
-    res.status(201).json({ success: true });
+    console.log('✅ School admin created:', { adminId, email, name, schoolId, schoolName: schools[0].name });
+
+    res.status(201).json({ 
+      success: true,
+      adminId,
+      message: 'School admin created successfully'
+    });
   } catch (error) {
-    console.error('Create school admin error:', error);
+    console.error('❌ Create school admin error:', error);
+    console.error('Error details:', {
+      code: error.code,
+      errno: error.errno,
+      sqlState: error.sqlState,
+      sqlMessage: error.sqlMessage
+    });
     res.status(500).json({ error: 'Failed to create admin' });
   }
 });

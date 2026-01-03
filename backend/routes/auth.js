@@ -13,6 +13,8 @@ router.post('/superadmin/login', async (req, res) => {
       return res.status(400).json({ error: 'Email and password are required' });
     }
 
+    console.log('🔐 Super admin login attempt:', email);
+
     // Check for super admin in users table
     const [users] = await db.query(
       'SELECT * FROM users WHERE email = ? AND role = ?',
@@ -20,17 +22,39 @@ router.post('/superadmin/login', async (req, res) => {
     );
 
     if (users.length === 0) {
+      console.log('❌ Super admin login failed: User not found');
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
     const user = users[0];
-    const validPassword = await bcrypt.compare(password, user.password);
+    console.log('👤 Super admin found:', { id: user.id, name: user.name, email: user.email, is_active: user.is_active });
+    console.log('🔑 Password check - stored password starts with:', user.password ? user.password.substring(0, 10) : 'null');
+
+    // Check if password is hashed (bcrypt hashes start with $2a$ or $2b$)
+    let validPassword = false;
+    if (user.password && (user.password.startsWith('$2a$') || user.password.startsWith('$2b$'))) {
+      // Password is hashed, use bcrypt compare
+      validPassword = await bcrypt.compare(password, user.password);
+      console.log('🔐 Using bcrypt comparison');
+    } else {
+      // Password is plain text (for migration purposes)
+      validPassword = password === user.password;
+      console.log('⚠️  Password stored as plain text - using direct comparison');
+      console.log('⚠️  WARNING: Please update password to use bcrypt hash!');
+    }
 
     if (!validPassword) {
+      console.log('❌ Super admin login failed: Invalid password');
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
+    if (!user.is_active) {
+      console.log('❌ Super admin login failed: Account deactivated');
+      return res.status(403).json({ error: 'Account is deactivated' });
+    }
+
     const token = generateToken(user);
+    console.log('✅ Super admin login successful:', { id: user.id, email: user.email });
 
     res.json({
       token,
@@ -42,7 +66,13 @@ router.post('/superadmin/login', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Super admin login error:', error);
+    console.error('❌ Super admin login error:', error);
+    console.error('Error details:', {
+      code: error.code,
+      errno: error.errno,
+      sqlState: error.sqlState,
+      sqlMessage: error.sqlMessage
+    });
     res.status(500).json({ error: 'Login failed' });
   }
 });
@@ -56,6 +86,8 @@ router.post('/admin/login', async (req, res) => {
       return res.status(400).json({ error: 'Email and password are required' });
     }
 
+    console.log('🔐 Admin login attempt:', email);
+
     // Check for admin in users table with school info
     const [users] = await db.query(
       `SELECT u.*, s.name as school_name, s.code as school_code 
@@ -66,21 +98,27 @@ router.post('/admin/login', async (req, res) => {
     );
 
     if (users.length === 0) {
+      console.log('❌ Admin login failed: User not found');
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
     const user = users[0];
-    const validPassword = await bcrypt.compare(password, user.password);
-
-    if (!validPassword) {
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
+    console.log('👤 User found:', { id: user.id, name: user.name, email: user.email, is_active: user.is_active });
 
     if (!user.is_active) {
+      console.log('❌ Admin login failed: Account deactivated');
       return res.status(403).json({ error: 'Account is deactivated' });
     }
 
+    const validPassword = await bcrypt.compare(password, user.password);
+
+    if (!validPassword) {
+      console.log('❌ Admin login failed: Invalid password');
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
     const token = generateToken(user);
+    console.log('✅ Admin login successful:', { id: user.id, email: user.email, schoolId: user.school_id });
 
     res.json({
       token,
@@ -94,7 +132,13 @@ router.post('/admin/login', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Admin login error:', error);
+    console.error('❌ Admin login error:', error);
+    console.error('Error details:', {
+      code: error.code,
+      errno: error.errno,
+      sqlState: error.sqlState,
+      sqlMessage: error.sqlMessage
+    });
     res.status(500).json({ error: 'Login failed' });
   }
 });

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { UnifiedLayout } from "@/components/layout/UnifiedLayout";
 import { useAuth } from "@/contexts/AuthContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { teachersApi, classesApi } from "@/lib/api";
+import { useToast } from "@/hooks/use-toast";
 import {
   Dialog,
   DialogContent,
@@ -36,77 +38,25 @@ const academicYears = [
   { id: 2, name: "2023-24", status: "completed", startDate: "Apr 2023", endDate: "Mar 2024" },
 ];
 
-const initialClassesData = [
-  { 
-    id: 1, 
-    name: "Class 1", 
-    sections: [
-      { name: "A", students: 42, classTeacher: "Mrs. Sharma" },
-      { name: "B", students: 43, classTeacher: "Mrs. Verma" },
-    ]
-  },
-  { 
-    id: 2, 
-    name: "Class 2", 
-    sections: [
-      { name: "A", students: 40, classTeacher: "Mr. Singh" },
-      { name: "B", students: 44, classTeacher: "Mrs. Rao" },
-      { name: "C", students: 42, classTeacher: "Mr. Das" },
-    ]
-  },
-  { 
-    id: 3, 
-    name: "Class 3", 
-    sections: [
-      { name: "A", students: 45, classTeacher: "Mrs. Gupta" },
-      { name: "B", students: 45, classTeacher: "Mr. Joshi" },
-    ]
-  },
-  { 
-    id: 4, 
-    name: "Class 4", 
-    sections: [
-      { name: "A", students: 44, classTeacher: "Mr. Kumar" },
-      { name: "B", students: 44, classTeacher: "Mrs. Nair" },
-    ]
-  },
-  { 
-    id: 5, 
-    name: "Class 5", 
-    sections: [
-      { name: "A", students: 46, classTeacher: "Mrs. Patel" },
-      { name: "B", students: 46, classTeacher: "Mr. Reddy" },
-    ]
-  },
-];
-
-const initialSubjects = [
-  "Mathematics", "English", "Hindi", "Science", "Social Studies", "Computer", "Art", "Physical Education", "Music"
-];
-
-const initialTeachers = [
-  { id: 1, name: "Mrs. Sharma", subjects: ["Mathematics"] },
-  { id: 2, name: "Mr. Singh", subjects: ["English", "Hindi"] },
-  { id: 3, name: "Mrs. Gupta", subjects: ["Science"] },
-  { id: 4, name: "Mr. Kumar", subjects: ["Social Studies"] },
-  { id: 5, name: "Mrs. Patel", subjects: ["Computer", "Art"] },
-  { id: 6, name: "Mrs. Verma", subjects: ["Mathematics"] },
-  { id: 7, name: "Mrs. Rao", subjects: ["English"] },
-  { id: 8, name: "Mr. Das", subjects: ["Hindi"] },
-  { id: 9, name: "Mr. Joshi", subjects: ["Science"] },
-  { id: 10, name: "Mrs. Nair", subjects: ["Social Studies"] },
-  { id: 11, name: "Mr. Reddy", subjects: ["Computer"] },
-];
+// Hardcoded data removed - will load from API
 
 export default function AcademicSetup() {
   const { user } = useAuth();
+  const { toast } = useToast();
   const isAdmin = user?.role === "admin";
   const [isAddClassOpen, setIsAddClassOpen] = useState(false);
   const [isAddTeacherOpen, setIsAddTeacherOpen] = useState(false);
   const [selectedClass, setSelectedClass] = useState<string>("");
-  const [teachers, setTeachers] = useState(initialTeachers);
-  const [subjects, setSubjects] = useState(initialSubjects);
-  const [classesData, setClassesData] = useState(initialClassesData);
+  const [teachers, setTeachers] = useState<any[]>([]);
+  const [subjects, setSubjects] = useState<string[]>([]);
+  const [classesData, setClassesData] = useState<any[]>([]);
+  
+  // New class form state
+  const [newClass, setNewClass] = useState({
+    name: "",
+    section: "",
+    classTeacherId: "",
+  });
   
   // New teacher form state
   const [newTeacher, setNewTeacher] = useState({
@@ -120,6 +70,118 @@ export default function AcademicSetup() {
   // Class teacher assignment state
   const [selectedSectionForAssign, setSelectedSectionForAssign] = useState<{className: string, sectionName: string} | null>(null);
   const [selectedTeacherForAssign, setSelectedTeacherForAssign] = useState<string>("");
+
+  // Function to load classes from API and transform to nested structure
+  const loadClasses = async () => {
+    try {
+      const classesDataRaw = await classesApi.getAll();
+      
+      // Transform flat API response to nested structure
+      // API returns: [{ id, name, section, classTeacherId, studentCount, ... }, ...]
+      // Component expects: [{ name, sections: [{ name, students, classTeacher }, ...] }, ...]
+      const classesMap = new Map<string, any>();
+      
+      if (Array.isArray(classesDataRaw)) {
+        classesDataRaw.forEach((cls: any) => {
+          if (!cls || !cls.name) return; // Skip invalid entries
+          
+          const key = cls.name;
+          if (!classesMap.has(key)) {
+            classesMap.set(key, {
+              id: cls.id || `temp-${key}`,
+              name: cls.name,
+              sections: []
+            });
+          }
+          
+          const classData = classesMap.get(key);
+          if (classData) {
+            classData.sections.push({
+              name: cls.section || '',
+              students: cls.studentCount || 0,
+              classTeacher: cls.classTeacherId || ''
+            });
+          }
+        });
+      }
+      
+      setClassesData(Array.from(classesMap.values()));
+    } catch (error) {
+      console.error('Error loading classes:', error);
+      // Keep classesData as empty array on error
+    }
+  };
+
+  // Fetch teachers and classes from API on component mount
+  useEffect(() => {
+    const loadTeachers = async () => {
+      try {
+        const teachersData = await teachersApi.getAll();
+        setTeachers(teachersData || []);
+      } catch (error) {
+        console.error('Error loading teachers:', error);
+        // Keep teachers as empty array on error
+      }
+    };
+    
+    if (isAdmin) {
+      loadTeachers();
+      loadClasses(); // Load classes on mount
+    }
+  }, [isAdmin]);
+
+  // Handle create class with proper error handling
+  const handleCreateClass = async () => {
+    try {
+      // Validate inputs
+      if (!newClass.name || !newClass.name.trim()) {
+        toast({
+          title: "Validation Error",
+          description: "Please enter a class name",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      if (!newClass.section || !newClass.section.trim()) {
+        toast({
+          title: "Validation Error",
+          description: "Please enter a section",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      // Call API to create class
+      await classesApi.create({
+        name: newClass.name.trim(),
+        section: newClass.section.trim(),
+        classTeacherId: newClass.classTeacherId && newClass.classTeacherId.trim() ? newClass.classTeacherId : undefined,
+      });
+      
+      // Show success message
+      toast({
+        title: "Success",
+        description: "Class created successfully",
+      });
+      
+      // Reset form and close dialog
+      setNewClass({ name: "", section: "", classTeacherId: "" });
+      setIsAddClassOpen(false);
+      
+      // Reload classes to show the new class
+      await loadClasses();
+      
+    } catch (error: any) {
+      // Handle errors gracefully
+      console.error('Error creating class:', error);
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to create class. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
 
   const handleAddTeacher = () => {
     if (!newTeacher.name.trim() || newTeacher.subjects.length === 0) {
@@ -267,26 +329,50 @@ export default function AcademicSetup() {
                     <div className="space-y-4 py-4">
                       <div className="space-y-2">
                         <Label>Class Name</Label>
-                        <Input placeholder="e.g., Class 6" />
+                        <Input 
+                          placeholder="e.g., Class 6" 
+                          value={newClass.name}
+                          onChange={(e) => setNewClass(prev => ({ ...prev, name: e.target.value }))}
+                        />
                       </div>
                       <div className="space-y-2">
-                        <Label>Sections</Label>
-                        <Input placeholder="e.g., A, B, C" />
+                        <Label>Section</Label>
+                        <Input 
+                          placeholder="e.g., A" 
+                          value={newClass.section}
+                          onChange={(e) => setNewClass(prev => ({ ...prev, section: e.target.value }))}
+                        />
                       </div>
                       <div className="space-y-2">
-                        <Label>Class Teacher</Label>
-                        <Select>
+                        <Label>Class Teacher (Optional)</Label>
+                        <Select 
+                          value={newClass.classTeacherId || undefined} 
+                          onValueChange={(value) => {
+                            // Handle clearing selection - if value is empty, set to empty string
+                            setNewClass(prev => ({ ...prev, classTeacherId: value || "" }))
+                          }}
+                        >
                           <SelectTrigger>
                             <SelectValue placeholder="Select teacher" />
                           </SelectTrigger>
                           <SelectContent>
-                            {teachers.map((t) => (
-                              <SelectItem key={t.id} value={t.name}>{t.name}</SelectItem>
-                            ))}
+                            {teachers.length === 0 ? (
+                              <SelectItem value="no-teachers" disabled>No teachers available</SelectItem>
+                            ) : (
+                              teachers.map((t) => (
+                                <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+                              ))
+                            )}
                           </SelectContent>
                         </Select>
                       </div>
-                      <Button className="w-full">Create Class</Button>
+                      <Button 
+                        className="w-full" 
+                        onClick={handleCreateClass}
+                        disabled={!newClass.name?.trim() || !newClass.section?.trim()}
+                      >
+                        Create Class
+                      </Button>
                     </div>
                   </DialogContent>
                 </Dialog>

@@ -106,14 +106,16 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
     const teacherId = uuidv4();
     const hashedPassword = await bcrypt.hash(password, 10);
     
-    await db.query(
+    const [result] = await db.query(
       `INSERT INTO teachers (id, username, password, name, email, phone, subjects, school_id, class_id, is_active, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, true, NOW())`,
       [teacherId, username, hashedPassword, name, email || null, phone || null, 
        subjects ? JSON.stringify(subjects) : null, schoolId, classId || null]
     );
 
-    res.status(201).json({ success: true });
+    console.log('✅ Teacher created:', { teacherId, username, name, schoolId });
+
+    res.status(201).json({ success: true, teacherId });
   } catch (error) {
     console.error('Create teacher error:', error);
     res.status(500).json({ error: 'Failed to create teacher' });
@@ -151,10 +153,12 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
     }
 
     values.push(id);
-    await db.query(
+    const [result] = await db.query(
       `UPDATE teachers SET ${updates.join(', ')} WHERE id = ?`,
       values
     );
+
+    console.log('✅ Teacher updated:', { id, affectedRows: result.affectedRows });
 
     res.json({ success: true });
   } catch (error) {

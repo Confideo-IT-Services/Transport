@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { UnifiedLayout } from "@/components/layout/UnifiedLayout";
 import { useAuth } from "@/contexts/AuthContext";
+import { classesApi, teachersApi, timetableApi } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -9,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -53,6 +55,7 @@ interface TimeSlot {
 }
 
 interface TimetableEntry {
+  id?: string;
   slotId: string;
   day: string;
   subjectCode: string;
@@ -74,21 +77,12 @@ interface TeacherLeave {
   reason: string;
 }
 
-const initialTimeSlots: TimeSlot[] = [
-  { id: "1", startTime: "08:00", endTime: "08:45", type: "class" },
-  { id: "2", startTime: "08:45", endTime: "09:30", type: "class" },
-  { id: "3", startTime: "09:30", endTime: "10:00", type: "break" },
-  { id: "4", startTime: "10:00", endTime: "10:45", type: "class" },
-  { id: "5", startTime: "10:45", endTime: "11:30", type: "class" },
-  { id: "6", startTime: "11:30", endTime: "12:15", type: "class" },
-  { id: "7", startTime: "12:15", endTime: "13:00", type: "lunch" },
-  { id: "8", startTime: "13:00", endTime: "13:45", type: "class" },
-  { id: "9", startTime: "13:45", endTime: "14:30", type: "class" },
-];
+const initialTimeSlots: TimeSlot[] = [];
 
 const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-const subjectsList = [
+// Default subjects (will be replaced by API data)
+const defaultSubjects: Array<{ code: string; name: string; color: string }> = [
   { code: "MATH", name: "Mathematics", color: "bg-blue-100 text-blue-700 border-blue-200" },
   { code: "ENG", name: "English", color: "bg-green-100 text-green-700 border-green-200" },
   { code: "HIN", name: "Hindi", color: "bg-orange-100 text-orange-700 border-orange-200" },
@@ -99,97 +93,42 @@ const subjectsList = [
   { code: "PE", name: "Physical Ed.", color: "bg-red-100 text-red-700 border-red-200" },
 ];
 
-const teachersList = [
-  { name: "Mrs. Sharma", phone: "9876543210", subjects: ["Mathematics"] },
-  { name: "Mr. Singh", phone: "9876543211", subjects: ["English", "Hindi"] },
-  { name: "Mrs. Gupta", phone: "9876543212", subjects: ["Science"] },
-  { name: "Mr. Kumar", phone: "9876543213", subjects: ["Social Studies"] },
-  { name: "Mrs. Patel", phone: "9876543214", subjects: ["Computer", "Art"] },
-  { name: "Mr. Verma", phone: "9876543215", subjects: ["Computer"] },
-  { name: "Mrs. Das", phone: "9876543216", subjects: ["Art"] },
-  { name: "Mr. Rao", phone: "9876543217", subjects: ["Physical Ed."] },
-];
+// teachersList will be state, initialized below
 
-const initialTimetableData: TimetableEntry[] = [
-  { slotId: "1", day: "Monday", subjectCode: "MATH", teacherName: "Mrs. Sharma" },
-  { slotId: "2", day: "Monday", subjectCode: "ENG", teacherName: "Mr. Singh" },
-  { slotId: "4", day: "Monday", subjectCode: "SCI", teacherName: "Mrs. Gupta" },
-  { slotId: "5", day: "Monday", subjectCode: "HIN", teacherName: "Mr. Singh" },
-  { slotId: "6", day: "Monday", subjectCode: "SST", teacherName: "Mr. Kumar" },
-  { slotId: "8", day: "Monday", subjectCode: "COMP", teacherName: "Mr. Verma" },
-  { slotId: "9", day: "Monday", subjectCode: "ART", teacherName: "Mrs. Das" },
-  // Tuesday
-  { slotId: "1", day: "Tuesday", subjectCode: "ENG", teacherName: "Mr. Singh" },
-  { slotId: "2", day: "Tuesday", subjectCode: "MATH", teacherName: "Mrs. Sharma" },
-  { slotId: "4", day: "Tuesday", subjectCode: "HIN", teacherName: "Mr. Singh" },
-  { slotId: "5", day: "Tuesday", subjectCode: "SCI", teacherName: "Mrs. Gupta" },
-  { slotId: "6", day: "Tuesday", subjectCode: "COMP", teacherName: "Mr. Verma" },
-  { slotId: "8", day: "Tuesday", subjectCode: "SST", teacherName: "Mr. Kumar" },
-  { slotId: "9", day: "Tuesday", subjectCode: "PE", teacherName: "Mr. Rao" },
-  // Wednesday
-  { slotId: "1", day: "Wednesday", subjectCode: "SCI", teacherName: "Mrs. Gupta" },
-  { slotId: "2", day: "Wednesday", subjectCode: "HIN", teacherName: "Mr. Singh" },
-  { slotId: "4", day: "Wednesday", subjectCode: "MATH", teacherName: "Mrs. Sharma" },
-  { slotId: "5", day: "Wednesday", subjectCode: "ENG", teacherName: "Mr. Singh" },
-  { slotId: "6", day: "Wednesday", subjectCode: "ART", teacherName: "Mrs. Das" },
-  { slotId: "8", day: "Wednesday", subjectCode: "PE", teacherName: "Mr. Rao" },
-  { slotId: "9", day: "Wednesday", subjectCode: "SST", teacherName: "Mr. Kumar" },
-  // Thursday
-  { slotId: "1", day: "Thursday", subjectCode: "HIN", teacherName: "Mr. Singh" },
-  { slotId: "2", day: "Thursday", subjectCode: "SCI", teacherName: "Mrs. Gupta" },
-  { slotId: "4", day: "Thursday", subjectCode: "ENG", teacherName: "Mr. Singh" },
-  { slotId: "5", day: "Thursday", subjectCode: "MATH", teacherName: "Mrs. Sharma" },
-  { slotId: "6", day: "Thursday", subjectCode: "PE", teacherName: "Mr. Rao" },
-  { slotId: "8", day: "Thursday", subjectCode: "ART", teacherName: "Mrs. Das" },
-  { slotId: "9", day: "Thursday", subjectCode: "COMP", teacherName: "Mr. Verma" },
-  // Friday
-  { slotId: "1", day: "Friday", subjectCode: "MATH", teacherName: "Mrs. Sharma" },
-  { slotId: "2", day: "Friday", subjectCode: "COMP", teacherName: "Mr. Verma" },
-  { slotId: "4", day: "Friday", subjectCode: "SCI", teacherName: "Mrs. Gupta" },
-  { slotId: "5", day: "Friday", subjectCode: "HIN", teacherName: "Mr. Singh" },
-  { slotId: "6", day: "Friday", subjectCode: "ENG", teacherName: "Mr. Singh" },
-  { slotId: "8", day: "Friday", subjectCode: "SST", teacherName: "Mr. Kumar" },
-  { slotId: "9", day: "Friday", subjectCode: "ART", teacherName: "Mrs. Das" },
-  // Saturday
-  { slotId: "1", day: "Saturday", subjectCode: "ENG", teacherName: "Mr. Singh" },
-  { slotId: "2", day: "Saturday", subjectCode: "MATH", teacherName: "Mrs. Sharma" },
-  { slotId: "4", day: "Saturday", subjectCode: "HIN", teacherName: "Mr. Singh" },
-  { slotId: "5", day: "Saturday", subjectCode: "PE", teacherName: "Mr. Rao" },
-  { slotId: "6", day: "Saturday", subjectCode: "COMP", teacherName: "Mr. Verma" },
-];
+const initialTimetableData: TimetableEntry[] = [];
 
-const initialHolidays: Holiday[] = [
-  { id: "1", date: new Date(2025, 0, 26), name: "Republic Day", type: "public" },
-  { id: "2", date: new Date(2025, 2, 14), name: "Holi", type: "public" },
-  { id: "3", date: new Date(2025, 3, 14), name: "Ambedkar Jayanti", type: "public" },
-  { id: "4", date: new Date(2025, 7, 15), name: "Independence Day", type: "public" },
-  { id: "5", date: new Date(2025, 9, 2), name: "Gandhi Jayanti", type: "public" },
-  { id: "6", date: new Date(2025, 10, 1), name: "Diwali", type: "public" },
-];
+const initialHolidays: Holiday[] = [];
 
-const initialLeaves: TeacherLeave[] = [
-  { id: "1", teacherName: "Mrs. Sharma", startDate: new Date(2025, 0, 6), endDate: new Date(2025, 0, 8), reason: "Medical Leave" },
-];
+const initialLeaves: TeacherLeave[] = [];
 
 export default function Timetable() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
-  const [selectedClass, setSelectedClass] = useState("5A");
+  const [selectedClass, setSelectedClass] = useState("");
+  const [selectedClassId, setSelectedClassId] = useState("");
+  const [classes, setClasses] = useState<any[]>([]);
   const [timeSlots, setTimeSlots] = useState<TimeSlot[]>(initialTimeSlots);
   const [timetableData, setTimetableData] = useState<TimetableEntry[]>(initialTimetableData);
   const [holidays, setHolidays] = useState<Holiday[]>(initialHolidays);
   const [teacherLeaves, setTeacherLeaves] = useState<TeacherLeave[]>(initialLeaves);
+  const [teachersList, setTeachersList] = useState<Array<{ id: string; name: string; phone: string; subjects: string[] }>>([]);
+  const [subjectsList, setSubjectsList] = useState<Array<{ id?: string; code: string; name: string; color: string }>>(defaultSubjects);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isAddSubjectOpen, setIsAddSubjectOpen] = useState(false);
+  const [newSubject, setNewSubject] = useState({ code: "", name: "", color: "bg-gray-100 text-gray-700 border-gray-200" });
   
   // Dialog states
   const [isEditSlotOpen, setIsEditSlotOpen] = useState(false);
   const [isAddHolidayOpen, setIsAddHolidayOpen] = useState(false);
   const [isAddLeaveOpen, setIsAddLeaveOpen] = useState(false);
   const [isEditEntryOpen, setIsEditEntryOpen] = useState(false);
+  const [isSendAllDialogOpen, setIsSendAllDialogOpen] = useState(false);
   const [selectedEntry, setSelectedEntry] = useState<{ slotId: string; day: string } | null>(null);
+  const [generatedTeacherLinks, setGeneratedTeacherLinks] = useState<Array<{ teacher: { id: string; name: string; phone: string }, message: string, url: string }>>([]);
   
   // Form states
   const [newHoliday, setNewHoliday] = useState({ name: "", type: "public" as Holiday["type"] });
-  const [selectedHolidayDate, setSelectedHolidayDate] = useState<Date | undefined>(undefined);
+  const [selectedHolidayDates, setSelectedHolidayDates] = useState<Date[]>([]);
   const [newLeave, setNewLeave] = useState({ teacherName: "", reason: "" });
   const [leaveStartDate, setLeaveStartDate] = useState<Date | undefined>(undefined);
   const [leaveEndDate, setLeaveEndDate] = useState<Date | undefined>(undefined);
@@ -197,6 +136,129 @@ export default function Timetable() {
   
   const today = new Date();
   const todayName = today.toLocaleDateString("en-US", { weekday: "long" });
+
+  // Load initial data
+  useEffect(() => {
+    const loadInitialData = async () => {
+      if (!isAdmin) return;
+      
+      setIsLoading(true);
+      try {
+        // Load classes
+        const classesData = await classesApi.getAll();
+        setClasses(classesData || []);
+
+        // Load teachers
+        const teachersData = await teachersApi.getAll();
+        const transformedTeachers = (teachersData || []).map(t => ({
+          id: t.id,
+          name: t.name,
+          phone: t.phone || "",
+          subjects: t.subjects || []
+        }));
+        setTeachersList(transformedTeachers);
+
+        // Load subjects
+        try {
+          const subjectsData = await timetableApi.getSubjects();
+          if (subjectsData && subjectsData.length > 0) {
+            setSubjectsList(subjectsData);
+          } else {
+            // If no subjects in DB, use defaults and optionally seed them
+            setSubjectsList(defaultSubjects);
+          }
+        } catch (error) {
+          console.error('Error loading subjects:', error);
+          // Use defaults on error
+          setSubjectsList(defaultSubjects);
+        }
+
+        // Load time slots
+        const slotsData = await timetableApi.getTimeSlots();
+        const transformedSlots = (slotsData || []).map(s => {
+          // Ensure time format is HH:MM for HTML time input
+          const formatTime = (time: string) => {
+            if (!time) return '';
+            // If already in HH:MM format, return as is
+            if (time.length === 5) return time;
+            // If in HH:MM:SS format, remove seconds
+            if (time.includes(':') && time.length >= 5) {
+              return time.substring(0, 5);
+            }
+            return time;
+          };
+
+          return {
+            id: s.id,
+            startTime: formatTime(s.startTime),
+            endTime: formatTime(s.endTime),
+            type: s.type
+          };
+        });
+        setTimeSlots(transformedSlots);
+
+        // Load holidays
+        const holidaysData = await timetableApi.getHolidays();
+        const transformedHolidays = (holidaysData || []).map(h => ({
+          id: h.id,
+          date: new Date(h.date),
+          name: h.name,
+          type: h.type
+        }));
+        setHolidays(transformedHolidays);
+
+        // Load teacher leaves
+        const leavesData = await timetableApi.getLeaves();
+        const transformedLeaves = (leavesData || []).map(l => ({
+          id: l.id,
+          teacherName: l.teacherName,
+          startDate: new Date(l.startDate),
+          endDate: new Date(l.endDate),
+          reason: l.reason || ""
+        }));
+        setTeacherLeaves(transformedLeaves);
+      } catch (error) {
+        console.error('Error loading timetable data:', error);
+        toast({ 
+          title: "Error", 
+          description: "Failed to load timetable data",
+          variant: "destructive"
+        });
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    loadInitialData();
+  }, [isAdmin]);
+
+  // Load timetable when class is selected
+  useEffect(() => {
+    const loadTimetable = async () => {
+      if (!selectedClassId || !isAdmin) return;
+
+      try {
+        const entriesData = await timetableApi.getTimetableByClass(selectedClassId);
+        const transformedEntries = (entriesData || []).map(e => ({
+          id: e.id,
+          slotId: e.slotId,
+          day: e.day,
+          subjectCode: e.subjectCode,
+          teacherName: e.teacherName
+        }));
+        setTimetableData(transformedEntries);
+      } catch (error) {
+        console.error('Error loading timetable:', error);
+        toast({ 
+          title: "Error", 
+          description: "Failed to load timetable",
+          variant: "destructive"
+        });
+      }
+    };
+
+    loadTimetable();
+  }, [selectedClassId, isAdmin]);
 
   // Check if a date is a holiday
   const isHoliday = (date: Date) => {
@@ -232,110 +294,310 @@ export default function Timetable() {
     return timetableData.find(e => e.slotId === slotId && e.day === day);
   };
 
-  // Add holiday
-  const handleAddHoliday = () => {
-    if (!selectedHolidayDate || !newHoliday.name.trim()) return;
+  // Add holiday (supports multiple dates)
+  const handleAddHoliday = async () => {
+    if (selectedHolidayDates.length === 0 || !newHoliday.name.trim()) return;
     
-    const holiday: Holiday = {
-      id: Date.now().toString(),
-      date: selectedHolidayDate,
-      name: newHoliday.name.trim(),
-      type: newHoliday.type,
-    };
-    
-    setHolidays([...holidays, holiday]);
-    setNewHoliday({ name: "", type: "public" });
-    setSelectedHolidayDate(undefined);
-    setIsAddHolidayOpen(false);
-    toast({ title: "Holiday Added", description: `${holiday.name} added to calendar` });
+    try {
+      const newHolidays: Holiday[] = [];
+      let successCount = 0;
+      let errorCount = 0;
+
+      // Create a holiday for each selected date
+      for (const date of selectedHolidayDates) {
+        try {
+          const dateStr = date.toISOString().split('T')[0];
+          const result = await timetableApi.createHoliday({
+            date: dateStr,
+            name: newHoliday.name.trim(),
+            type: newHoliday.type,
+          });
+
+          const holiday: Holiday = {
+            id: result.id,
+            date: date,
+            name: newHoliday.name.trim(),
+            type: newHoliday.type,
+          };
+          
+          newHolidays.push(holiday);
+          successCount++;
+        } catch (error: any) {
+          console.error(`Failed to add holiday for date ${date.toISOString().split('T')[0]}:`, error);
+          errorCount++;
+        }
+      }
+
+      if (newHolidays.length > 0) {
+        setHolidays([...holidays, ...newHolidays]);
+      }
+
+      setNewHoliday({ name: "", type: "public" });
+      setSelectedHolidayDates([]);
+      setIsAddHolidayOpen(false);
+      
+      if (errorCount === 0) {
+        toast({ 
+          title: "Holidays Added", 
+          description: `${successCount} holiday(s) added successfully` 
+        });
+      } else {
+        toast({ 
+          title: "Partial Success", 
+          description: `${successCount} holiday(s) added, ${errorCount} failed`,
+          variant: "destructive"
+        });
+      }
+    } catch (error: any) {
+      toast({ 
+        title: "Error", 
+        description: error?.message || "Failed to add holidays",
+        variant: "destructive"
+      });
+    }
   };
 
   // Delete holiday
-  const handleDeleteHoliday = (id: string) => {
-    setHolidays(holidays.filter(h => h.id !== id));
-    toast({ title: "Holiday Removed" });
+  const handleDeleteHoliday = async (id: string) => {
+    try {
+      await timetableApi.deleteHoliday(id);
+      setHolidays(holidays.filter(h => h.id !== id));
+      toast({ title: "Holiday Removed" });
+    } catch (error: any) {
+      toast({ 
+        title: "Error", 
+        description: error?.message || "Failed to delete holiday",
+        variant: "destructive"
+      });
+    }
   };
 
   // Add teacher leave
-  const handleAddLeave = () => {
+  const handleAddLeave = async () => {
     if (!leaveStartDate || !leaveEndDate || !newLeave.teacherName) return;
     
-    const leave: TeacherLeave = {
-      id: Date.now().toString(),
-      teacherName: newLeave.teacherName,
-      startDate: leaveStartDate,
-      endDate: leaveEndDate,
-      reason: newLeave.reason,
-    };
-    
-    setTeacherLeaves([...teacherLeaves, leave]);
-    setNewLeave({ teacherName: "", reason: "" });
-    setLeaveStartDate(undefined);
-    setLeaveEndDate(undefined);
-    setIsAddLeaveOpen(false);
-    toast({ title: "Leave Added", description: `Leave marked for ${leave.teacherName}` });
+    try {
+      const teacher = teachersList.find(t => t.name === newLeave.teacherName);
+      if (!teacher) {
+        toast({ 
+          title: "Error", 
+          description: "Teacher not found",
+          variant: "destructive"
+        });
+        return;
+      }
+
+      const startDateStr = leaveStartDate.toISOString().split('T')[0];
+      const endDateStr = leaveEndDate.toISOString().split('T')[0];
+
+      const result = await timetableApi.createLeave({
+        teacherId: teacher.id,
+        teacherName: newLeave.teacherName,
+        startDate: startDateStr,
+        endDate: endDateStr,
+        reason: newLeave.reason,
+      });
+
+      const leave: TeacherLeave = {
+        id: result.id,
+        teacherName: newLeave.teacherName,
+        startDate: leaveStartDate,
+        endDate: leaveEndDate,
+        reason: newLeave.reason,
+      };
+      
+      setTeacherLeaves([...teacherLeaves, leave]);
+      setNewLeave({ teacherName: "", reason: "" });
+      setLeaveStartDate(undefined);
+      setLeaveEndDate(undefined);
+      setIsAddLeaveOpen(false);
+      toast({ title: "Leave Added", description: `Leave marked for ${leave.teacherName}` });
+    } catch (error: any) {
+      toast({ 
+        title: "Error", 
+        description: error?.message || "Failed to add leave",
+        variant: "destructive"
+      });
+    }
   };
 
   // Update timetable entry
-  const handleUpdateEntry = () => {
-    if (!selectedEntry) return;
+  const handleUpdateEntry = async () => {
+    if (!selectedClassId) {
+      toast({ 
+        title: "Class Required", 
+        description: "Please select a class from the dropdown above",
+        variant: "destructive"
+      });
+      setIsEditEntryOpen(false);
+      return;
+    }
+
+    if (!selectedEntry) {
+      toast({ 
+        title: "Slot Required", 
+        description: "Please select a time slot",
+        variant: "destructive"
+      });
+      setIsEditEntryOpen(false);
+      return;
+    }
+
+    if (!editEntry.subjectCode || !editEntry.teacherName) {
+      toast({ 
+        title: "Validation Error", 
+        description: "Please select both subject and teacher",
+        variant: "destructive"
+      });
+      return;
+    }
     
-    const existingIndex = timetableData.findIndex(
-      e => e.slotId === selectedEntry.slotId && e.day === selectedEntry.day
-    );
-    
-    if (existingIndex >= 0) {
-      const updated = [...timetableData];
-      updated[existingIndex] = {
-        ...updated[existingIndex],
-        subjectCode: editEntry.subjectCode,
-        teacherName: editEntry.teacherName,
-      };
-      setTimetableData(updated);
-    } else {
-      setTimetableData([...timetableData, {
+    try {
+      const subject = subjectsList.find(s => s.code === editEntry.subjectCode);
+      if (!subject) {
+        toast({ 
+          title: "Error", 
+          description: "Subject not found",
+          variant: "destructive"
+        });
+        return;
+      }
+
+      const teacher = teachersList.find(t => t.name === editEntry.teacherName);
+      if (!teacher) {
+        toast({ 
+          title: "Error", 
+          description: "Teacher not found",
+          variant: "destructive"
+        });
+        return;
+      }
+
+      console.log('Updating timetable entry:', {
+        classId: selectedClassId,
         slotId: selectedEntry.slotId,
         day: selectedEntry.day,
         subjectCode: editEntry.subjectCode,
+        subjectName: subject.name,
+        teacherId: teacher.id,
         teacherName: editEntry.teacherName,
-      }]);
+      });
+      
+      const result = await timetableApi.createOrUpdateEntry({
+        classId: selectedClassId,
+        slotId: selectedEntry.slotId,
+        day: selectedEntry.day,
+        subjectCode: editEntry.subjectCode,
+        subjectName: subject.name,
+        teacherId: teacher.id,
+        teacherName: editEntry.teacherName,
+      });
+
+      console.log('API response:', result);
+
+      // Reload timetable data to get the updated entry
+      const entriesData = await timetableApi.getTimetableByClass(selectedClassId);
+      const transformedEntries = (entriesData || []).map(e => ({
+        id: e.id,
+        slotId: e.slotId,
+        day: e.day,
+        subjectCode: e.subjectCode,
+        subjectName: e.subjectName,
+        teacherId: e.teacherId,
+        teacherName: e.teacherName
+      }));
+      setTimetableData(transformedEntries);
+      
+      setIsEditEntryOpen(false);
+      setSelectedEntry(null);
+      setEditEntry({ subjectCode: "", teacherName: "" });
+      toast({ title: "Timetable Updated", description: "Entry saved successfully" });
+    } catch (error: any) {
+      console.error('Error updating timetable entry:', error);
+      toast({ 
+        title: "Error", 
+        description: error?.message || "Failed to update timetable. Please check the console for details.",
+        variant: "destructive"
+      });
     }
-    
-    setIsEditEntryOpen(false);
-    setSelectedEntry(null);
-    toast({ title: "Timetable Updated" });
   };
 
   // Generate WhatsApp message for teacher's weekly timetable
-  const generateTeacherWeeklyMessage = (teacherName: string) => {
-    const teacherEntries = timetableData.filter(e => e.teacherName === teacherName);
+  const generateTeacherWeeklyMessage = async (teacherName: string) => {
     const weekStart = startOfWeek(new Date(), { weekStartsOn: 1 });
     
     let message = `📚 *Weekly Timetable for ${teacherName}*\n`;
     message += `Week: ${format(weekStart, "dd MMM")} - ${format(addDays(weekStart, 6), "dd MMM yyyy")}\n\n`;
     
-    days.forEach(day => {
-      const dayDate = addDays(weekStart, days.indexOf(day));
-      
-      if (isHoliday(dayDate)) {
-        message += `*${day}*: 🎉 Holiday - ${getHolidayName(dayDate)}\n`;
-        return;
+    // Fetch timetable entries for ALL classes this teacher teaches
+    const allTeacherEntries: Array<{ entry: TimetableEntry; className: string; classId: string }> = [];
+    
+    for (const classItem of classes) {
+      try {
+        const entriesData = await timetableApi.getTimetableByClass(classItem.id);
+        const classEntries = (entriesData || [])
+          .filter(e => e.teacherName === teacherName)
+          .map(e => ({
+            entry: e,
+            className: `${classItem.name}${classItem.section ? ` - Section ${classItem.section}` : ''}`,
+            classId: classItem.id
+          }));
+        allTeacherEntries.push(...classEntries);
+      } catch (error) {
+        console.error(`Error fetching timetable for class ${classItem.id}:`, error);
       }
-      
-      const dayEntries = teacherEntries.filter(e => e.day === day);
-      if (dayEntries.length === 0) {
-        message += `*${day}*: No classes\n`;
-        return;
-      }
-      
-      message += `*${day}*:\n`;
-      dayEntries.forEach(entry => {
-        const slot = timeSlots.find(s => s.id === entry.slotId);
-        if (slot) {
-          message += `  ${slot.startTime}-${slot.endTime}: ${getSubjectName(entry.subjectCode)}\n`;
+    }
+    
+    // If no entries found
+    if (allTeacherEntries.length === 0) {
+      message += "No classes scheduled for this week.\n";
+    } else {
+      // Group entries by class
+      const entriesByClass = new Map<string, { entries: TimetableEntry[], classId: string }>();
+      allTeacherEntries.forEach(({ entry, className, classId }) => {
+        if (!entriesByClass.has(className)) {
+          entriesByClass.set(className, { entries: [], classId });
         }
+        entriesByClass.get(className)!.entries.push(entry);
       });
-    });
+      
+      // Generate message grouped by class
+      entriesByClass.forEach(({ entries: classEntries }, className) => {
+        message += `\n📖 *${className}*\n`;
+        
+        days.forEach(day => {
+          const dayDate = addDays(weekStart, days.indexOf(day));
+          
+          if (isHoliday(dayDate)) {
+            message += `  *${day}*: 🎉 Holiday - ${getHolidayName(dayDate)}\n`;
+            return;
+          }
+          
+          const dayEntries = classEntries.filter(e => e.day === day);
+          if (dayEntries.length === 0) {
+            // Don't show "No classes" for each day, only show if there are classes
+            return;
+          }
+          
+          // Sort by time slot
+          dayEntries.sort((a, b) => {
+            const slotA = timeSlots.find(s => s.id === a.slotId);
+            const slotB = timeSlots.find(s => s.id === b.slotId);
+            if (!slotA || !slotB) return 0;
+            return slotA.startTime.localeCompare(slotB.startTime);
+          });
+          
+          dayEntries.forEach(entry => {
+            const slot = timeSlots.find(s => s.id === entry.slotId);
+            if (slot) {
+              message += `  *${day}*: ${slot.startTime}-${slot.endTime} - ${getSubjectName(entry.subjectCode)}\n`;
+            }
+          });
+        });
+        
+        message += "\n";
+      });
+    }
     
     // Check for leaves
     const activeLeaves = teacherLeaves.filter(l => 
@@ -351,31 +613,152 @@ export default function Timetable() {
   };
 
   // Send WhatsApp message
-  const sendWhatsAppMessage = (teacherName: string) => {
+  const sendWhatsAppMessage = async (teacherName: string) => {
     const teacher = teachersList.find(t => t.name === teacherName);
-    if (!teacher) return;
+    if (!teacher || !teacher.phone) {
+      toast({ 
+        title: "Error", 
+        description: `Phone number not available for ${teacherName}`,
+        variant: "destructive"
+      });
+      return;
+    }
     
-    const message = generateTeacherWeeklyMessage(teacherName);
-    const encodedMessage = encodeURIComponent(message);
-    const whatsappUrl = `https://wa.me/91${teacher.phone}?text=${encodedMessage}`;
-    
-    window.open(whatsappUrl, "_blank");
-    toast({ title: "WhatsApp Opened", description: `Sending timetable to ${teacherName}` });
+    try {
+      const message = await generateTeacherWeeklyMessage(teacherName);
+      const encodedMessage = encodeURIComponent(message);
+      const whatsappUrl = `https://wa.me/91${teacher.phone.replace(/\D/g, '')}?text=${encodedMessage}`;
+      
+      window.open(whatsappUrl, "_blank");
+      toast({ title: "WhatsApp Opened", description: `Sending timetable to ${teacherName}` });
+    } catch (error) {
+      console.error(`Error generating message for ${teacherName}:`, error);
+      toast({ 
+        title: "Error", 
+        description: `Failed to generate timetable for ${teacherName}`,
+        variant: "destructive"
+      });
+    }
   };
 
   // Send to all teachers
-  const sendToAllTeachers = () => {
+  const sendToAllTeachers = async () => {
+    if (teachersList.length === 0) {
+      toast({ 
+        title: "No Teachers", 
+        description: "No teachers available to send messages to",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    if (!confirm(`Generate WhatsApp links for all ${teachersList.length} teachers?\n\nA dialog will open with links for each teacher. Click each link to send their timetable.`)) {
+      return;
+    }
+
     toast({ 
-      title: "Preparing Messages", 
-      description: "WhatsApp will open for each teacher. Please send each message manually." 
+      title: "Generating Messages", 
+      description: `Preparing timetables for ${teachersList.length} teachers...` 
     });
+
+    // Generate all messages first
+    const teacherMessages: Array<{ teacher: { id: string; name: string; phone: string }, message: string, url: string }> = [];
     
-    teachersList.forEach((teacher, index) => {
-      setTimeout(() => {
-        sendWhatsAppMessage(teacher.name);
-      }, index * 1000);
+    for (const teacher of teachersList) {
+      if (!teacher.phone) {
+        console.warn(`Skipping ${teacher.name} - no phone number`);
+        continue;
+      }
+      
+      try {
+        const message = await generateTeacherWeeklyMessage(teacher.name);
+        const encodedMessage = encodeURIComponent(message);
+        const whatsappUrl = `https://wa.me/91${teacher.phone.replace(/\D/g, '')}?text=${encodedMessage}`;
+        
+        teacherMessages.push({
+          teacher: {
+            id: teacher.id,
+            name: teacher.name,
+            phone: teacher.phone
+          },
+          message,
+          url: whatsappUrl
+        });
+      } catch (error) {
+        console.error(`Error generating message for ${teacher.name}:`, error);
+        toast({ 
+          title: "Error", 
+          description: `Failed to generate timetable for ${teacher.name}`,
+          variant: "destructive"
+        });
+      }
+    }
+
+    // Store in state to show in dialog
+    setGeneratedTeacherLinks(teacherMessages);
+    setIsSendAllDialogOpen(true);
+    
+    toast({ 
+      title: "Ready", 
+      description: `Generated ${teacherMessages.length} timetable messages. Click each link to send.` 
     });
   };
+
+  // Export timetable to CSV
+  const handleExport = () => {
+    if (!selectedClassId || timetableData.length === 0) {
+      toast({ 
+        title: "No Data", 
+        description: "No timetable data to export",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    const classData = classes.find(c => c.id === selectedClassId);
+    const className = classData ? `${classData.name}${classData.section ? `-${classData.section}` : ''}` : 'Unknown';
+
+    // Create CSV content
+    let csvContent = `Timetable for ${className}\n\n`;
+    csvContent += `Day,Time,Subject,Teacher\n`;
+
+    days.forEach(day => {
+      timeSlots.forEach(slot => {
+        if (slot.type === 'class') {
+          const entry = timetableData.find(e => e.slotId === slot.id && e.day === day);
+          if (entry) {
+            csvContent += `${day},${slot.startTime}-${slot.endTime},${getSubjectName(entry.subjectCode)},${entry.teacherName}\n`;
+          } else {
+            csvContent += `${day},${slot.startTime}-${slot.endTime},,\n`;
+          }
+        }
+      });
+    });
+
+    // Download CSV
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `timetable-${className}-${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+    
+    toast({ title: "Export Successful", description: "Timetable exported to CSV" });
+  };
+
+  if (isLoading && isAdmin) {
+    return (
+      <UnifiedLayout>
+        <div className="flex items-center justify-center py-12">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
+            <p className="text-muted-foreground">Loading timetable data...</p>
+          </div>
+        </div>
+      </UnifiedLayout>
+    );
+  }
 
   return (
     <UnifiedLayout>
@@ -393,23 +776,27 @@ export default function Timetable() {
           <div className="flex items-center gap-3 flex-wrap">
             {isAdmin ? (
               <>
-                <Select value={selectedClass} onValueChange={setSelectedClass}>
+                <Select value={selectedClass} onValueChange={(value) => {
+                  setSelectedClass(value);
+                  const classData = classes.find(c => `${c.name}${c.section ? `-${c.section}` : ''}` === value);
+                  setSelectedClassId(classData?.id || "");
+                }}>
                   <SelectTrigger className="w-32">
                     <SelectValue placeholder="Select class" />
                   </SelectTrigger>
                   <SelectContent className="bg-card">
-                    <SelectItem value="1A">Class 1A</SelectItem>
-                    <SelectItem value="2A">Class 2A</SelectItem>
-                    <SelectItem value="3A">Class 3A</SelectItem>
-                    <SelectItem value="4A">Class 4A</SelectItem>
-                    <SelectItem value="5A">Class 5A</SelectItem>
+                    {classes.map((cls) => (
+                      <SelectItem key={cls.id} value={`${cls.name}${cls.section ? `-${cls.section}` : ''}`}>
+                        {cls.name}{cls.section ? ` - Section ${cls.section}` : ''}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
                 <Button variant="outline" onClick={sendToAllTeachers}>
                   <MessageCircle className="w-4 h-4 mr-2" />
                   Send to All
                 </Button>
-                <Button variant="outline">
+                <Button variant="outline" onClick={handleExport} disabled={!selectedClassId}>
                   <Download className="w-4 h-4 mr-2" />
                   Export
                 </Button>
@@ -437,8 +824,7 @@ export default function Timetable() {
             <Card>
               <CardHeader>
                 <CardTitle className="text-lg flex items-center justify-between">
-                  <span>Class {selectedClass} - Weekly Timetable</span>
-                  <Badge variant="outline">Academic Year 2024-25</Badge>
+                  <span>{selectedClass ? `Class ${selectedClass} - Weekly Timetable` : "Weekly Timetable"}</span>
                 </CardTitle>
               </CardHeader>
               <CardContent className="overflow-x-auto">
@@ -529,6 +915,14 @@ export default function Timetable() {
                                   }`}
                                   onClick={() => {
                                     if (isAdmin) {
+                                      if (!selectedClassId) {
+                                        toast({ 
+                                          title: "Class Required", 
+                                          description: "Please select a class first from the dropdown above",
+                                          variant: "destructive"
+                                        });
+                                        return;
+                                      }
                                       setSelectedEntry({ slotId: slot.id, day });
                                       setEditEntry({ subjectCode: "", teacherName: "" });
                                       setIsEditEntryOpen(true);
@@ -552,6 +946,14 @@ export default function Timetable() {
                                 } ${isAdmin ? "cursor-pointer" : ""}`}
                                 onClick={() => {
                                   if (isAdmin) {
+                                    if (!selectedClassId) {
+                                      toast({ 
+                                        title: "Class Required", 
+                                        description: "Please select a class first from the dropdown above",
+                                        variant: "destructive"
+                                      });
+                                      return;
+                                    }
                                     setSelectedEntry({ slotId: slot.id, day });
                                     setEditEntry({ 
                                       subjectCode: entry.subjectCode, 
@@ -584,11 +986,130 @@ export default function Timetable() {
 
             {/* Legend */}
             <Card className="mt-4">
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center justify-between">
+                  <span>Subjects</span>
+                  {isAdmin && (
+                    <Dialog open={isAddSubjectOpen} onOpenChange={setIsAddSubjectOpen}>
+                      <DialogTrigger asChild>
+                        <Button size="sm">
+                          <Plus className="w-4 h-4 mr-2" />
+                          Add Subject
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent className="max-w-md">
+                        <DialogHeader>
+                          <DialogTitle>Add New Subject</DialogTitle>
+                        </DialogHeader>
+                        <div className="space-y-4 py-4">
+                          <div className="space-y-2">
+                            <Label>Subject Code</Label>
+                            <Input 
+                              placeholder="e.g., MATH, ENG" 
+                              value={newSubject.code}
+                              onChange={(e) => setNewSubject(prev => ({ ...prev, code: e.target.value.toUpperCase() }))}
+                              maxLength={10}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>Subject Name</Label>
+                            <Input 
+                              placeholder="e.g., Mathematics" 
+                              value={newSubject.name}
+                              onChange={(e) => setNewSubject(prev => ({ ...prev, name: e.target.value }))}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>Color Class</Label>
+                            <Input 
+                              placeholder="e.g., bg-blue-100 text-blue-700 border-blue-200" 
+                              value={newSubject.color}
+                              onChange={(e) => setNewSubject(prev => ({ ...prev, color: e.target.value }))}
+                            />
+                            <p className="text-xs text-muted-foreground">
+                              Tailwind CSS classes for background, text, and border colors
+                            </p>
+                          </div>
+                          <Button 
+                            className="w-full" 
+                            onClick={async () => {
+                              if (!newSubject.code || !newSubject.name) {
+                                toast({ 
+                                  title: "Validation Error", 
+                                  description: "Please fill in subject code and name",
+                                  variant: "destructive"
+                                });
+                                return;
+                              }
+                              try {
+                                await timetableApi.createSubject({
+                                  code: newSubject.code,
+                                  name: newSubject.name,
+                                  color: newSubject.color
+                                });
+                                // Reload subjects
+                                const subjectsData = await timetableApi.getSubjects();
+                                if (subjectsData && subjectsData.length > 0) {
+                                  setSubjectsList(subjectsData);
+                                }
+                                setNewSubject({ code: "", name: "", color: "bg-gray-100 text-gray-700 border-gray-200" });
+                                setIsAddSubjectOpen(false);
+                                toast({ title: "Subject Added" });
+                              } catch (error: any) {
+                                toast({ 
+                                  title: "Error", 
+                                  description: error?.message || "Failed to add subject",
+                                  variant: "destructive"
+                                });
+                              }
+                            }}
+                            disabled={!newSubject.code || !newSubject.name}
+                          >
+                            Add Subject
+                          </Button>
+                        </div>
+                      </DialogContent>
+                    </Dialog>
+                  )}
+                </CardTitle>
+              </CardHeader>
               <CardContent className="py-4">
                 <div className="flex flex-wrap gap-3">
                   {subjectsList.map((subject) => (
-                    <div key={subject.code} className={`px-3 py-1.5 rounded-lg text-sm ${subject.color}`}>
-                      {subject.name}
+                    <div key={subject.code} className="flex items-center gap-2">
+                      <div className={`px-3 py-1.5 rounded-lg text-sm ${subject.color}`}>
+                        {subject.name}
+                      </div>
+                      {isAdmin && subject.id && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6"
+                          onClick={async () => {
+                            if (confirm(`Delete subject "${subject.name}"?`)) {
+                              try {
+                                await timetableApi.deleteSubject(subject.id!);
+                                // Reload subjects
+                                const subjectsData = await timetableApi.getSubjects();
+                                if (subjectsData && subjectsData.length > 0) {
+                                  setSubjectsList(subjectsData);
+                                } else {
+                                  setSubjectsList(defaultSubjects);
+                                }
+                                toast({ title: "Subject Deleted" });
+                              } catch (error: any) {
+                                toast({ 
+                                  title: "Error", 
+                                  description: error?.message || "Failed to delete subject",
+                                  variant: "destructive"
+                                });
+                              }
+                            }
+                          }}
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </Button>
+                      )}
                     </div>
                   ))}
                   <div className="px-3 py-1.5 rounded-lg text-sm bg-red-50 text-red-700 border border-red-200">
@@ -743,16 +1264,34 @@ export default function Timetable() {
                               </Select>
                             </div>
                             <div className="space-y-2">
-                              <Label>Date</Label>
+                              <Label>Date{selectedHolidayDates.length > 0 && ` (${selectedHolidayDates.length} selected)`}</Label>
                               <Calendar
-                                mode="single"
-                                selected={selectedHolidayDate}
-                                onSelect={setSelectedHolidayDate}
+                                mode="multiple"
+                                selected={selectedHolidayDates}
+                                onSelect={(dates) => setSelectedHolidayDates(dates || [])}
                                 className="rounded-md border pointer-events-auto"
                               />
+                              {selectedHolidayDates.length > 0 && (
+                                <div className="mt-2 p-2 bg-muted rounded-md">
+                                  <p className="text-xs text-muted-foreground mb-1">Selected dates:</p>
+                                  <div className="flex flex-wrap gap-1">
+                                    {selectedHolidayDates
+                                      .sort((a, b) => a.getTime() - b.getTime())
+                                      .map((date, idx) => (
+                                        <Badge key={idx} variant="secondary" className="text-xs">
+                                          {date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                                        </Badge>
+                                      ))}
+                                  </div>
+                                </div>
+                              )}
                             </div>
-                            <Button className="w-full" onClick={handleAddHoliday} disabled={!selectedHolidayDate || !newHoliday.name.trim()}>
-                              Add Holiday
+                            <Button 
+                              className="w-full" 
+                              onClick={handleAddHoliday} 
+                              disabled={selectedHolidayDates.length === 0 || !newHoliday.name.trim()}
+                            >
+                              Add Holiday{selectedHolidayDates.length > 1 ? ` (${selectedHolidayDates.length} dates)` : ''}
                             </Button>
                           </div>
                         </DialogContent>
@@ -839,55 +1378,118 @@ export default function Timetable() {
                           Add Leave
                         </Button>
                       </DialogTrigger>
-                      <DialogContent className="max-w-md">
+                      <DialogContent className="max-w-2xl">
                         <DialogHeader>
                           <DialogTitle>Add Teacher Leave</DialogTitle>
                         </DialogHeader>
                         <div className="space-y-4 py-4">
-                          <div className="space-y-2">
-                            <Label>Teacher</Label>
-                            <Select 
-                              value={newLeave.teacherName} 
-                              onValueChange={(v) => setNewLeave(prev => ({ ...prev, teacherName: v }))}
-                            >
-                              <SelectTrigger>
-                                <SelectValue placeholder="Select teacher" />
-                              </SelectTrigger>
-                              <SelectContent className="bg-card">
-                                {teachersList.map(t => (
-                                  <SelectItem key={t.name} value={t.name}>{t.name}</SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                              <Label>Teacher</Label>
+                              <Select 
+                                value={newLeave.teacherName} 
+                                onValueChange={(v) => setNewLeave(prev => ({ ...prev, teacherName: v }))}
+                              >
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Select teacher" />
+                                </SelectTrigger>
+                                <SelectContent className="bg-card">
+                                  {teachersList.length === 0 ? (
+                                    <SelectItem value="" disabled>No teachers available</SelectItem>
+                                  ) : (
+                                    teachersList.map(t => (
+                                      <SelectItem key={t.id} value={t.name}>{t.name}</SelectItem>
+                                    ))
+                                  )}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="space-y-2">
+                              <Label>Reason</Label>
+                              <Input 
+                                placeholder="e.g., Medical Leave" 
+                                value={newLeave.reason}
+                                onChange={(e) => setNewLeave(prev => ({ ...prev, reason: e.target.value }))}
+                              />
+                            </div>
                           </div>
-                          <div className="space-y-2">
-                            <Label>Reason</Label>
-                            <Input 
-                              placeholder="e.g., Medical Leave" 
-                              value={newLeave.reason}
-                              onChange={(e) => setNewLeave(prev => ({ ...prev, reason: e.target.value }))}
-                            />
-                          </div>
-                          <div className="grid grid-cols-2 gap-4">
+                          
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div className="space-y-2">
                               <Label>Start Date</Label>
-                              <Calendar
-                                mode="single"
-                                selected={leaveStartDate}
-                                onSelect={setLeaveStartDate}
-                                className="rounded-md border pointer-events-auto text-xs"
-                              />
+                              <div className="flex flex-col gap-2">
+                                <Input
+                                  type="date"
+                                  value={leaveStartDate ? leaveStartDate.toISOString().split('T')[0] : ''}
+                                  onChange={(e) => {
+                                    if (e.target.value) {
+                                      setLeaveStartDate(new Date(e.target.value));
+                                    }
+                                  }}
+                                  className="w-full"
+                                />
+                                <Calendar
+                                  mode="single"
+                                  selected={leaveStartDate}
+                                  onSelect={setLeaveStartDate}
+                                  className="rounded-md border pointer-events-auto"
+                                  disabled={(date) => date < new Date(new Date().setHours(0, 0, 0, 0))}
+                                />
+                              </div>
                             </div>
                             <div className="space-y-2">
                               <Label>End Date</Label>
-                              <Calendar
-                                mode="single"
-                                selected={leaveEndDate}
-                                onSelect={setLeaveEndDate}
-                                className="rounded-md border pointer-events-auto text-xs"
-                              />
+                              <div className="flex flex-col gap-2">
+                                <Input
+                                  type="date"
+                                  value={leaveEndDate ? leaveEndDate.toISOString().split('T')[0] : ''}
+                                  onChange={(e) => {
+                                    if (e.target.value) {
+                                      setLeaveEndDate(new Date(e.target.value));
+                                    }
+                                  }}
+                                  className="w-full"
+                                  min={leaveStartDate ? leaveStartDate.toISOString().split('T')[0] : undefined}
+                                />
+                                <Calendar
+                                  mode="single"
+                                  selected={leaveEndDate}
+                                  onSelect={setLeaveEndDate}
+                                  className="rounded-md border pointer-events-auto"
+                                  disabled={(date) => {
+                                    const today = new Date(new Date().setHours(0, 0, 0, 0));
+                                    if (leaveStartDate) {
+                                      return date < leaveStartDate || date < today;
+                                    }
+                                    return date < today;
+                                  }}
+                                />
+                              </div>
                             </div>
                           </div>
+
+                          {(leaveStartDate || leaveEndDate) && (
+                            <div className="p-3 bg-muted rounded-md">
+                              <p className="text-sm font-medium mb-1">Leave Duration:</p>
+                              <p className="text-sm text-muted-foreground">
+                                {leaveStartDate && leaveEndDate ? (
+                                  <>
+                                    {format(leaveStartDate, 'MMM dd, yyyy')} - {format(leaveEndDate, 'MMM dd, yyyy')}
+                                    {leaveStartDate && leaveEndDate && (
+                                      <span className="ml-2 text-xs">
+                                        ({Math.ceil((leaveEndDate.getTime() - leaveStartDate.getTime()) / (1000 * 60 * 60 * 24)) + 1} day{Math.ceil((leaveEndDate.getTime() - leaveStartDate.getTime()) / (1000 * 60 * 60 * 24)) !== 0 ? 's' : ''})
+                                      </span>
+                                    )}
+                                  </>
+                                ) : leaveStartDate ? (
+                                  `Starting: ${format(leaveStartDate, 'MMM dd, yyyy')}`
+                                ) : leaveEndDate ? (
+                                  `Ending: ${format(leaveEndDate, 'MMM dd, yyyy')}`
+                                ) : null}
+                              </p>
+                            </div>
+                          )}
+
                           <Button 
                             className="w-full" 
                             onClick={handleAddLeave} 
@@ -934,7 +1536,19 @@ export default function Timetable() {
                               <Button 
                                 variant="ghost" 
                                 size="icon"
-                                onClick={() => setTeacherLeaves(teacherLeaves.filter(l => l.id !== leave.id))}
+                                onClick={async () => {
+                                  try {
+                                    await timetableApi.deleteLeave(leave.id);
+                                    setTeacherLeaves(teacherLeaves.filter(l => l.id !== leave.id));
+                                    toast({ title: "Leave Deleted" });
+                                  } catch (error: any) {
+                                    toast({ 
+                                      title: "Error", 
+                                      description: error?.message || "Failed to delete leave",
+                                      variant: "destructive"
+                                    });
+                                  }
+                                }}
                               >
                                 <Trash2 className="w-4 h-4 text-destructive" />
                               </Button>
@@ -999,14 +1613,40 @@ export default function Timetable() {
                       <Clock className="w-5 h-5 text-primary" />
                       Time Slots Configuration
                     </span>
-                    <Button size="sm" onClick={() => {
-                      const newSlot: TimeSlot = {
-                        id: Date.now().toString(),
-                        startTime: "14:30",
-                        endTime: "15:15",
-                        type: "class"
-                      };
-                      setTimeSlots([...timeSlots, newSlot]);
+                    <Button size="sm" onClick={async () => {
+                      try {
+                        const result = await timetableApi.createTimeSlot({
+                          startTime: "14:30",
+                          endTime: "15:15",
+                          type: "class",
+                          displayOrder: timeSlots.length
+                        });
+
+                        const newSlot: TimeSlot = {
+                          id: result.id,
+                          startTime: "14:30",
+                          endTime: "15:15",
+                          type: "class"
+                        };
+                        setTimeSlots([...timeSlots, newSlot]);
+                        toast({ title: "Time Slot Added" });
+                      } catch (error: any) {
+                        console.error('Error creating time slot:', error);
+                        const errorMessage = error?.message || "Failed to add time slot";
+                        if (errorMessage.includes('Database tables not found') || errorMessage.includes('doesn\'t exist')) {
+                          toast({ 
+                            title: "Database Setup Required", 
+                            description: "Timetable tables not found. Please run the database schema first.",
+                            variant: "destructive"
+                          });
+                        } else {
+                          toast({ 
+                            title: "Error", 
+                            description: errorMessage,
+                            variant: "destructive"
+                          });
+                        }
+                      }
                     }}>
                       <Plus className="w-4 h-4 mr-2" />
                       Add Slot
@@ -1029,34 +1669,77 @@ export default function Timetable() {
                           <TableCell>
                             <Input 
                               type="time"
-                              value={slot.startTime}
+                              value={slot.startTime || ''}
                               className="w-32"
-                              onChange={(e) => {
+                              disabled={!isAdmin}
+                              onChange={async (e) => {
+                                const newValue = e.target.value;
+                                // Optimistically update UI first
                                 const updated = [...timeSlots];
-                                updated[index].startTime = e.target.value;
+                                updated[index].startTime = newValue;
                                 setTimeSlots(updated);
+                                
+                                try {
+                                  await timetableApi.updateTimeSlot(slot.id, { startTime: newValue });
+                                } catch (error: any) {
+                                  // Revert on error
+                                  const reverted = [...timeSlots];
+                                  reverted[index].startTime = slot.startTime;
+                                  setTimeSlots(reverted);
+                                  toast({ 
+                                    title: "Error", 
+                                    description: error?.message || "Failed to update time slot",
+                                    variant: "destructive"
+                                  });
+                                }
                               }}
                             />
                           </TableCell>
                           <TableCell>
                             <Input 
                               type="time"
-                              value={slot.endTime}
+                              value={slot.endTime || ''}
                               className="w-32"
-                              onChange={(e) => {
+                              disabled={!isAdmin}
+                              onChange={async (e) => {
+                                const newValue = e.target.value;
+                                // Optimistically update UI first
                                 const updated = [...timeSlots];
-                                updated[index].endTime = e.target.value;
+                                updated[index].endTime = newValue;
                                 setTimeSlots(updated);
+                                
+                                try {
+                                  await timetableApi.updateTimeSlot(slot.id, { endTime: newValue });
+                                } catch (error: any) {
+                                  // Revert on error
+                                  const reverted = [...timeSlots];
+                                  reverted[index].endTime = slot.endTime;
+                                  setTimeSlots(reverted);
+                                  toast({ 
+                                    title: "Error", 
+                                    description: error?.message || "Failed to update time slot",
+                                    variant: "destructive"
+                                  });
+                                }
                               }}
                             />
                           </TableCell>
                           <TableCell>
                             <Select 
                               value={slot.type} 
-                              onValueChange={(v: TimeSlot["type"]) => {
-                                const updated = [...timeSlots];
-                                updated[index].type = v;
-                                setTimeSlots(updated);
+                              onValueChange={async (v: TimeSlot["type"]) => {
+                                try {
+                                  await timetableApi.updateTimeSlot(slot.id, { type: v });
+                                  const updated = [...timeSlots];
+                                  updated[index].type = v;
+                                  setTimeSlots(updated);
+                                } catch (error: any) {
+                                  toast({ 
+                                    title: "Error", 
+                                    description: error?.message || "Failed to update time slot",
+                                    variant: "destructive"
+                                  });
+                                }
                               }}
                             >
                               <SelectTrigger className="w-32">
@@ -1073,7 +1756,19 @@ export default function Timetable() {
                             <Button 
                               variant="ghost" 
                               size="icon"
-                              onClick={() => setTimeSlots(timeSlots.filter(s => s.id !== slot.id))}
+                              onClick={async () => {
+                                try {
+                                  await timetableApi.deleteTimeSlot(slot.id);
+                                  setTimeSlots(timeSlots.filter(s => s.id !== slot.id));
+                                  toast({ title: "Time Slot Deleted" });
+                                } catch (error: any) {
+                                  toast({ 
+                                    title: "Error", 
+                                    description: error?.message || "Failed to delete time slot",
+                                    variant: "destructive"
+                                  });
+                                }
+                              }}
                             >
                               <Trash2 className="w-4 h-4 text-destructive" />
                             </Button>
@@ -1128,13 +1823,35 @@ export default function Timetable() {
                 {selectedEntry && getEntry(selectedEntry.slotId, selectedEntry.day) && (
                   <Button 
                     variant="destructive"
-                    onClick={() => {
+                    onClick={async () => {
                       if (selectedEntry) {
-                        setTimetableData(timetableData.filter(
-                          e => !(e.slotId === selectedEntry.slotId && e.day === selectedEntry.day)
-                        ));
-                        setIsEditEntryOpen(false);
-                        toast({ title: "Entry Removed" });
+                        try {
+                          const entry = timetableData.find(
+                            e => e.slotId === selectedEntry.slotId && e.day === selectedEntry.day
+                          );
+                          
+                          if (entry && entry.id) {
+                            await timetableApi.deleteEntry(entry.id);
+                            setTimetableData(timetableData.filter(
+                              e => !(e.slotId === selectedEntry.slotId && e.day === selectedEntry.day)
+                            ));
+                            setIsEditEntryOpen(false);
+                            toast({ title: "Entry Removed" });
+                          } else {
+                            // Entry doesn't have ID yet (newly created), just remove from local state
+                            setTimetableData(timetableData.filter(
+                              e => !(e.slotId === selectedEntry.slotId && e.day === selectedEntry.day)
+                            ));
+                            setIsEditEntryOpen(false);
+                            toast({ title: "Entry Removed" });
+                          }
+                        } catch (error: any) {
+                          toast({ 
+                            title: "Error", 
+                            description: error?.message || "Failed to delete entry",
+                            variant: "destructive"
+                          });
+                        }
                       }
                     }}
                   >
@@ -1146,6 +1863,50 @@ export default function Timetable() {
           </DialogContent>
         </Dialog>
       </div>
+
+      {/* Send to All Dialog */}
+      <Dialog open={isSendAllDialogOpen} onOpenChange={setIsSendAllDialogOpen}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Send Timetables to All Teachers</DialogTitle>
+            <DialogDescription>
+              Click on each teacher's link to open WhatsApp with their timetable. Each link must be clicked individually to avoid browser popup blocking.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 py-4">
+            {generatedTeacherLinks.length === 0 ? (
+              <p className="text-center text-muted-foreground py-4">No teacher links generated yet.</p>
+            ) : (
+              generatedTeacherLinks.map((item, index) => (
+                <div key={item.teacher.id || index} className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-muted/50 transition-colors">
+                  <div className="flex-1">
+                    <p className="font-medium">{item.teacher.name}</p>
+                    <p className="text-xs text-muted-foreground">+91 {item.teacher.phone}</p>
+                  </div>
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      window.open(item.url, "_blank");
+                      toast({ 
+                        title: "WhatsApp Opened", 
+                        description: `Sending to ${item.teacher.name}` 
+                      });
+                    }}
+                  >
+                    <Send className="w-4 h-4 mr-2" />
+                    Open WhatsApp
+                  </Button>
+                </div>
+              ))
+            )}
+          </div>
+          <div className="flex justify-end gap-2 pt-4 border-t">
+            <Button variant="outline" onClick={() => setIsSendAllDialogOpen(false)}>
+              Close
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </UnifiedLayout>
   );
 }

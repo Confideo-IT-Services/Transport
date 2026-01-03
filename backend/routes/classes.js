@@ -110,7 +110,7 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
 
     // Create class
     const classId = uuidv4();
-    await db.query(
+    const [result] = await db.query(
       `INSERT INTO classes (id, name, section, class_teacher_id, school_id, created_at)
        VALUES (?, ?, ?, ?, ?, NOW())`,
       [classId, name, section || null, classTeacherId || null, schoolId]
@@ -120,6 +120,8 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
     if (classTeacherId) {
       await db.query('UPDATE teachers SET class_id = ? WHERE id = ?', [classId, classTeacherId]);
     }
+
+    console.log('✅ Class created:', { classId, name, section, schoolId, classTeacherId });
 
     res.status(201).json({ success: true, classId });
   } catch (error) {

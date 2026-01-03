@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { GraduationCap, Mail, Lock, Eye, EyeOff, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -10,8 +10,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export default function Login() {
   const navigate = useNavigate();
-  const { login } = useAuth();
+  const { login, isAuthenticated, isLoading: authLoading } = useAuth();
   const { toast } = useToast();
+  
+  // Redirect if already authenticated
+  useEffect(() => {
+    if (!authLoading && isAuthenticated) {
+      navigate("/dashboard", { replace: true });
+    }
+  }, [isAuthenticated, authLoading, navigate]);
   const [showPassword, setShowPassword] = useState(false);
   const [email, setEmail] = useState("");
   const [username, setUsername] = useState("");
@@ -36,15 +43,32 @@ export default function Login() {
       });
       navigate("/dashboard");
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
       toast({
         title: "Login failed",
-        description: "Please check your credentials and try again.",
+        description: errorMessage.includes('connect to server') 
+          ? "Unable to connect to the server. Please check if the backend is running and the database is connected."
+          : errorMessage.includes('Invalid credentials') || errorMessage.includes('credentials')
+          ? "Invalid email or password. Please check your credentials and try again."
+          : errorMessage,
         variant: "destructive",
       });
     } finally {
       setIsLoading(false);
     }
   };
+
+  // Show loading while checking authentication
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
+          <p className="text-muted-foreground">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">

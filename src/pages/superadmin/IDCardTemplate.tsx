@@ -69,28 +69,10 @@ const defaultElements: TemplateElement[] = [
   { id: "dob", type: "text", label: "Date of Birth", x: 10, y: 88, width: 80, height: 6, fontSize: 8, fontWeight: "normal", textAlign: "center", field: "dob" },
 ];
 
-const mockSchools = [
-  { id: "1", name: "Delhi Public School" },
-  { id: "2", name: "St. Mary's Convent" },
-  { id: "3", name: "Modern Public School" },
-];
-
-const mockTemplates: Template[] = [
-  {
-    id: "1",
-    name: "Standard Template",
-    schoolId: "1",
-    schoolName: "Delhi Public School",
-    backgroundColor: "#ffffff",
-    primaryColor: "#1e40af",
-    textColor: "#1f2937",
-    elements: defaultElements,
-  },
-];
-
 export default function IDCardTemplate() {
   const navigate = useNavigate();
-  const [templates, setTemplates] = useState<Template[]>(mockTemplates);
+  const [templates, setTemplates] = useState<Template[]>([]);
+  const [schools, setSchools] = useState<any[]>([]);
   const [selectedSchool, setSelectedSchool] = useState("");
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
   const [showPreview, setShowPreview] = useState(false);
@@ -106,7 +88,7 @@ export default function IDCardTemplate() {
       return;
     }
     
-    const school = mockSchools.find(s => s.id === selectedSchool);
+    const school = schools.find(s => s.id === selectedSchool);
     const newTemplate: Template = {
       id: Date.now().toString(),
       name: "New Template",
@@ -186,7 +168,7 @@ export default function IDCardTemplate() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Schools</SelectItem>
-                    {mockSchools.map(school => (
+                    {schools.map(school => (
                       <SelectItem key={school.id} value={school.id}>{school.name}</SelectItem>
                     ))}
                   </SelectContent>

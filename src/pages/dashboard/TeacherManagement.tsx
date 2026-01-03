@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { UnifiedLayout } from "@/components/layout/UnifiedLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -33,18 +33,14 @@ import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
 import { teachersApi, Teacher } from "@/lib/api";
 
-// Mock data for demo
-const mockTeachers: Teacher[] = [
-  { id: "1", username: "priya.sharma", name: "Priya Sharma", email: "priya@school.edu", phone: "+91 98765 43210", subjects: ["Mathematics", "Science"], isActive: true },
-  { id: "2", username: "amit.verma", name: "Amit Verma", email: "amit@school.edu", phone: "+91 98765 43211", subjects: ["English", "Hindi"], isActive: true },
-  { id: "3", username: "sunita.singh", name: "Sunita Singh", email: "sunita@school.edu", phone: "+91 98765 43212", subjects: ["Social Studies"], isActive: true },
-];
-
 export default function TeacherManagement() {
   const { user } = useAuth();
   const [searchQuery, setSearchQuery] = useState("");
-  const [teachers, setTeachers] = useState<Teacher[]>(mockTeachers);
+  const [teachers, setTeachers] = useState<Teacher[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const [isEditOpen, setIsEditOpen] = useState(false);
+  const [editingTeacher, setEditingTeacher] = useState<Teacher | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
@@ -54,6 +50,23 @@ export default function TeacherManagement() {
   const [teacherPassword, setTeacherPassword] = useState("");
   const [teacherEmail, setTeacherEmail] = useState("");
   const [teacherPhone, setTeacherPhone] = useState("");
+
+  useEffect(() => {
+    loadTeachers();
+  }, []);
+
+  const loadTeachers = async () => {
+    setIsLoading(true);
+    try {
+      const data = await teachersApi.getAll();
+      setTeachers(data);
+    } catch (error) {
+      console.error('Failed to load teachers:', error);
+      setTeachers([]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const filteredTeachers = teachers.filter((t) =>
     t.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -74,20 +87,10 @@ export default function TeacherManagement() {
       });
       toast.success("Teacher created successfully!");
       setIsAddOpen(false);
+      loadTeachers(); // Reload teachers from API
     } catch (error) {
-      // Demo mode
-      const newTeacher: Teacher = {
-        id: `${teachers.length + 1}`,
-        username: teacherUsername,
-        name: teacherName,
-        email: teacherEmail,
-        phone: teacherPhone,
-        subjects: [],
-        isActive: true,
-      };
-      setTeachers([...teachers, newTeacher]);
-      toast.success("Teacher created! (Demo Mode)");
-      setIsAddOpen(false);
+      console.error('Failed to create teacher:', error);
+      toast.error("Failed to create teacher. Please try again.");
     } finally {
       setIsSubmitting(false);
       setTeacherName("");
@@ -101,6 +104,72 @@ export default function TeacherManagement() {
   const copyCredentials = (username: string) => {
     navigator.clipboard.writeText(username);
     toast.success("Username copied!");
+  };
+
+  const handleEdit = (teacher: Teacher) => {
+    setEditingTeacher(teacher);
+    setTeacherName(teacher.name);
+    setTeacherUsername(teacher.username);
+    setTeacherPassword(""); // Don't pre-fill password
+    setTeacherEmail(teacher.email || "");
+    setTeacherPhone(teacher.phone || "");
+    setIsEditOpen(true);
+  };
+
+  const handleUpdateTeacher = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingTeacher) return;
+
+    setIsSubmitting(true);
+    try {
+      const updateData: any = {
+        name: teacherName,
+        email: teacherEmail,
+        phone: teacherPhone,
+      };
+
+      // Only update password if provided
+      if (teacherPassword.trim()) {
+        updateData.password = teacherPassword;
+      }
+
+      await teachersApi.update(editingTeacher.id, updateData);
+      toast.success("Teacher updated successfully!");
+      setIsEditOpen(false);
+      setEditingTeacher(null);
+      loadTeachers();
+    } catch (error: any) {
+      console.error('Failed to update teacher:', error);
+      toast.error(error?.message || "Failed to update teacher. Please try again.");
+    } finally {
+      setIsSubmitting(false);
+      setTeacherName("");
+      setTeacherUsername("");
+      setTeacherPassword("");
+      setTeacherEmail("");
+      setTeacherPhone("");
+    }
+  };
+
+  const handleDeactivate = async (teacher: Teacher) => {
+    if (!confirm(`Are you sure you want to ${teacher.isActive ? 'deactivate' : 'activate'} ${teacher.name}?`)) {
+      return;
+    }
+
+    try {
+      if (teacher.isActive) {
+        await teachersApi.deactivate(teacher.id);
+        toast.success(`${teacher.name} has been deactivated`);
+      } else {
+        // If we need to reactivate, we might need an activate endpoint
+        // For now, we'll just show a message
+        toast.info("Reactivate functionality not yet implemented");
+      }
+      loadTeachers();
+    } catch (error: any) {
+      console.error('Failed to deactivate teacher:', error);
+      toast.error(error?.message || "Failed to deactivate teacher. Please try again.");
+    }
   };
 
   if (user?.role !== "admin") {
@@ -184,6 +253,103 @@ export default function TeacherManagement() {
           </Dialog>
         </div>
 
+        {/* Edit Teacher Dialog */}
+        <Dialog open={isEditOpen} onOpenChange={(open) => {
+          setIsEditOpen(open);
+          if (!open) {
+            setEditingTeacher(null);
+            setTeacherName("");
+            setTeacherUsername("");
+            setTeacherPassword("");
+            setTeacherEmail("");
+            setTeacherPhone("");
+          }
+        }}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Edit Teacher</DialogTitle>
+              <DialogDescription>
+                Update teacher information. Leave password blank to keep current password.
+              </DialogDescription>
+            </DialogHeader>
+            <form onSubmit={handleUpdateTeacher} className="space-y-4 pt-4">
+              <div className="space-y-2">
+                <Label>Full Name *</Label>
+                <Input 
+                  value={teacherName} 
+                  onChange={(e) => setTeacherName(e.target.value)} 
+                  placeholder="e.g., Priya Sharma" 
+                  required 
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Username</Label>
+                <Input 
+                  value={teacherUsername} 
+                  disabled
+                  className="bg-muted"
+                  placeholder="Username cannot be changed"
+                />
+                <p className="text-xs text-muted-foreground">Username cannot be changed after creation</p>
+              </div>
+              <div className="space-y-2">
+                <Label>New Password (optional)</Label>
+                <div className="relative">
+                  <Input 
+                    type={showPassword ? "text" : "password"} 
+                    value={teacherPassword} 
+                    onChange={(e) => setTeacherPassword(e.target.value)} 
+                    placeholder="Leave blank to keep current password" 
+                    minLength={6}
+                  />
+                  <button 
+                    type="button" 
+                    className="absolute right-3 top-1/2 -translate-y-1/2" 
+                    onClick={() => setShowPassword(!showPassword)}
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4 text-muted-foreground" /> : <Eye className="w-4 h-4 text-muted-foreground" />}
+                  </button>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Email</Label>
+                  <Input 
+                    type="email" 
+                    value={teacherEmail} 
+                    onChange={(e) => setTeacherEmail(e.target.value)} 
+                    placeholder="Optional" 
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Phone</Label>
+                  <Input 
+                    value={teacherPhone} 
+                    onChange={(e) => setTeacherPhone(e.target.value)} 
+                    placeholder="+91 98765 43210" 
+                  />
+                </div>
+              </div>
+              <div className="flex justify-end gap-3 pt-4">
+                <Button 
+                  type="button" 
+                  variant="outline" 
+                  onClick={() => {
+                    setIsEditOpen(false);
+                    setEditingTeacher(null);
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={isSubmitting}>
+                  {isSubmitting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Edit className="w-4 h-4 mr-2" />}
+                  Update Teacher
+                </Button>
+              </div>
+            </form>
+          </DialogContent>
+        </Dialog>
+
         <div className="relative max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input placeholder="Search teachers..." className="pl-10" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
@@ -234,8 +400,16 @@ export default function TeacherManagement() {
                         <Button variant="ghost" size="icon"><MoreHorizontal className="w-4 h-4" /></Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem><Edit className="w-4 h-4 mr-2" />Edit</DropdownMenuItem>
-                        <DropdownMenuItem className="text-destructive"><Trash2 className="w-4 h-4 mr-2" />Deactivate</DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => handleEdit(teacher)}>
+                          <Edit className="w-4 h-4 mr-2" />Edit
+                        </DropdownMenuItem>
+                        <DropdownMenuItem 
+                          className="text-destructive" 
+                          onClick={() => handleDeactivate(teacher)}
+                        >
+                          <Trash2 className="w-4 h-4 mr-2" />
+                          {teacher.isActive ? "Deactivate" : "Activate"}
+                        </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </td>

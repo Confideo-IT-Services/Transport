@@ -58,22 +58,7 @@ interface PrintSettings {
   marginRight: number; // mm
 }
 
-const mockStudents: Student[] = [
-  { id: "1", name: "Alex Johnson", class: "3", section: "A", admissionNo: "ADM2024001", dob: "2015-03-15", photo: "", schoolId: "1", selected: false },
-  { id: "2", name: "Emma Williams", class: "4", section: "B", admissionNo: "ADM2024002", dob: "2014-07-22", photo: "", schoolId: "1", selected: false },
-  { id: "3", name: "Noah Brown", class: "2", section: "A", admissionNo: "ADM2024003", dob: "2016-11-08", photo: "", schoolId: "1", selected: false },
-  { id: "4", name: "Olivia Davis", class: "5", section: "A", admissionNo: "ADM2024004", dob: "2013-05-30", photo: "", schoolId: "1", selected: false },
-  { id: "5", name: "Liam Wilson", class: "3", section: "B", admissionNo: "ADM2024005", dob: "2015-09-12", photo: "", schoolId: "1", selected: false },
-  { id: "6", name: "Sophia Martinez", class: "1", section: "A", admissionNo: "ADM2024006", dob: "2017-02-18", photo: "", schoolId: "1", selected: false },
-  { id: "7", name: "Mason Anderson", class: "4", section: "A", admissionNo: "ADM2024007", dob: "2014-12-25", photo: "", schoolId: "2", selected: false },
-  { id: "8", name: "Isabella Taylor", class: "2", section: "B", admissionNo: "ADM2024008", dob: "2016-06-03", photo: "", schoolId: "2", selected: false },
-];
-
-const mockSchools = [
-  { id: "1", name: "Delhi Public School", primaryColor: "#1e40af" },
-  { id: "2", name: "St. Mary's Convent", primaryColor: "#7c3aed" },
-  { id: "3", name: "Modern Public School", primaryColor: "#059669" },
-];
+// Mock data removed - will fetch from API
 
 const defaultPrintSettings: PrintSettings = {
   paperSize: "a4",
@@ -91,7 +76,8 @@ export default function IDCardGeneration() {
   const navigate = useNavigate();
   const printRef = useRef<HTMLDivElement>(null);
   
-  const [students, setStudents] = useState<Student[]>(mockStudents);
+  const [students, setStudents] = useState<Student[]>([]);
+  const [schools, setSchools] = useState<any[]>([]);
   const [selectedSchool, setSelectedSchool] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [filterClass, setFilterClass] = useState("all");
@@ -159,7 +145,7 @@ export default function IDCardGeneration() {
   };
 
   const layout = calculateLayout();
-  const school = mockSchools.find(s => s.id === selectedSchool);
+  const school = schools.find(s => s.id === selectedSchool);
 
   const handleLogout = () => navigate("/");
 
@@ -189,7 +175,7 @@ export default function IDCardGeneration() {
                     <SelectValue placeholder="Select School" />
                   </SelectTrigger>
                   <SelectContent>
-                    {mockSchools.map(school => (
+                    {schools.map(school => (
                       <SelectItem key={school.id} value={school.id}>{school.name}</SelectItem>
                     ))}
                   </SelectContent>
