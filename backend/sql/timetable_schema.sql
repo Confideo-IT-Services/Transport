@@ -73,3 +73,4 @@ CREATE TABLE IF NOT EXISTS teacher_leaves (
     FOREIGN KEY (teacher_id) REFERENCES teachers(id) ON DELETE CASCADE
 );
 
+

@@ -99,7 +99,7 @@ export default function AcademicSetup() {
             classData.sections.push({
               name: cls.section || '',
               students: cls.studentCount || 0,
-              classTeacher: cls.classTeacherId || ''
+              classTeacher: cls.classTeacherName || cls.classTeacherId || 'Not Assigned'
             });
           }
         });

@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { useAuth } from "@/contexts/AuthContext";
-import { studentsApi, attendanceApi } from "@/lib/api";
+import { studentsApi, attendanceApi, classesApi } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Calendar as CalendarIcon, Check, X, Clock, Save, Search } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -51,26 +51,66 @@ export default function Attendance() {
     const loadStudents = async () => {
       setIsLoading(true);
       try {
-        // Get teacher's assigned class from user data or API
-        // For now, we'll get all students and filter by teacher's class
-        const studentsData = await studentsApi.getAll();
+        // First, get teacher's assigned class from classes API
+        let teacherClass: any = null;
+        let foundClassId = "";
         
-        // TODO: Get teacher's assigned class from API
-        // For now, if user has className, use it to filter
-        let filteredStudents = studentsData || [];
-        
-        // If teacher has a class assigned, filter students
-        if (user?.className) {
-          // Match class name format
-          filteredStudents = filteredStudents.filter((s: any) => {
-            const studentClass = `${s.class}${s.section ? ` - Section ${s.section}` : ''}`;
-            return studentClass === user.className;
-          });
-          
-          // Get classId from first student if available
-          if (filteredStudents.length > 0) {
-            setClassId(filteredStudents[0].classId);
+        try {
+          const classesData = await classesApi.getAll();
+          if (classesData && classesData.length > 0) {
+            // Teacher should have at least one assigned class
+            teacherClass = classesData[0];
+            foundClassId = teacherClass.id;
+            setClassId(foundClassId);
           }
+        } catch (error) {
+          console.error('Error loading classes:', error);
+        }
+        
+        // Get students for the assigned class
+        let filteredStudents: any[] = [];
+        
+        if (foundClassId) {
+          // Use getByClass API if available
+          try {
+            filteredStudents = await studentsApi.getByClass(foundClassId);
+          } catch (error) {
+            // Fallback to getAll and filter
+            const studentsData = await studentsApi.getAll();
+            filteredStudents = (studentsData || []).filter((s: any) => s.classId === foundClassId);
+          }
+        } else if (user?.className) {
+          // Fallback: try to match by className from user data
+          const studentsData = await studentsApi.getAll();
+          filteredStudents = (studentsData || []).filter((s: any) => {
+            const studentClass = `${s.class}${s.section ? ` - Section ${s.section}` : ''}`.trim();
+            const userClass = user.className?.trim();
+            
+            // Try exact match
+            if (studentClass === userClass) {
+              if (!foundClassId && s.classId) {
+                foundClassId = s.classId;
+                setClassId(foundClassId);
+              }
+              return true;
+            }
+            
+            // Try without "Section" prefix
+            const studentClassSimple = `${s.class}${s.section ? ` ${s.section}` : ''}`.trim();
+            const userClassSimple = userClass.replace(/Section\s*/i, '').trim();
+            if (studentClassSimple === userClassSimple && !foundClassId && s.classId) {
+              foundClassId = s.classId;
+              setClassId(foundClassId);
+              return true;
+            }
+            
+            return false;
+          });
+        } else {
+          // No class assigned
+          setStudents([]);
+          setIsLoading(false);
+          return;
         }
 
         setStudents(filteredStudents.map((s: any, index: number) => ({
@@ -80,10 +120,10 @@ export default function Attendance() {
           status: "present" as AttendanceStatus // Default status
         })));
 
-        // Load today's attendance if available
-        if (classId || (filteredStudents.length > 0 && filteredStudents[0].classId)) {
+        // Load today's attendance if classId is available
+        const currentClassId = foundClassId || classId;
+        if (currentClassId && filteredStudents.length > 0) {
           const todayStr = format(new Date(), "yyyy-MM-dd");
-          const currentClassId = classId || filteredStudents[0].classId;
           try {
             const attendanceData = await attendanceApi.getStudentAttendance(currentClassId, todayStr);
             if (attendanceData && attendanceData.students) {
@@ -110,7 +150,7 @@ export default function Attendance() {
       }
     };
     loadStudents();
-  }, [user, classId]);
+  }, [user]); // Removed classId from dependencies to avoid infinite loop
 
   // Load attendance history chart data
   useEffect(() => {
@@ -280,65 +320,64 @@ export default function Attendance() {
                     </thead>
                     <tbody>
                       {students.map((student) => (
-                    <tr key={student.id}>
-                      <td>
-                        <span className="badge badge-info">{student.rollNo}</span>
-                      </td>
-                      <td>
-                        <div className="flex items-center gap-3">
-                          <Avatar className="w-8 h-8">
-                            <AvatarFallback className="bg-primary/10 text-primary text-sm">
-                              {student.name.split(" ").map(n => n[0]).join("")}
-                            </AvatarFallback>
-                          </Avatar>
-                          <span className="font-medium">{student.name}</span>
-                        </div>
-                      </td>
-                      <td>
-                        <Select
-                          value={student.status}
-                          onValueChange={(value: AttendanceStatus) => updateStatus(student.id, value)}
-                        >
-                          <SelectTrigger className="w-32">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="present">Present</SelectItem>
-                            <SelectItem value="absent">Absent</SelectItem>
-                            <SelectItem value="leave">Leave</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </td>
-                      <td>
-                        <div className="flex items-center gap-2">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className={student.status === "present" ? "bg-success/20 text-success" : ""}
-                            onClick={() => updateStatus(student.id, "present")}
-                          >
-                            <Check className="w-4 h-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className={student.status === "absent" ? "bg-destructive/20 text-destructive" : ""}
-                            onClick={() => updateStatus(student.id, "absent")}
-                          >
-                            <X className="w-4 h-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className={student.status === "leave" ? "bg-warning/20 text-warning" : ""}
-                            onClick={() => updateStatus(student.id, "leave")}
-                          >
-                            <Clock className="w-4 h-4" />
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                        <tr key={student.id}>
+                          <td>
+                            <span className="badge badge-info">{student.rollNo}</span>
+                          </td>
+                          <td>
+                            <div className="flex items-center gap-3">
+                              <Avatar className="w-8 h-8">
+                                <AvatarFallback className="bg-primary/10 text-primary text-sm">
+                                  {student.name.split(" ").map(n => n[0]).join("")}
+                                </AvatarFallback>
+                              </Avatar>
+                              <span className="font-medium">{student.name}</span>
+                            </div>
+                          </td>
+                          <td>
+                            <Select
+                              value={student.status}
+                              onValueChange={(value: AttendanceStatus) => updateStatus(student.id, value)}
+                            >
+                              <SelectTrigger className="w-32">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="present">Present</SelectItem>
+                                <SelectItem value="absent">Absent</SelectItem>
+                                <SelectItem value="leave">Leave</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </td>
+                          <td>
+                            <div className="flex items-center gap-2">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className={student.status === "present" ? "bg-success/20 text-success" : ""}
+                                onClick={() => updateStatus(student.id, "present")}
+                              >
+                                <Check className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className={student.status === "absent" ? "bg-destructive/20 text-destructive" : ""}
+                                onClick={() => updateStatus(student.id, "absent")}
+                              >
+                                <X className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className={student.status === "leave" ? "bg-warning/20 text-warning" : ""}
+                                onClick={() => updateStatus(student.id, "leave")}
+                              >
+                                <Clock className="w-4 h-4" />
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
                       ))}
                     </tbody>
                   </table>

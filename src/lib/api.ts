@@ -85,8 +85,14 @@ const apiRequest = async <T>(
     });
 
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Request failed' }));
-      throw new Error(error.error || 'Request failed');
+      const errorData = await response.json().catch(() => ({ error: 'Request failed' }));
+      const errorMessage = errorData.details 
+        ? `${errorData.error}: ${errorData.details}` 
+        : (errorData.error || 'Request failed');
+      const error = new Error(errorMessage);
+      (error as any).details = errorData.details;
+      (error as any).code = errorData.code;
+      throw error;
     }
 
     return response.json();
@@ -300,6 +306,18 @@ export const studentsApi = {
       body: JSON.stringify(data),
     });
   },
+
+  approve: async (id: string | number): Promise<{ success: boolean }> => {
+    return apiRequest(`/students/${id}/approve`, {
+      method: 'POST',
+    });
+  },
+
+  reject: async (id: string | number): Promise<{ success: boolean }> => {
+    return apiRequest(`/students/${id}/reject`, {
+      method: 'POST',
+    });
+  },
 };
 
 // ============ REGISTRATION LINKS API ============
@@ -406,14 +424,25 @@ export const attendanceApi = {
     const params = date ? `?date=${date}` : '';
     return apiRequest<any[]>(`/attendance/teachers${params}`);
   },
-  markTeacherCheckIn: async (): Promise<{ success: boolean; checkInTime: string }> => {
+  markTeacherCheckIn: async (): Promise<{ success: boolean; checkInTime?: string; time?: string }> => {
     return apiRequest('/attendance/teachers/checkin', {
       method: 'POST',
     });
   },
-  markTeacherCheckOut: async (): Promise<{ success: boolean; checkOutTime: string }> => {
+  markTeacherCheckOut: async (): Promise<{ success: boolean; checkOutTime?: string; time?: string }> => {
     return apiRequest('/attendance/teachers/checkout', {
       method: 'POST',
+    });
+  },
+  markTeacherAttendance: async (data: {
+    teacherId: string;
+    date: string;
+    status: 'present' | 'absent' | 'late' | 'leave' | 'not-marked';
+    remarks?: string;
+  }): Promise<{ success: boolean }> => {
+    return apiRequest('/attendance/teachers/mark', {
+      method: 'POST',
+      body: JSON.stringify(data),
     });
   },
   getTeacherAttendanceHistory: async (teacherId?: string, startDate?: string, endDate?: string): Promise<any[]> => {
@@ -433,6 +462,39 @@ export const attendanceApi = {
     if (year) params.append('year', year);
     const query = params.toString() ? `?${params.toString()}` : '';
     return apiRequest<any[]>(`/attendance/stats/monthly${query}`);
+  },
+};
+
+export const homeworkApi = {
+  // Get all homework (filtered by teacher for teachers, by school for admins)
+  getAll: async (): Promise<any[]> => {
+    return apiRequest<any[]>('/homework');
+  },
+
+  // Get homework by class
+  getByClass: async (classId: string): Promise<any[]> => {
+    return apiRequest<any[]>(`/homework/class/${classId}`);
+  },
+
+  // Create homework (Teacher only)
+  create: async (data: {
+    title: string;
+    description?: string;
+    subject?: string;
+    classId: string;
+    dueDate?: string;
+  }): Promise<{ success: boolean; homeworkId: string }> => {
+    return apiRequest('/homework', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  // Mark homework as completed
+  complete: async (id: string): Promise<{ success: boolean }> => {
+    return apiRequest(`/homework/${id}/complete`, {
+      method: 'POST',
+    });
   },
 };
 
@@ -535,6 +597,18 @@ export const timetableApi = {
     return apiRequest('/timetable/leaves', {
       method: 'POST',
       body: JSON.stringify(data),
+    });
+  },
+
+  approveLeave: async (id: string): Promise<{ success: boolean; status: string }> => {
+    return apiRequest(`/timetable/leaves/${id}/approve`, {
+      method: 'PUT',
+    });
+  },
+
+  rejectLeave: async (id: string): Promise<{ success: boolean; status: string }> => {
+    return apiRequest(`/timetable/leaves/${id}/reject`, {
+      method: 'PUT',
     });
   },
 

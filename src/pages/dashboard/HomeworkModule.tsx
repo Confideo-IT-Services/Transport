@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { UnifiedLayout } from "@/components/layout/UnifiedLayout";
+import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -24,6 +25,7 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { Progress } from "@/components/ui/progress";
+import { homeworkApi, classesApi, studentsApi } from "@/lib/api";
 
 interface SubjectHomework {
   subjectId: string;
@@ -46,6 +48,7 @@ interface HomeworkItem {
   createdAt: string;
   sentToParents: boolean;
   students: Student[];
+  classId?: string; // Add classId to track which class this homework belongs to
 }
 
 interface StudentFrequency {
@@ -104,16 +107,122 @@ const initialHomework: HomeworkItem[] = [
 ];
 
 export default function HomeworkModule() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
   const [subjects, setSubjects] = useState(defaultSubjects);
   const [selectedSubjects, setSelectedSubjects] = useState<string[]>([]);
   const [subjectDescriptions, setSubjectDescriptions] = useState<Record<string, string>>({});
   const [dueDate, setDueDate] = useState("");
   const [newSubjectName, setNewSubjectName] = useState("");
   const [isAddSubjectOpen, setIsAddSubjectOpen] = useState(false);
-  const [homework, setHomework] = useState<HomeworkItem[]>(initialHomework);
+  const [homework, setHomework] = useState<HomeworkItem[]>([]);
   const [filterDate, setFilterDate] = useState("");
   const [selectedHomework, setSelectedHomework] = useState<HomeworkItem | null>(null);
   const [isCompletionDialogOpen, setIsCompletionDialogOpen] = useState(false);
+  const [classes, setClasses] = useState<any[]>([]);
+  const [selectedClassId, setSelectedClassId] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [studentsInClass, setStudentsInClass] = useState<Student[]>([]);
+  const [classStudentsMap, setClassStudentsMap] = useState<Record<string, Student[]>>({});
+
+  // Load classes and homework on mount
+  useEffect(() => {
+    const loadData = async () => {
+      setIsLoading(true);
+      try {
+        // Load classes
+        const classesData = await classesApi.getAll();
+        setClasses(classesData || []);
+        
+        // Auto-select first class for teachers
+        if (!isAdmin && classesData && classesData.length > 0) {
+          setSelectedClassId(classesData[0].id);
+        }
+        
+        // Load homework
+        const homeworkData = await homeworkApi.getAll();
+        
+        // Fetch students for each unique class in homework
+        const uniqueClassIds = [...new Set(homeworkData.map((h: any) => h.classId).filter(Boolean))];
+        const studentsMap: Record<string, Student[]> = {};
+        
+        // Fetch students for each class
+        for (const classId of uniqueClassIds) {
+          try {
+            const classStudents = await studentsApi.getByClass(classId);
+            studentsMap[classId] = classStudents.map((s: any, index: number) => ({
+              id: parseInt(s.id) || index + 1,
+              name: s.name,
+              rollNo: s.rollNo || String(index + 1).padStart(2, '0'),
+              completed: false
+            }));
+          } catch (error) {
+            console.error(`Error loading students for class ${classId}:`, error);
+            studentsMap[classId] = [];
+          }
+        }
+        
+        setClassStudentsMap(studentsMap);
+        
+        // Transform backend data to frontend format
+        const transformedHomework: HomeworkItem[] = homeworkData.map((h: any) => ({
+          id: parseInt(h.id) || Date.now(),
+          subjects: [{
+            subjectId: h.subject?.toLowerCase().replace(/\s+/g, '-') || 'subject',
+            subjectName: h.subject || 'Subject',
+            description: h.description || ''
+          }],
+          dueDate: h.dueDate || '',
+          status: h.status === 'completed' ? 'completed' : h.status === 'active' ? 'active' : 'draft',
+          createdAt: h.createdAt || new Date().toISOString().split('T')[0],
+          sentToParents: false, // Backend doesn't track this yet
+          students: studentsMap[h.classId] || [],
+          classId: h.classId // Store classId for future reference
+        }));
+        setHomework(transformedHomework);
+      } catch (error) {
+        console.error('Error loading homework data:', error);
+        toast.error('Failed to load homework');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    
+    loadData();
+  }, [isAdmin]);
+
+  // Load students when class is selected
+  useEffect(() => {
+    const loadClassStudents = async () => {
+      if (!selectedClassId) {
+        setStudentsInClass([]);
+        return;
+      }
+      
+      // Check if students are already cached
+      if (classStudentsMap[selectedClassId]) {
+        setStudentsInClass(classStudentsMap[selectedClassId]);
+        return;
+      }
+      
+      try {
+        const classStudents = await studentsApi.getByClass(selectedClassId);
+        const students = classStudents.map((s: any, index: number) => ({
+          id: parseInt(s.id) || index + 1,
+          name: s.name,
+          rollNo: s.rollNo || String(index + 1).padStart(2, '0'),
+          completed: false
+        }));
+        setStudentsInClass(students);
+        setClassStudentsMap(prev => ({ ...prev, [selectedClassId]: students }));
+      } catch (error) {
+        console.error('Error loading students for class:', error);
+        setStudentsInClass([]);
+      }
+    };
+    
+    loadClassStudents();
+  }, [selectedClassId, classStudentsMap]);
 
   const handleSubjectToggle = (subjectId: string) => {
     setSelectedSubjects(prev =>
@@ -143,7 +252,7 @@ export default function HomeworkModule() {
     toast.success(`"${newSubjectName.trim()}" added to subjects`);
   };
 
-  const createHomework = (isDraft: boolean) => {
+  const createHomework = async (isDraft: boolean) => {
     if (selectedSubjects.length === 0) {
       toast.error("Please select at least one subject");
       return;
@@ -160,27 +269,83 @@ export default function HomeworkModule() {
       return;
     }
 
-    const subjectsData: SubjectHomework[] = selectedSubjects.map(id => ({
-      subjectId: id,
-      subjectName: subjects.find(s => s.id === id)?.name || id,
-      description: subjectDescriptions[id] || "",
-    }));
+    if (!selectedClassId) {
+      toast.error("Please select a class");
+      return;
+    }
 
-    const newHomework: HomeworkItem = {
-      id: Date.now(),
-      subjects: subjectsData,
-      dueDate: dueDate || new Date().toISOString().split('T')[0],
-      status: isDraft ? "draft" : "active",
-      createdAt: new Date().toISOString().split('T')[0],
-      sentToParents: false,
-      students: defaultStudents.map(s => ({ ...s, completed: false })),
-    };
+    try {
+      setIsLoading(true);
+      // Create separate homework entries for each subject (backend supports one subject per homework)
+      const createdHomework: HomeworkItem[] = [];
+      
+      for (const subjectId of selectedSubjects) {
+        const subjectName = subjects.find(s => s.id === subjectId)?.name || subjectId;
+        const description = subjectDescriptions[subjectId] || "";
+        const title = `${subjectName} - ${dueDate || new Date().toISOString().split('T')[0]}`;
+        
+        try {
+          const result = await homeworkApi.create({
+            title,
+            description,
+            subject: subjectName,
+            classId: selectedClassId,
+            dueDate: dueDate || undefined
+          });
 
-    setHomework([newHomework, ...homework]);
-    setSelectedSubjects([]);
-    setSubjectDescriptions({});
-    setDueDate("");
-    toast.success(isDraft ? "Homework saved as draft" : "Homework created successfully!");
+          // Fetch students for the class if not already loaded
+          let students: Student[] = [];
+          if (classStudentsMap[selectedClassId]) {
+            students = classStudentsMap[selectedClassId];
+          } else {
+            try {
+              const classStudents = await studentsApi.getByClass(selectedClassId);
+              students = classStudents.map((s: any, index: number) => ({
+                id: parseInt(s.id) || index + 1,
+                name: s.name,
+                rollNo: s.rollNo || String(index + 1).padStart(2, '0'),
+                completed: false
+              }));
+              setClassStudentsMap(prev => ({ ...prev, [selectedClassId]: students }));
+            } catch (error) {
+              console.error('Error loading students for new homework:', error);
+              students = [];
+            }
+          }
+          
+          createdHomework.push({
+            id: parseInt(result.homeworkId) || Date.now(),
+            subjects: [{
+              subjectId,
+              subjectName,
+              description
+            }],
+            dueDate: dueDate || new Date().toISOString().split('T')[0],
+            status: isDraft ? "draft" : "active",
+            createdAt: new Date().toISOString().split('T')[0],
+            sentToParents: false,
+            students: students,
+            classId: selectedClassId
+          });
+        } catch (error: any) {
+          console.error(`Error creating homework for ${subjectName}:`, error);
+          toast.error(`Failed to create homework for ${subjectName}`);
+        }
+      }
+
+      if (createdHomework.length > 0) {
+        setHomework([...createdHomework, ...homework]);
+        setSelectedSubjects([]);
+        setSubjectDescriptions({});
+        setDueDate("");
+        toast.success(`${createdHomework.length} homework ${createdHomework.length === 1 ? 'entry' : 'entries'} created successfully!`);
+      }
+    } catch (error: any) {
+      console.error('Error creating homework:', error);
+      toast.error(error?.message || "Failed to create homework");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleSendToParents = (hw: HomeworkItem) => {
@@ -200,8 +365,35 @@ export default function HomeworkModule() {
     toast.success("WhatsApp opened with homework details");
   };
 
-  const openCompletionDialog = (hw: HomeworkItem) => {
-    setSelectedHomework(hw);
+  const openCompletionDialog = async (hw: HomeworkItem) => {
+    // Ensure students are loaded for this homework's class
+    if ((!hw.students || hw.students.length === 0) && hw.classId) {
+      try {
+        // Fetch students for this class if not already loaded
+        if (!classStudentsMap[hw.classId]) {
+          const classStudents = await studentsApi.getByClass(hw.classId);
+          const students = classStudents.map((s: any, index: number) => ({
+            id: parseInt(s.id) || index + 1,
+            name: s.name,
+            rollNo: s.rollNo || String(index + 1).padStart(2, '0'),
+            completed: false
+          }));
+          setClassStudentsMap(prev => ({ ...prev, [hw.classId!]: students }));
+          const updatedHw = { ...hw, students };
+          setSelectedHomework(updatedHw);
+          setHomework(homework.map(h => h.id === hw.id ? updatedHw : h));
+        } else {
+          // Use cached students
+          const updatedHw = { ...hw, students: classStudentsMap[hw.classId] };
+          setSelectedHomework(updatedHw);
+        }
+      } catch (error) {
+        console.error('Error loading students for homework:', error);
+        setSelectedHomework(hw);
+      }
+    } else {
+      setSelectedHomework(hw);
+    }
     setIsCompletionDialogOpen(true);
   };
 
@@ -217,13 +409,22 @@ export default function HomeworkModule() {
     setHomework(homework.map(h => h.id === selectedHomework.id ? updatedHomework : h));
   };
 
-  const markAllComplete = () => {
+  const markAllComplete = async () => {
     if (!selectedHomework) return;
-    const updatedStudents = selectedHomework.students.map(s => ({ ...s, completed: true }));
-    const updatedHomework = { ...selectedHomework, students: updatedStudents, status: "completed" as const };
-    setSelectedHomework(updatedHomework);
-    setHomework(homework.map(h => h.id === selectedHomework.id ? updatedHomework : h));
-    toast.success("All students marked as complete");
+    
+    try {
+      // Mark homework as completed in backend
+      await homeworkApi.complete(selectedHomework.id.toString());
+      
+      const updatedStudents = selectedHomework.students.map(s => ({ ...s, completed: true }));
+      const updatedHomework = { ...selectedHomework, students: updatedStudents, status: "completed" as const };
+      setSelectedHomework(updatedHomework);
+      setHomework(homework.map(h => h.id === selectedHomework.id ? updatedHomework : h));
+      toast.success("All students marked as complete");
+    } catch (error: any) {
+      console.error('Error completing homework:', error);
+      toast.error(error?.message || "Failed to mark homework as complete");
+    }
   };
 
   const filteredHomework = homework.filter(h => {
@@ -234,7 +435,14 @@ export default function HomeworkModule() {
   const drafts = homework.filter(h => h.status === "draft");
 
   // Calculate student frequency
-  const studentFrequency: StudentFrequency[] = defaultStudents.map(student => {
+  // Get all unique students from all homework items
+  const allStudents = Array.from(
+    new Map(
+      homework.flatMap(h => h.students.map(s => [s.id, s]))
+    ).values()
+  );
+
+  const studentFrequency: StudentFrequency[] = allStudents.map(student => {
     const completedHomework = homework.filter(h => 
       h.status !== "draft" && h.students.find(s => s.id === student.id)?.completed
     );
@@ -355,6 +563,25 @@ export default function HomeworkModule() {
                       </div>
                     );
                   })}
+                </div>
+              )}
+
+              {/* Class Selection (for admins) */}
+              {isAdmin && (
+                <div className="space-y-2 mb-6">
+                  <Label>Select Class *</Label>
+                  <Select value={selectedClassId} onValueChange={setSelectedClassId}>
+                    <SelectTrigger className="max-w-xs">
+                      <SelectValue placeholder="Select a class" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {classes.map((cls) => (
+                        <SelectItem key={cls.id} value={cls.id}>
+                          {cls.name}{cls.section ? ` - Section ${cls.section}` : ''}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
               )}
 

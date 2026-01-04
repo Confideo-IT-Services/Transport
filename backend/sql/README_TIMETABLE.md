@@ -23,3 +23,4 @@ source /path/to/backend/sql/timetable_schema.sql;
 
 All tables are linked to `school_id` for multi-tenant support.
 
+

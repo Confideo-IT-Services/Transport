@@ -468,20 +468,44 @@ export default function StudentManagement() {
     toast.success("Link copied to clipboard!");
   };
 
-  const handleApprove = (studentId: number) => {
-    setStudents(prev => prev.map(s => 
-      s.id === studentId 
-        ? { ...s, status: "approved" as const, admissionNumber: `ADM${new Date().getFullYear()}${String(studentId).padStart(4, "0")}` }
-        : s
-    ));
-    toast.success("Student approved and added to class!");
+  const handleApprove = async (studentId: number) => {
+    try {
+      await studentsApi.approve(studentId);
+      
+      // Update local state
+      setStudents(prev => prev.map(s => 
+        s.id === studentId 
+          ? { ...s, status: "approved" as const, admissionNumber: `ADM${new Date().getFullYear()}${String(studentId).padStart(4, "0")}` }
+          : s
+      ));
+      
+      toast.success("Student approved and added to class!");
+      
+      // Reload data to ensure consistency
+      await loadData();
+    } catch (error: any) {
+      console.error('Error approving student:', error);
+      toast.error(error?.message || "Failed to approve student");
+    }
   };
 
-  const handleReject = (studentId: number) => {
-    setStudents(prev => prev.map(s => 
-      s.id === studentId ? { ...s, status: "rejected" as const } : s
-    ));
-    toast.error("Student registration rejected");
+  const handleReject = async (studentId: number) => {
+    try {
+      await studentsApi.reject(studentId);
+      
+      // Update local state
+      setStudents(prev => prev.map(s => 
+        s.id === studentId ? { ...s, status: "rejected" as const } : s
+      ));
+      
+      toast.error("Student registration rejected");
+      
+      // Reload data to ensure consistency
+      await loadData();
+    } catch (error: any) {
+      console.error('Error rejecting student:', error);
+      toast.error(error?.message || "Failed to reject student");
+    }
   };
 
   const toggleFieldMandatory = (fieldId: string) => {

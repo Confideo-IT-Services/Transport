@@ -42,7 +42,9 @@ import {
   MessageCircle, 
   UserX, 
   Trash2,
-  Send
+  Send,
+  CheckCircle2,
+  XCircle
 } from "lucide-react";
 import { format, addDays, startOfWeek, isWithinInterval, isSameDay } from "date-fns";
 import { toast } from "@/hooks/use-toast";
@@ -75,6 +77,7 @@ interface TeacherLeave {
   startDate: Date;
   endDate: Date;
   reason: string;
+  status?: 'pending' | 'approved' | 'rejected';
 }
 
 const initialTimeSlots: TimeSlot[] = [];
@@ -140,25 +143,9 @@ export default function Timetable() {
   // Load initial data
   useEffect(() => {
     const loadInitialData = async () => {
-      if (!isAdmin) return;
-      
       setIsLoading(true);
       try {
-        // Load classes
-        const classesData = await classesApi.getAll();
-        setClasses(classesData || []);
-
-        // Load teachers
-        const teachersData = await teachersApi.getAll();
-        const transformedTeachers = (teachersData || []).map(t => ({
-          id: t.id,
-          name: t.name,
-          phone: t.phone || "",
-          subjects: t.subjects || []
-        }));
-        setTeachersList(transformedTeachers);
-
-        // Load subjects
+        // Load subjects (school-wide, available to all)
         try {
           const subjectsData = await timetableApi.getSubjects();
           if (subjectsData && subjectsData.length > 0) {
@@ -173,7 +160,7 @@ export default function Timetable() {
           setSubjectsList(defaultSubjects);
         }
 
-        // Load time slots
+        // Load time slots (school-wide, available to all)
         const slotsData = await timetableApi.getTimeSlots();
         const transformedSlots = (slotsData || []).map(s => {
           // Ensure time format is HH:MM for HTML time input
@@ -197,7 +184,7 @@ export default function Timetable() {
         });
         setTimeSlots(transformedSlots);
 
-        // Load holidays
+        // Load holidays (school-wide, available to all)
         const holidaysData = await timetableApi.getHolidays();
         const transformedHolidays = (holidaysData || []).map(h => ({
           id: h.id,
@@ -207,16 +194,50 @@ export default function Timetable() {
         }));
         setHolidays(transformedHolidays);
 
-        // Load teacher leaves
+        // Load teacher leaves (school-wide, available to all)
         const leavesData = await timetableApi.getLeaves();
         const transformedLeaves = (leavesData || []).map(l => ({
           id: l.id,
           teacherName: l.teacherName,
           startDate: new Date(l.startDate),
           endDate: new Date(l.endDate),
-          reason: l.reason || ""
+          reason: l.reason || "",
+          status: l.status || 'pending'
         }));
         setTeacherLeaves(transformedLeaves);
+
+        // Admin-specific: Load classes and teachers
+        if (isAdmin) {
+          const classesData = await classesApi.getAll();
+          setClasses(classesData || []);
+
+          const teachersData = await teachersApi.getAll();
+          const transformedTeachers = (teachersData || []).map(t => ({
+            id: t.id,
+            name: t.name,
+            phone: t.phone || "",
+            subjects: t.subjects || []
+          }));
+          setTeachersList(transformedTeachers);
+        } else {
+          // Teacher-specific: Load their assigned class
+          try {
+            const classesData = await classesApi.getAll(); // Already filtered for teacher
+            if (classesData && classesData.length > 0) {
+              const teacherClass = classesData[0];
+              setSelectedClass(`${teacherClass.name}${teacherClass.section ? `-${teacherClass.section}` : ''}`);
+              setSelectedClassId(teacherClass.id);
+              setClasses(classesData); // Store for reference
+            }
+          } catch (error) {
+            console.error('Error loading teacher class:', error);
+            toast({
+              title: "Error",
+              description: "Failed to load your assigned class",
+              variant: "destructive"
+            });
+          }
+        }
       } catch (error) {
         console.error('Error loading timetable data:', error);
         toast({ 
@@ -232,10 +253,10 @@ export default function Timetable() {
     loadInitialData();
   }, [isAdmin]);
 
-  // Load timetable when class is selected
+  // Load timetable when class is selected (works for both admin and teacher)
   useEffect(() => {
     const loadTimetable = async () => {
-      if (!selectedClassId || !isAdmin) return;
+      if (!selectedClassId) return;
 
       try {
         const entriesData = await timetableApi.getTimetableByClass(selectedClassId);
@@ -258,7 +279,7 @@ export default function Timetable() {
     };
 
     loadTimetable();
-  }, [selectedClassId, isAdmin]);
+  }, [selectedClassId]);
 
   // Check if a date is a holiday
   const isHoliday = (date: Date) => {
@@ -271,10 +292,11 @@ export default function Timetable() {
     return holiday?.name;
   };
 
-  // Check if teacher is on leave for a specific date
+  // Check if teacher is on leave for a specific date (only approved leaves)
   const isTeacherOnLeave = (teacherName: string, date: Date) => {
     return teacherLeaves.some(leave => 
       leave.teacherName === teacherName &&
+      leave.status === 'approved' &&
       isWithinInterval(date, { start: leave.startDate, end: leave.endDate })
     );
   };
@@ -372,8 +394,18 @@ export default function Timetable() {
     }
   };
 
-  // Add teacher leave
+  // Add teacher leave (Admin only - for backward compatibility, but should be removed)
+  // Note: Teachers should apply for leave through Attendance page, not here
   const handleAddLeave = async () => {
+    if (!isAdmin) {
+      toast({ 
+        title: "Error", 
+        description: "Only teachers can apply for leave. Please use the Attendance page.",
+        variant: "destructive"
+      });
+      return;
+    }
+    
     if (!leaveStartDate || !leaveEndDate || !newLeave.teacherName) return;
     
     try {
@@ -404,6 +436,7 @@ export default function Timetable() {
         startDate: leaveStartDate,
         endDate: leaveEndDate,
         reason: newLeave.reason,
+        status: 'pending', // Admin-created leaves should also be pending
       };
       
       setTeacherLeaves([...teacherLeaves, leave]);
@@ -747,7 +780,7 @@ export default function Timetable() {
     toast({ title: "Export Successful", description: "Timetable exported to CSV" });
   };
 
-  if (isLoading && isAdmin) {
+  if (isLoading) {
     return (
       <UnifiedLayout>
         <div className="flex items-center justify-center py-12">
@@ -1369,138 +1402,13 @@ export default function Timetable() {
                   <span className="flex items-center gap-2">
                     <UserX className="w-5 h-5 text-primary" />
                     Teacher Leaves
+                    {isAdmin && (
+                      <Badge variant="outline" className="ml-2">
+                        {teacherLeaves.filter(l => l.status === 'pending').length} Pending
+                      </Badge>
+                    )}
                   </span>
-                  {isAdmin && (
-                    <Dialog open={isAddLeaveOpen} onOpenChange={setIsAddLeaveOpen}>
-                      <DialogTrigger asChild>
-                        <Button size="sm">
-                          <Plus className="w-4 h-4 mr-2" />
-                          Add Leave
-                        </Button>
-                      </DialogTrigger>
-                      <DialogContent className="max-w-2xl">
-                        <DialogHeader>
-                          <DialogTitle>Add Teacher Leave</DialogTitle>
-                        </DialogHeader>
-                        <div className="space-y-4 py-4">
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div className="space-y-2">
-                              <Label>Teacher</Label>
-                              <Select 
-                                value={newLeave.teacherName} 
-                                onValueChange={(v) => setNewLeave(prev => ({ ...prev, teacherName: v }))}
-                              >
-                                <SelectTrigger>
-                                  <SelectValue placeholder="Select teacher" />
-                                </SelectTrigger>
-                                <SelectContent className="bg-card">
-                                  {teachersList.length === 0 ? (
-                                    <SelectItem value="" disabled>No teachers available</SelectItem>
-                                  ) : (
-                                    teachersList.map(t => (
-                                      <SelectItem key={t.id} value={t.name}>{t.name}</SelectItem>
-                                    ))
-                                  )}
-                                </SelectContent>
-                              </Select>
-                            </div>
-                            <div className="space-y-2">
-                              <Label>Reason</Label>
-                              <Input 
-                                placeholder="e.g., Medical Leave" 
-                                value={newLeave.reason}
-                                onChange={(e) => setNewLeave(prev => ({ ...prev, reason: e.target.value }))}
-                              />
-                            </div>
-                          </div>
-                          
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div className="space-y-2">
-                              <Label>Start Date</Label>
-                              <div className="flex flex-col gap-2">
-                                <Input
-                                  type="date"
-                                  value={leaveStartDate ? leaveStartDate.toISOString().split('T')[0] : ''}
-                                  onChange={(e) => {
-                                    if (e.target.value) {
-                                      setLeaveStartDate(new Date(e.target.value));
-                                    }
-                                  }}
-                                  className="w-full"
-                                />
-                                <Calendar
-                                  mode="single"
-                                  selected={leaveStartDate}
-                                  onSelect={setLeaveStartDate}
-                                  className="rounded-md border pointer-events-auto"
-                                  disabled={(date) => date < new Date(new Date().setHours(0, 0, 0, 0))}
-                                />
-                              </div>
-                            </div>
-                            <div className="space-y-2">
-                              <Label>End Date</Label>
-                              <div className="flex flex-col gap-2">
-                                <Input
-                                  type="date"
-                                  value={leaveEndDate ? leaveEndDate.toISOString().split('T')[0] : ''}
-                                  onChange={(e) => {
-                                    if (e.target.value) {
-                                      setLeaveEndDate(new Date(e.target.value));
-                                    }
-                                  }}
-                                  className="w-full"
-                                  min={leaveStartDate ? leaveStartDate.toISOString().split('T')[0] : undefined}
-                                />
-                                <Calendar
-                                  mode="single"
-                                  selected={leaveEndDate}
-                                  onSelect={setLeaveEndDate}
-                                  className="rounded-md border pointer-events-auto"
-                                  disabled={(date) => {
-                                    const today = new Date(new Date().setHours(0, 0, 0, 0));
-                                    if (leaveStartDate) {
-                                      return date < leaveStartDate || date < today;
-                                    }
-                                    return date < today;
-                                  }}
-                                />
-                              </div>
-                            </div>
-                          </div>
-
-                          {(leaveStartDate || leaveEndDate) && (
-                            <div className="p-3 bg-muted rounded-md">
-                              <p className="text-sm font-medium mb-1">Leave Duration:</p>
-                              <p className="text-sm text-muted-foreground">
-                                {leaveStartDate && leaveEndDate ? (
-                                  <>
-                                    {format(leaveStartDate, 'MMM dd, yyyy')} - {format(leaveEndDate, 'MMM dd, yyyy')}
-                                    {leaveStartDate && leaveEndDate && (
-                                      <span className="ml-2 text-xs">
-                                        ({Math.ceil((leaveEndDate.getTime() - leaveStartDate.getTime()) / (1000 * 60 * 60 * 24)) + 1} day{Math.ceil((leaveEndDate.getTime() - leaveStartDate.getTime()) / (1000 * 60 * 60 * 24)) !== 0 ? 's' : ''})
-                                      </span>
-                                    )}
-                                  </>
-                                ) : leaveStartDate ? (
-                                  `Starting: ${format(leaveStartDate, 'MMM dd, yyyy')}`
-                                ) : leaveEndDate ? (
-                                  `Ending: ${format(leaveEndDate, 'MMM dd, yyyy')}`
-                                ) : null}
-                              </p>
-                            </div>
-                          )}
-
-                          <Button 
-                            className="w-full" 
-                            onClick={handleAddLeave} 
-                            disabled={!leaveStartDate || !leaveEndDate || !newLeave.teacherName}
-                          >
-                            Add Leave
-                          </Button>
-                        </div>
-                      </DialogContent>
-                    </Dialog>
-                  )}
+                  {/* Admins cannot add leaves directly - only teachers can apply through Attendance page */}
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -1527,31 +1435,105 @@ export default function Timetable() {
                           </TableCell>
                           <TableCell>{leave.reason}</TableCell>
                           <TableCell>
-                            <Badge variant={isActive ? "destructive" : isPast ? "secondary" : "outline"}>
-                              {isActive ? "On Leave" : isPast ? "Completed" : "Upcoming"}
+                            <Badge 
+                              variant={
+                                leave.status === 'pending' ? "outline" : 
+                                leave.status === 'approved' ? "default" : 
+                                "secondary"
+                              }
+                              className={
+                                leave.status === 'pending' ? "border-yellow-500 text-yellow-700" :
+                                leave.status === 'approved' ? "bg-green-100 text-green-700 border-green-200" :
+                                "bg-red-100 text-red-700 border-red-200"
+                              }
+                            >
+                              {leave.status === 'pending' ? 'Pending' : 
+                               leave.status === 'approved' ? 'Approved' : 
+                               leave.status === 'rejected' ? 'Rejected' : 
+                               'Pending'}
                             </Badge>
                           </TableCell>
                           {isAdmin && (
                             <TableCell className="text-right">
-                              <Button 
-                                variant="ghost" 
-                                size="icon"
-                                onClick={async () => {
-                                  try {
-                                    await timetableApi.deleteLeave(leave.id);
-                                    setTeacherLeaves(teacherLeaves.filter(l => l.id !== leave.id));
-                                    toast({ title: "Leave Deleted" });
-                                  } catch (error: any) {
-                                    toast({ 
-                                      title: "Error", 
-                                      description: error?.message || "Failed to delete leave",
-                                      variant: "destructive"
-                                    });
-                                  }
-                                }}
-                              >
-                                <Trash2 className="w-4 h-4 text-destructive" />
-                              </Button>
+                              <div className="flex items-center justify-end gap-2">
+                                {leave.status === 'pending' && (
+                                  <>
+                                    <Button 
+                                      variant="ghost" 
+                                      size="sm"
+                                      onClick={async () => {
+                                        try {
+                                          await timetableApi.approveLeave(leave.id);
+                                          setTeacherLeaves(teacherLeaves.map(l => 
+                                            l.id === leave.id ? { ...l, status: 'approved' as const } : l
+                                          ));
+                                          toast({ 
+                                            title: "Success", 
+                                            description: "Leave approved successfully" 
+                                          });
+                                        } catch (error: any) {
+                                          toast({ 
+                                            title: "Error", 
+                                            description: error?.message || "Failed to approve leave",
+                                            variant: "destructive"
+                                          });
+                                        }
+                                      }}
+                                      className="text-green-600 hover:text-green-700 hover:bg-green-50"
+                                    >
+                                      <CheckCircle2 className="w-4 h-4 mr-1" />
+                                      Approve
+                                    </Button>
+                                    <Button 
+                                      variant="ghost" 
+                                      size="sm"
+                                      onClick={async () => {
+                                        try {
+                                          await timetableApi.rejectLeave(leave.id);
+                                          setTeacherLeaves(teacherLeaves.map(l => 
+                                            l.id === leave.id ? { ...l, status: 'rejected' as const } : l
+                                          ));
+                                          toast({ 
+                                            title: "Success", 
+                                            description: "Leave rejected" 
+                                          });
+                                        } catch (error: any) {
+                                          toast({ 
+                                            title: "Error", 
+                                            description: error?.message || "Failed to reject leave",
+                                            variant: "destructive"
+                                          });
+                                        }
+                                      }}
+                                      className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                                    >
+                                      <XCircle className="w-4 h-4 mr-1" />
+                                      Reject
+                                    </Button>
+                                  </>
+                                )}
+                                {leave.status !== 'pending' && (
+                                  <Button 
+                                    variant="ghost" 
+                                    size="icon"
+                                    onClick={async () => {
+                                      try {
+                                        await timetableApi.deleteLeave(leave.id);
+                                        setTeacherLeaves(teacherLeaves.filter(l => l.id !== leave.id));
+                                        toast({ title: "Leave Deleted" });
+                                      } catch (error: any) {
+                                        toast({ 
+                                          title: "Error", 
+                                          description: error?.message || "Failed to delete leave",
+                                          variant: "destructive"
+                                        });
+                                      }
+                                    }}
+                                  >
+                                    <Trash2 className="w-4 h-4 text-destructive" />
+                                  </Button>
+                                )}
+                              </div>
                             </TableCell>
                           )}
                         </TableRow>

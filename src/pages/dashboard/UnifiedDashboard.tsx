@@ -14,7 +14,8 @@ import {
   Bell
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
-import { classesApi, studentsApi, teachersApi } from "@/lib/api";
+import { classesApi, studentsApi, teachersApi, homeworkApi, attendanceApi } from "@/lib/api";
+import { format } from "date-fns";
 
 export default function UnifiedDashboard() {
   const { user } = useAuth();
@@ -25,6 +26,12 @@ export default function UnifiedDashboard() {
   const [students, setStudents] = useState<any[]>([]);
   const [teachers, setTeachers] = useState<any[]>([]);
   const [pendingStudents, setPendingStudents] = useState<any[]>([]);
+  
+  // Teacher-specific state
+  const [teacherClass, setTeacherClass] = useState<any>(null);
+  const [teacherStudents, setTeacherStudents] = useState<any[]>([]);
+  const [todayAttendance, setTodayAttendance] = useState<any>(null);
+  const [homeworkCount, setHomeworkCount] = useState(0);
   
   useEffect(() => {
     const loadData = async () => {
@@ -41,6 +48,43 @@ export default function UnifiedDashboard() {
           setStudents(studentsData);
           setTeachers(teachersData);
           setPendingStudents(pendingData);
+        } else {
+          // Load teacher data
+          try {
+            // Load teacher's assigned class
+            const classesData = await classesApi.getAll();
+            if (classesData && classesData.length > 0) {
+              const assignedClass = classesData[0];
+              setTeacherClass(assignedClass);
+
+              // Load students for the class
+              try {
+                const studentsData = await studentsApi.getByClass(assignedClass.id);
+                setTeacherStudents(studentsData || []);
+              } catch (error) {
+                // Fallback: get all students and filter
+                const allStudents = await studentsApi.getAll();
+                const filtered = (allStudents || []).filter((s: any) => s.classId === assignedClass.id);
+                setTeacherStudents(filtered);
+              }
+
+              // Load today's attendance
+              const todayStr = format(new Date(), "yyyy-MM-dd");
+              try {
+                const attendanceData = await attendanceApi.getStudentAttendance(assignedClass.id, todayStr);
+                setTodayAttendance(attendanceData);
+              } catch (error) {
+                console.error('Error loading attendance:', error);
+                setTodayAttendance(null);
+              }
+
+              // Load homework count
+              const homeworkData = await homeworkApi.getAll();
+              setHomeworkCount(homeworkData?.length || 0);
+            }
+          } catch (error) {
+            console.error('Error loading teacher data:', error);
+          }
         }
       } catch (error) {
         console.error('Error loading dashboard data:', error);
@@ -49,11 +93,7 @@ export default function UnifiedDashboard() {
       }
     };
     
-    if (isAdmin) {
-      loadData();
-    } else {
-      setLoading(false);
-    }
+    loadData();
   }, [isAdmin]);
   
   // Calculate stats for admin
@@ -147,16 +187,16 @@ export default function UnifiedDashboard() {
             <>
               <StatCard
                 title="My Class Students"
-                value="0"
+                value={loading ? "..." : teacherStudents.length.toString()}
                 icon={Users}
-                trend={user?.className || ""}
+                trend={teacherClass ? `${teacherClass.name}${teacherClass.section ? ` - ${teacherClass.section}` : ''}` : (user?.className || "")}
                 trendUp={true}
                 iconColor="text-primary"
                 iconBg="bg-primary/10"
               />
               <StatCard
                 title="Present Today"
-                value="0"
+                value={loading ? "..." : todayAttendance?.students?.filter((s: any) => s.status === 'present').length?.toString() || "0"}
                 icon={ClipboardCheck}
                 trend=""
                 trendUp={true}
@@ -165,7 +205,7 @@ export default function UnifiedDashboard() {
               />
               <StatCard
                 title="Absent Today"
-                value="0"
+                value={loading ? "..." : todayAttendance?.students?.filter((s: any) => s.status === 'absent').length?.toString() || "0"}
                 icon={TrendingUp}
                 trend=""
                 trendUp={false}
@@ -174,7 +214,7 @@ export default function UnifiedDashboard() {
               />
               <StatCard
                 title="Homework This Week"
-                value="0"
+                value={loading ? "..." : homeworkCount.toString()}
                 icon={BookOpen}
                 trend=""
                 trendUp={true}

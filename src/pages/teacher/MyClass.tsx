@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Search, Eye, Phone, Mail } from "lucide-react";
@@ -12,24 +13,115 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { classesApi, studentsApi, attendanceApi } from "@/lib/api";
+import { format, subDays, startOfMonth } from "date-fns";
 
-const students = [
-  { id: 1, name: "Alex Johnson", rollNo: "01", parentPhone: "+1 234 567 890", parentEmail: "parent1@email.com", attendance: 95, photo: "" },
-  { id: 2, name: "Emma Williams", rollNo: "02", parentPhone: "+1 234 567 891", parentEmail: "parent2@email.com", attendance: 92, photo: "" },
-  { id: 3, name: "Noah Brown", rollNo: "03", parentPhone: "+1 234 567 892", parentEmail: "parent3@email.com", attendance: 88, photo: "" },
-  { id: 4, name: "Olivia Davis", rollNo: "04", parentPhone: "+1 234 567 893", parentEmail: "parent4@email.com", attendance: 97, photo: "" },
-  { id: 5, name: "Liam Wilson", rollNo: "05", parentPhone: "+1 234 567 894", parentEmail: "parent5@email.com", attendance: 91, photo: "" },
-  { id: 6, name: "Sophia Martinez", rollNo: "06", parentPhone: "+1 234 567 895", parentEmail: "parent6@email.com", attendance: 94, photo: "" },
-  { id: 7, name: "Mason Anderson", rollNo: "07", parentPhone: "+1 234 567 896", parentEmail: "parent7@email.com", attendance: 89, photo: "" },
-  { id: 8, name: "Isabella Taylor", rollNo: "08", parentPhone: "+1 234 567 897", parentEmail: "parent8@email.com", attendance: 96, photo: "" },
-  { id: 9, name: "James Thomas", rollNo: "09", parentPhone: "+1 234 567 898", parentEmail: "parent9@email.com", attendance: 93, photo: "" },
-  { id: 10, name: "Mia Garcia", rollNo: "10", parentPhone: "+1 234 567 899", parentEmail: "parent10@email.com", attendance: 90, photo: "" },
-];
+interface Student {
+  id: string | number;
+  name: string;
+  rollNo: string;
+  parentPhone?: string;
+  parentEmail?: string;
+  attendance?: number;
+  photo?: string;
+}
 
 export default function MyClass() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [searchTerm, setSearchTerm] = useState("");
-  const [selectedStudent, setSelectedStudent] = useState<typeof students[0] | null>(null);
+  const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
+  const [students, setStudents] = useState<Student[]>([]);
+  const [teacherClass, setTeacherClass] = useState<any>(null);
+  const [averageAttendance, setAverageAttendance] = useState(0);
+  const [isLoading, setIsLoading] = useState(false);
+
+  // Load teacher's class and students
+  useEffect(() => {
+    const loadData = async () => {
+      setIsLoading(true);
+      try {
+        // Load teacher's assigned class
+        const classesData = await classesApi.getAll();
+        if (classesData && classesData.length > 0) {
+          const assignedClass = classesData[0];
+          setTeacherClass(assignedClass);
+
+          // Load students for the class
+          let studentsData: any[] = [];
+          try {
+            studentsData = await studentsApi.getByClass(assignedClass.id);
+          } catch (error) {
+            // Fallback: get all students and filter
+            const allStudents = await studentsApi.getAll();
+            studentsData = (allStudents || []).filter((s: any) => s.classId === assignedClass.id);
+          }
+
+          // Transform students data
+          const transformedStudents: Student[] = studentsData.map((s: any, index: number) => ({
+            id: s.id || index + 1,
+            name: s.name || s.fullName || "Unknown",
+            rollNo: s.rollNo || s.roll_number || String(index + 1).padStart(2, '0'),
+            parentPhone: s.parentPhone || s.parent_phone || s.guardianPhone || "",
+            parentEmail: s.parentEmail || s.parent_email || s.guardianEmail || "",
+            photo: s.photo || s.photo_url || "",
+            attendance: 0 // Will be calculated below
+          }));
+
+          // Calculate attendance percentage for each student
+          const today = new Date();
+          const monthStart = startOfMonth(today);
+          const monthStartStr = format(monthStart, "yyyy-MM-dd");
+          const todayStr = format(today, "yyyy-MM-dd");
+
+          try {
+            const attendanceHistory = await attendanceApi.getStudentAttendanceHistory(
+              assignedClass.id,
+              monthStartStr,
+              todayStr
+            );
+
+            // Calculate attendance for each student
+            const studentsWithAttendance = transformedStudents.map(student => {
+              const studentAttendance = attendanceHistory.filter((a: any) => 
+                a.studentId === student.id.toString() || a.studentId === student.id
+              );
+              
+              if (studentAttendance.length === 0) {
+                return { ...student, attendance: 0 };
+              }
+
+              const presentCount = studentAttendance.filter((a: any) => a.status === 'present').length;
+              const totalCount = studentAttendance.length;
+              const attendancePercentage = totalCount > 0 ? Math.round((presentCount / totalCount) * 100) : 0;
+
+              return { ...student, attendance: attendancePercentage };
+            });
+
+            setStudents(studentsWithAttendance);
+
+            // Calculate average attendance
+            const totalAttendance = studentsWithAttendance.reduce((sum, s) => sum + (s.attendance || 0), 0);
+            const avg = studentsWithAttendance.length > 0 
+              ? Math.round(totalAttendance / studentsWithAttendance.length) 
+              : 0;
+            setAverageAttendance(avg);
+          } catch (error) {
+            console.error('Error loading attendance:', error);
+            // Set students without attendance data
+            setStudents(transformedStudents);
+            setAverageAttendance(0);
+          }
+        }
+      } catch (error) {
+        console.error('Error loading class data:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    loadData();
+  }, []);
 
   const handleLogout = () => {
     navigate("/");
@@ -46,7 +138,9 @@ export default function MyClass() {
       <div className="space-y-6">
         {/* Page Header */}
         <div>
-          <h1 className="page-title">My Class - 3A</h1>
+          <h1 className="page-title">
+            My Class - {teacherClass ? `${teacherClass.name}${teacherClass.section ? ` - Section ${teacherClass.section}` : ''}` : (user?.className || "Loading...")}
+          </h1>
           <p className="text-muted-foreground mt-1">Manage your students and view their profiles.</p>
         </div>
 
@@ -54,15 +148,21 @@ export default function MyClass() {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div className="bg-card rounded-xl border border-border p-4 shadow-card">
             <p className="text-sm text-muted-foreground">Total Students</p>
-            <p className="text-2xl font-bold text-foreground mt-1">45</p>
+            <p className="text-2xl font-bold text-foreground mt-1">
+              {isLoading ? "..." : students.length}
+            </p>
           </div>
           <div className="bg-card rounded-xl border border-border p-4 shadow-card">
             <p className="text-sm text-muted-foreground">Average Attendance</p>
-            <p className="text-2xl font-bold text-success mt-1">92.5%</p>
+            <p className="text-2xl font-bold text-success mt-1">
+              {isLoading ? "..." : `${averageAttendance}%`}
+            </p>
           </div>
           <div className="bg-card rounded-xl border border-border p-4 shadow-card">
             <p className="text-sm text-muted-foreground">Class Teacher</p>
-            <p className="text-2xl font-bold text-primary mt-1">Sarah J.</p>
+            <p className="text-2xl font-bold text-primary mt-1">
+              {user?.name?.split(" ").map(n => n[0]).join("") || "T"}
+            </p>
           </div>
         </div>
 
@@ -152,31 +252,40 @@ export default function MyClass() {
                   <div>
                     <h3 className="font-semibold text-xl">{selectedStudent.name}</h3>
                     <p className="text-muted-foreground">Roll No: {selectedStudent.rollNo}</p>
-                    <p className="text-muted-foreground">Class 3A</p>
+                    <p className="text-muted-foreground">
+                      {teacherClass ? `${teacherClass.name}${teacherClass.section ? ` - Section ${teacherClass.section}` : ''}` : (user?.className || "")}
+                    </p>
                   </div>
                 </div>
 
                 {/* Contact Info */}
                 <div className="space-y-3 p-4 bg-muted/30 rounded-lg">
                   <h4 className="font-medium text-sm text-muted-foreground">Parent Contact</h4>
-                  <div className="flex items-center gap-3">
-                    <Phone className="w-4 h-4 text-muted-foreground" />
-                    <span>{selectedStudent.parentPhone}</span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <Mail className="w-4 h-4 text-muted-foreground" />
-                    <span>{selectedStudent.parentEmail}</span>
-                  </div>
+                  {selectedStudent.parentPhone && (
+                    <div className="flex items-center gap-3">
+                      <Phone className="w-4 h-4 text-muted-foreground" />
+                      <span>{selectedStudent.parentPhone}</span>
+                    </div>
+                  )}
+                  {selectedStudent.parentEmail && (
+                    <div className="flex items-center gap-3">
+                      <Mail className="w-4 h-4 text-muted-foreground" />
+                      <span>{selectedStudent.parentEmail}</span>
+                    </div>
+                  )}
+                  {!selectedStudent.parentPhone && !selectedStudent.parentEmail && (
+                    <p className="text-sm text-muted-foreground">No contact information available</p>
+                  )}
                 </div>
 
                 {/* Stats */}
                 <div className="grid grid-cols-2 gap-4">
                   <div className="p-4 bg-success/10 rounded-lg text-center">
-                    <p className="text-2xl font-bold text-success">{selectedStudent.attendance}%</p>
+                    <p className="text-2xl font-bold text-success">{selectedStudent.attendance || 0}%</p>
                     <p className="text-sm text-muted-foreground">Attendance</p>
                   </div>
                   <div className="p-4 bg-primary/10 rounded-lg text-center">
-                    <p className="text-2xl font-bold text-primary">92%</p>
+                    <p className="text-2xl font-bold text-primary">-</p>
                     <p className="text-sm text-muted-foreground">Homework Completion</p>
                   </div>
                 </div>

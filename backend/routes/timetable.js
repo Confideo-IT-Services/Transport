@@ -373,12 +373,12 @@ router.delete('/holidays/:id', authenticateToken, requireAdmin, async (req, res)
 // Get teacher leaves for school
 router.get('/leaves', authenticateToken, requireTeacher, async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
+    const schoolId = req.user.schoolId || req.user.school_id;
 
     const [leaves] = await db.query(
       `SELECT * FROM teacher_leaves 
        WHERE school_id = ? 
-       ORDER BY start_date DESC`,
+       ORDER BY created_at DESC, start_date DESC`,
       [schoolId]
     );
 
@@ -388,7 +388,8 @@ router.get('/leaves', authenticateToken, requireTeacher, async (req, res) => {
       teacherName: l.teacher_name,
       startDate: l.start_date,
       endDate: l.end_date,
-      reason: l.reason
+      reason: l.reason,
+      status: l.status || 'pending'
     })));
   } catch (error) {
     console.error('Get teacher leaves error:', error);
@@ -396,39 +397,122 @@ router.get('/leaves', authenticateToken, requireTeacher, async (req, res) => {
   }
 });
 
-// Create teacher leave
-router.post('/leaves', authenticateToken, requireAdmin, async (req, res) => {
+// Create teacher leave (Only teachers can apply - admins cannot create leaves directly)
+router.post('/leaves', authenticateToken, requireTeacher, async (req, res) => {
   try {
-    const { teacherId, teacherName, startDate, endDate, reason } = req.body;
-    const schoolId = req.user.schoolId;
-
-    if (!teacherId || !teacherName || !startDate || !endDate) {
-      return res.status(400).json({ error: 'Teacher, start date, and end date are required' });
+    // Only teachers can apply for leave - admins cannot create leaves directly
+    if (req.user.role !== 'teacher') {
+      return res.status(403).json({ error: 'Only teachers can apply for leave. Admins can approve/reject leave requests.' });
     }
 
-    // Verify teacher belongs to school
-    const [teachers] = await db.query(
-      'SELECT id FROM teachers WHERE id = ? AND school_id = ?',
-      [teacherId, schoolId]
-    );
+    const { teacherId, teacherName, startDate, endDate, reason } = req.body;
+    
+    // Teacher can only apply for their own leave
+    const finalTeacherId = req.user.id;
+    const schoolId = req.user.school_id || req.user.schoolId;
+    
+    if (!schoolId) {
+      return res.status(400).json({ error: 'School ID not found for teacher' });
+    }
 
-    if (teachers.length === 0) {
-      return res.status(404).json({ error: 'Teacher not found' });
+    // Get teacher name if not provided
+    let finalTeacherName = teacherName;
+    if (!finalTeacherName) {
+      const [teachers] = await db.query('SELECT name FROM teachers WHERE id = ?', [finalTeacherId]);
+      if (teachers.length > 0) {
+        finalTeacherName = teachers[0].name;
+      } else {
+        return res.status(404).json({ error: 'Teacher not found' });
+      }
+    }
+
+    if (!startDate || !endDate) {
+      return res.status(400).json({ error: 'Start date and end date are required' });
+    }
+
+    // Verify dates are valid
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    if (end < start) {
+      return res.status(400).json({ error: 'End date must be after start date' });
     }
 
     const leaveId = uuidv4();
+    // Insert with status as 'pending' by default
     await db.query(
-      `INSERT INTO teacher_leaves (id, school_id, teacher_id, teacher_name, start_date, end_date, reason, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
-      [leaveId, schoolId, teacherId, teacherName, startDate, endDate, reason || null]
+      `INSERT INTO teacher_leaves (id, school_id, teacher_id, teacher_name, start_date, end_date, reason, status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', NOW())`,
+      [leaveId, schoolId, finalTeacherId, finalTeacherName, startDate, endDate, reason || null]
     );
 
-    console.log('✅ Teacher leave created:', { leaveId, teacherId, teacherName, startDate, endDate, schoolId });
+    console.log('✅ Teacher leave application created (pending):', { leaveId, teacherId: finalTeacherId, teacherName: finalTeacherName, startDate, endDate, schoolId });
 
-    res.status(201).json({ success: true, id: leaveId });
+    res.status(201).json({ success: true, id: leaveId, status: 'pending' });
   } catch (error) {
     console.error('Create teacher leave error:', error);
     res.status(500).json({ error: 'Failed to create teacher leave' });
+  }
+});
+
+// Approve teacher leave (Admin only)
+router.put('/leaves/:id/approve', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const schoolId = req.user.schoolId;
+
+    // Verify leave belongs to school
+    const [leaves] = await db.query(
+      'SELECT id, status FROM teacher_leaves WHERE id = ? AND school_id = ?',
+      [id, schoolId]
+    );
+
+    if (leaves.length === 0) {
+      return res.status(404).json({ error: 'Teacher leave not found' });
+    }
+
+    // Update status to approved
+    await db.query(
+      'UPDATE teacher_leaves SET status = ?, updated_at = NOW() WHERE id = ?',
+      ['approved', id]
+    );
+
+    console.log('✅ Teacher leave approved:', { id, schoolId });
+
+    res.json({ success: true, status: 'approved' });
+  } catch (error) {
+    console.error('Approve teacher leave error:', error);
+    res.status(500).json({ error: 'Failed to approve teacher leave' });
+  }
+});
+
+// Reject teacher leave (Admin only)
+router.put('/leaves/:id/reject', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const schoolId = req.user.schoolId;
+
+    // Verify leave belongs to school
+    const [leaves] = await db.query(
+      'SELECT id, status FROM teacher_leaves WHERE id = ? AND school_id = ?',
+      [id, schoolId]
+    );
+
+    if (leaves.length === 0) {
+      return res.status(404).json({ error: 'Teacher leave not found' });
+    }
+
+    // Update status to rejected
+    await db.query(
+      'UPDATE teacher_leaves SET status = ?, updated_at = NOW() WHERE id = ?',
+      ['rejected', id]
+    );
+
+    console.log('✅ Teacher leave rejected:', { id, schoolId });
+
+    res.json({ success: true, status: 'rejected' });
+  } catch (error) {
+    console.error('Reject teacher leave error:', error);
+    res.status(500).json({ error: 'Failed to reject teacher leave' });
   }
 });
 

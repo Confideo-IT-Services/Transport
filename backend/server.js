@@ -22,6 +22,7 @@ const schoolAdminsRoutes = require('./routes/schoolAdmins');
 const registrationLinksRoutes = require('./routes/registrationLinks');
 const uploadRoutes = require('./routes/upload');
 const timetableRoutes = require('./routes/timetable');
+const attendanceRoutes = require('./routes/attendance');
 
 // Use routes
 app.use('/api/auth', authRoutes);
@@ -34,6 +35,7 @@ app.use('/api/school-admins', schoolAdminsRoutes);
 app.use('/api/registration-links', registrationLinksRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/timetable', timetableRoutes);
+app.use('/api/attendance', attendanceRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

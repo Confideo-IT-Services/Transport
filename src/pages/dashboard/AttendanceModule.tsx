@@ -1,7 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { UnifiedLayout } from "@/components/layout/UnifiedLayout";
 import { useAuth } from "@/contexts/AuthContext";
-import { classesApi, studentsApi, attendanceApi } from "@/lib/api";
+import { classesApi, studentsApi, attendanceApi, timetableApi } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -16,6 +16,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import {
   Table,
   TableBody,
@@ -67,6 +76,11 @@ export default function AttendanceModule() {
   const [classes, setClasses] = useState<any[]>([]);
   const [studentAttendance, setStudentAttendance] = useState<Student[]>([]);
   const [isSelfCheckedIn, setIsSelfCheckedIn] = useState(false);
+  const [checkInTime, setCheckInTime] = useState<string | null>(null);
+  const [checkOutTime, setCheckOutTime] = useState<string | null>(null);
+  const [leaveFromDate, setLeaveFromDate] = useState("");
+  const [leaveToDate, setLeaveToDate] = useState("");
+  const [leaveType, setLeaveType] = useState("");
   const [leaveReason, setLeaveReason] = useState("");
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
   const [todayAttendanceTaken, setTodayAttendanceTaken] = useState(false);
@@ -74,8 +88,44 @@ export default function AttendanceModule() {
   const [monthlyStats, setMonthlyStats] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingTeachers, setIsLoadingTeachers] = useState(false);
+  const [markingTeacherId, setMarkingTeacherId] = useState<string | null>(null);
+  const [teacherStatus, setTeacherStatus] = useState<'present' | 'absent' | 'late' | 'leave'>('present');
+  const [teacherRemarks, setTeacherRemarks] = useState('');
 
-  const today = new Date();
+  // Memoize today's date string to prevent infinite loops
+  const today = useMemo(() => new Date(), []);
+  const todayStr = useMemo(() => format(new Date(), "yyyy-MM-dd"), []);
+
+  // Mark teacher attendance
+  const markTeacherAttendance = async (teacherId: string) => {
+    try {
+      await attendanceApi.markTeacherAttendance({
+        teacherId,
+        date: todayStr,
+        status: teacherStatus,
+        remarks: teacherRemarks || undefined
+      });
+
+      // Refresh teacher attendance list
+      const data = await attendanceApi.getTeacherAttendance(todayStr);
+      setTeacherAttendance(data || []);
+
+      toast({
+        title: "Success",
+        description: "Teacher attendance marked successfully",
+      });
+
+      setMarkingTeacherId(null);
+      setTeacherRemarks('');
+    } catch (error: any) {
+      console.error('Error marking teacher attendance:', error);
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to mark teacher attendance",
+        variant: "destructive"
+      });
+    }
+  };
 
   // Load classes on mount
   useEffect(() => {
@@ -101,13 +151,62 @@ export default function AttendanceModule() {
     loadClasses();
   }, [isAdmin]);
 
+  // Load teacher's assigned class (for non-admin teachers)
+  useEffect(() => {
+    const loadTeacherClass = async () => {
+      if (isAdmin) return; // Skip for admins
+      
+      try {
+        // Load teacher's assigned class
+        const classesData = await classesApi.getAll();
+        console.log('Teacher classes loaded:', classesData);
+        if (classesData && classesData.length > 0) {
+          // Teacher's assigned class should be in the list (filtered by backend)
+          const assignedClass = classesData[0];
+          console.log('Selected class:', assignedClass);
+          setClasses(classesData);
+          setSelectedClass(`${assignedClass.name}${assignedClass.section ? ` - Section ${assignedClass.section}` : ''}`);
+          setSelectedClassId(assignedClass.id);
+        } else {
+          // Try fallback: check user.className
+          if (user?.className) {
+            // Try to find class by name from all classes
+            try {
+              const allClasses = await classesApi.getAll();
+              const matchedClass = allClasses.find((c: any) => {
+                const classStr = `${c.name}${c.section ? ` - Section ${c.section}` : ''}`.trim();
+                return classStr === user.className?.trim() || 
+                       classStr.replace(/Section\s*/i, '').trim() === user.className?.replace(/Section\s*/i, '').trim();
+              });
+              
+              if (matchedClass) {
+                setSelectedClass(`${matchedClass.name}${matchedClass.section ? ` - Section ${matchedClass.section}` : ''}`);
+                setSelectedClassId(matchedClass.id);
+                setClasses([matchedClass]);
+              }
+            } catch (error) {
+              console.error('Error in fallback class loading:', error);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error loading teacher class:', error);
+        toast({
+          title: "Error",
+          description: "Failed to load your assigned class. Please contact admin.",
+          variant: "destructive"
+        });
+      }
+    };
+    loadTeacherClass();
+  }, [isAdmin, user]);
+
   // Load teacher attendance
   useEffect(() => {
     const loadTeacherAttendance = async () => {
       if (!isAdmin) return;
       setIsLoadingTeachers(true);
       try {
-        const todayStr = format(today, "yyyy-MM-dd");
         const data = await attendanceApi.getTeacherAttendance(todayStr);
         setTeacherAttendance(data || []);
       } catch (error) {
@@ -118,7 +217,26 @@ export default function AttendanceModule() {
       }
     };
     loadTeacherAttendance();
-  }, [isAdmin, today]);
+  }, [isAdmin, todayStr]);
+
+  // Load teacher's own attendance for check-in/check-out
+  useEffect(() => {
+    const loadSelfAttendance = async () => {
+      if (isAdmin) return;
+      try {
+        const data = await attendanceApi.getTeacherAttendance(todayStr);
+        const selfAttendance = data?.find((t: any) => t.id === user?.id);
+        if (selfAttendance) {
+          setIsSelfCheckedIn(!!selfAttendance.checkInTime);
+          setCheckInTime(selfAttendance.checkIn || selfAttendance.checkInTime || null);
+          setCheckOutTime(selfAttendance.checkOut || selfAttendance.checkOutTime || null);
+        }
+      } catch (error) {
+        console.error('Error loading self attendance:', error);
+      }
+    };
+    loadSelfAttendance();
+  }, [isAdmin, todayStr, user?.id]);
 
   // Load monthly stats
   useEffect(() => {
@@ -147,24 +265,50 @@ export default function AttendanceModule() {
       }
       setIsLoading(true);
       try {
-        // Load students for the class
-        const studentsData = await studentsApi.getAll();
-        const classStudents = (studentsData || []).filter((s: any) => s.classId === selectedClassId);
-        setStudentAttendance(classStudents.map((s: any, index: number) => ({
-          id: parseInt(s.id) || index + 1,
-          name: s.name,
-          rollNo: s.rollNo || index + 1,
-          status: "not-marked" as const
-        })));
+        // Load students for the class - use getByClass for both admins and teachers
+        let classStudents: any[] = [];
+        try {
+          // This endpoint works for both admins and teachers
+          console.log('Loading students for class ID:', selectedClassId);
+          classStudents = await studentsApi.getByClass(selectedClassId);
+          console.log('Students loaded:', classStudents);
+        } catch (error) {
+          // Fallback: if getByClass fails, try getAll and filter (admin only)
+          if (isAdmin) {
+            const studentsData = await studentsApi.getAll();
+            classStudents = (studentsData || []).filter((s: any) => s.classId === selectedClassId);
+          } else {
+            console.error('Error loading students:', error);
+            toast({
+              title: "Error",
+              description: "Failed to load students for this class",
+              variant: "destructive"
+            });
+          }
+        }
+        
+        if (classStudents.length === 0) {
+          console.log('No students found for class:', selectedClassId);
+          setStudentAttendance([]);
+        } else {
+          console.log(`Found ${classStudents.length} students for class ${selectedClassId}`);
+          setStudentAttendance(classStudents.map((s: any, index: number) => ({
+            id: s.id, // Keep original UUID string, don't convert to number
+            name: s.name,
+            rollNo: s.rollNo || index + 1,
+            status: "not-marked" as const
+          })));
+        }
 
         // Load today's attendance if exists
-        const todayStr = format(today, "yyyy-MM-dd");
         try {
           const attendanceData = await attendanceApi.getStudentAttendance(selectedClassId, todayStr);
           if (attendanceData && attendanceData.students) {
             setTodayAttendanceTaken(true);
             setStudentAttendance(prev => prev.map(student => {
-              const savedStatus = attendanceData.students.find((s: any) => s.id === student.id.toString() || s.id === student.id);
+              const savedStatus = attendanceData.students.find((s: any) => 
+                String(s.id) === String(student.id) || s.id === student.id
+              );
               return {
                 ...student,
                 status: (savedStatus?.status as Student["status"]) || "not-marked"
@@ -206,7 +350,7 @@ export default function AttendanceModule() {
       }
     };
     loadStudents();
-  }, [selectedClassId, today]);
+  }, [selectedClassId, todayStr]);
 
   // This is now handled in the loadStudents useEffect above
 
@@ -241,11 +385,10 @@ export default function AttendanceModule() {
     }
 
     try {
-      const todayStr = format(today, "yyyy-MM-dd");
       await attendanceApi.saveStudentAttendance({
         classId: selectedClassId,
         date: todayStr,
-        students: studentAttendance.map(s => ({ id: s.id.toString(), status: s.status }))
+        students: studentAttendance.map(s => ({ id: String(s.id), status: s.status }))
       });
 
       // Update local state
@@ -348,7 +491,7 @@ export default function AttendanceModule() {
                         <XCircle className="w-6 h-6 text-destructive" />
                       </div>
                       <div>
-                        <p className="text-2xl font-bold">{teacherAttendance.filter(t => t.status === "absent" || t.status === "leave").length}</p>
+                        <p className="text-2xl font-bold">{teacherAttendance.filter(t => t.status === "absent").length}</p>
                         <p className="text-sm text-muted-foreground">Absent</p>
                       </div>
                     </div>
@@ -428,11 +571,87 @@ export default function AttendanceModule() {
                                   teacher.status === "late" ? "bg-accent text-accent-foreground" : ""
                                 }
                               >
-                                {teacher.status}
+                                {teacher.status === "not-marked" ? "Not Marked" : teacher.status}
                               </Badge>
                             </TableCell>
                             <TableCell className="text-right">
-                              <Button variant="ghost" size="sm">View History</Button>
+                              <div className="flex items-center justify-end gap-2">
+                                <Dialog open={markingTeacherId === teacher.id} onOpenChange={(open) => {
+                                  if (!open) {
+                                    setMarkingTeacherId(null);
+                                    setTeacherRemarks('');
+                                  }
+                                }}>
+                                  <DialogTrigger asChild>
+                                    <Button 
+                                      variant="outline" 
+                                      size="sm"
+                                      onClick={() => {
+                                        setMarkingTeacherId(teacher.id);
+                                        setTeacherStatus(teacher.status === "not-marked" || !teacher.status ? "present" : teacher.status as any);
+                                        setTeacherRemarks('');
+                                      }}
+                                    >
+                                      Mark Attendance
+                                    </Button>
+                                  </DialogTrigger>
+                                  <DialogContent>
+                                    <DialogHeader>
+                                      <DialogTitle>Mark Attendance - {teacher.name || teacher.teacherName}</DialogTitle>
+                                      <DialogDescription>
+                                        Select the attendance status for {teacher.name || teacher.teacherName} for {format(today, "MMMM d, yyyy")}
+                                      </DialogDescription>
+                                    </DialogHeader>
+                                    <div className="space-y-4 py-4">
+                                      <div className="space-y-2">
+                                        <label className="text-sm font-medium">Status</label>
+                                        <Select
+                                          value={teacherStatus}
+                                          onValueChange={(value: any) => setTeacherStatus(value)}
+                                        >
+                                          <SelectTrigger>
+                                            <SelectValue />
+                                          </SelectTrigger>
+                                          <SelectContent>
+                                            <SelectItem value="present">Present</SelectItem>
+                                            <SelectItem value="absent">Absent</SelectItem>
+                                            <SelectItem value="late">Late</SelectItem>
+                                            <SelectItem value="leave">On Leave</SelectItem>
+                                          </SelectContent>
+                                        </Select>
+                                      </div>
+                                      <div className="space-y-2">
+                                        <label className="text-sm font-medium">Remarks (Optional)</label>
+                                        <Textarea
+                                          placeholder="Add any remarks..."
+                                          value={teacherRemarks}
+                                          onChange={(e) => setTeacherRemarks(e.target.value)}
+                                        />
+                                      </div>
+                                    </div>
+                                    <DialogFooter>
+                                      <Button
+                                        variant="outline"
+                                        onClick={() => {
+                                          setMarkingTeacherId(null);
+                                          setTeacherRemarks('');
+                                        }}
+                                      >
+                                        Cancel
+                                      </Button>
+                                      <Button
+                                        onClick={async () => {
+                                          await markTeacherAttendance(teacher.id);
+                                          // Dialog will close via onOpenChange
+                                        }}
+                                      >
+                                        Save
+                                      </Button>
+                                    </DialogFooter>
+                                  </DialogContent>
+                                </Dialog>
+                                <Button variant="ghost" size="sm">View History</Button>
+                              </div>
                             </TableCell>
                           </TableRow>
                         ))
@@ -678,15 +897,53 @@ export default function AttendanceModule() {
                       <p className="mt-4 text-lg font-semibold">
                         {isSelfCheckedIn ? "Checked In" : "Not Checked In"}
                       </p>
-                      {isSelfCheckedIn && (
-                        <p className="text-sm text-muted-foreground">Check-in time: 07:55 AM</p>
+                      {checkInTime && (
+                        <p className="text-sm text-muted-foreground">Check-in time: {checkInTime}</p>
+                      )}
+                      {checkOutTime && (
+                        <p className="text-sm text-muted-foreground">Check-out time: {checkOutTime}</p>
                       )}
                     </div>
                     <div className="flex gap-3">
                       <Button 
                         className="flex-1" 
                         disabled={isSelfCheckedIn}
-                        onClick={() => setIsSelfCheckedIn(true)}
+                        onClick={async () => {
+                          try {
+                            const result = await attendanceApi.markTeacherCheckIn();
+                            setIsSelfCheckedIn(true);
+                            // Handle both time formats from backend
+                            let timeStr: string;
+                            if (result.time) {
+                              // Backend returns "HH:MM" format, convert to 12-hour format
+                              const [hours, minutes] = result.time.split(':');
+                              const hour24 = parseInt(hours);
+                              const hour12 = hour24 === 0 ? 12 : hour24 > 12 ? hour24 - 12 : hour24;
+                              const ampm = hour24 >= 12 ? 'PM' : 'AM';
+                              timeStr = `${hour12}:${minutes} ${ampm}`;
+                            } else if (result.checkInTime) {
+                              // Format ISO string to 12-hour format
+                              const date = new Date(result.checkInTime);
+                              timeStr = date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+                            } else {
+                              timeStr = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+                            }
+                            setCheckInTime(timeStr);
+                            toast({
+                              title: "Success",
+                              description: "Checked in successfully",
+                            });
+                          } catch (error: any) {
+                            console.error('Check-in error details:', error);
+                            // Extract error message details if available
+                            const errorMessage = error?.message || error?.details || "Failed to check in. Please check backend console for details.";
+                            toast({
+                              title: "Error",
+                              description: errorMessage,
+                              variant: "destructive"
+                            });
+                          }
+                        }}
                       >
                         <LogIn className="w-4 h-4 mr-2" />
                         Check In
@@ -694,7 +951,40 @@ export default function AttendanceModule() {
                       <Button 
                         variant="outline" 
                         className="flex-1"
-                        disabled={!isSelfCheckedIn}
+                        disabled={!isSelfCheckedIn || !!checkOutTime}
+                        onClick={async () => {
+                          try {
+                            const result = await attendanceApi.markTeacherCheckOut();
+                            // Handle both time formats from backend
+                            let timeStr: string;
+                            if (result.time) {
+                              // Backend returns "HH:MM" format, convert to 12-hour format
+                              const [hours, minutes] = result.time.split(':');
+                              const hour24 = parseInt(hours);
+                              const hour12 = hour24 === 0 ? 12 : hour24 > 12 ? hour24 - 12 : hour24;
+                              const ampm = hour24 >= 12 ? 'PM' : 'AM';
+                              timeStr = `${hour12}:${minutes} ${ampm}`;
+                            } else if (result.checkOutTime) {
+                              // Format ISO string to 12-hour format
+                              const date = new Date(result.checkOutTime);
+                              timeStr = date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+                            } else {
+                              timeStr = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+                            }
+                            setCheckOutTime(timeStr);
+                            toast({
+                              title: "Success",
+                              description: "Checked out successfully",
+                            });
+                          } catch (error: any) {
+                            console.error('Check-out error details:', error);
+                            toast({
+                              title: "Error",
+                              description: error?.message || "Failed to check out. Please check console for details.",
+                              variant: "destructive"
+                            });
+                          }
+                        }}
                       >
                         <LogOut className="w-4 h-4 mr-2" />
                         Check Out
@@ -711,23 +1001,34 @@ export default function AttendanceModule() {
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <label className="text-sm font-medium">From Date</label>
-                        <Input type="date" />
+                        <Input 
+                          type="date" 
+                          value={leaveFromDate}
+                          onChange={(e) => setLeaveFromDate(e.target.value)}
+                          min={format(new Date(), "yyyy-MM-dd")}
+                        />
                       </div>
                       <div className="space-y-2">
                         <label className="text-sm font-medium">To Date</label>
-                        <Input type="date" />
+                        <Input 
+                          type="date" 
+                          value={leaveToDate}
+                          onChange={(e) => setLeaveToDate(e.target.value)}
+                          min={leaveFromDate || format(new Date(), "yyyy-MM-dd")}
+                        />
                       </div>
                     </div>
                     <div className="space-y-2">
                       <label className="text-sm font-medium">Leave Type</label>
-                      <Select>
+                      <Select value={leaveType} onValueChange={setLeaveType}>
                         <SelectTrigger>
                           <SelectValue placeholder="Select leave type" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="casual">Casual Leave</SelectItem>
                           <SelectItem value="sick">Sick Leave</SelectItem>
+                          <SelectItem value="casual">Casual Leave</SelectItem>
                           <SelectItem value="earned">Earned Leave</SelectItem>
+                          <SelectItem value="other">Other</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -739,7 +1040,59 @@ export default function AttendanceModule() {
                         onChange={(e) => setLeaveReason(e.target.value)}
                       />
                     </div>
-                    <Button className="w-full">Submit Leave Request</Button>
+                    <Button 
+                      className="w-full"
+                      onClick={async () => {
+                        if (!leaveFromDate || !leaveToDate || !leaveType || !leaveReason.trim()) {
+                          toast({
+                            title: "Validation Error",
+                            description: "Please fill in all fields",
+                            variant: "destructive"
+                          });
+                          return;
+                        }
+                        
+                        if (new Date(leaveFromDate) > new Date(leaveToDate)) {
+                          toast({
+                            title: "Validation Error",
+                            description: "From date cannot be after To date",
+                            variant: "destructive"
+                          });
+                          return;
+                        }
+                        
+                        try {
+                          // Use timetable API to create leave (teacher can apply for their own leave)
+                          const result = await timetableApi.createLeave({
+                            teacherId: user?.id || "",
+                            teacherName: user?.name || "",
+                            startDate: leaveFromDate,
+                            endDate: leaveToDate,
+                            reason: `${leaveType.charAt(0).toUpperCase() + leaveType.slice(1)} Leave: ${leaveReason}`
+                          });
+                          
+                          toast({
+                            title: "Success",
+                            description: "Leave request submitted successfully",
+                          });
+                          
+                          // Reset form
+                          setLeaveFromDate("");
+                          setLeaveToDate("");
+                          setLeaveType("");
+                          setLeaveReason("");
+                        } catch (error: any) {
+                          console.error('Leave application error:', error);
+                          toast({
+                            title: "Error",
+                            description: error?.message || "Failed to submit leave request",
+                            variant: "destructive"
+                          });
+                        }
+                      }}
+                    >
+                      Submit Leave Request
+                    </Button>
                   </CardContent>
                 </Card>
               </div>

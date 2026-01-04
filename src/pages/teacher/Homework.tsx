@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -23,14 +24,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
-
-const sentHomework = [
-  { id: 1, subject: "Mathematics", title: "Algebra Worksheet", dueDate: "2024-01-20", status: "active", submissions: 38 },
-  { id: 2, subject: "English", title: "Essay Writing", dueDate: "2024-01-18", status: "completed", submissions: 45 },
-  { id: 3, subject: "Science", title: "Lab Report", dueDate: "2024-01-22", status: "active", submissions: 25 },
-  { id: 4, subject: "History", title: "Chapter 5 Questions", dueDate: "2024-01-15", status: "completed", submissions: 44 },
-  { id: 5, subject: "Mathematics", title: "Geometry Problems", dueDate: "2024-01-25", status: "active", submissions: 12 },
-];
+import { homeworkApi, classesApi } from "@/lib/api";
 
 const defaultSubjects = [
   { id: "mathematics", name: "Mathematics" },
@@ -42,6 +36,7 @@ const defaultSubjects = [
 
 export default function Homework() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [subject, setSubject] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -49,6 +44,42 @@ export default function Homework() {
   const [subjects, setSubjects] = useState(defaultSubjects);
   const [newSubjectName, setNewSubjectName] = useState("");
   const [isAddSubjectOpen, setIsAddSubjectOpen] = useState(false);
+  const [sentHomework, setSentHomework] = useState<any[]>([]);
+  const [classId, setClassId] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+
+  // Load teacher's class and homework on mount
+  useEffect(() => {
+    const loadData = async () => {
+      setIsLoading(true);
+      try {
+        // Load teacher's assigned class
+        const classesData = await classesApi.getAll();
+        if (classesData && classesData.length > 0) {
+          setClassId(classesData[0].id);
+        }
+
+        // Load homework
+        const homeworkData = await homeworkApi.getAll();
+        const transformedHomework = homeworkData.map((h: any) => ({
+          id: h.id,
+          subject: h.subject || "Subject",
+          title: h.title || h.subject || "Homework",
+          dueDate: h.dueDate || "",
+          status: h.status || "active",
+          submissions: 0 // Backend doesn't track submissions yet
+        }));
+        setSentHomework(transformedHomework);
+      } catch (error) {
+        console.error('Error loading homework data:', error);
+        toast.error('Failed to load homework');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    
+    loadData();
+  }, []);
 
   const handleLogout = () => {
     navigate("/");
@@ -70,9 +101,65 @@ export default function Homework() {
     toast.success(`"${newSubjectName.trim()}" added to subjects`);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Handle submission
+    
+    if (!title.trim()) {
+      toast.error("Please enter a title");
+      return;
+    }
+    
+    if (!subject) {
+      toast.error("Please select a subject");
+      return;
+    }
+    
+    if (!classId) {
+      toast.error("No class assigned. Please contact admin.");
+      return;
+    }
+
+    if (!dueDate) {
+      toast.error("Please select a due date");
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      const selectedSubject = subjects.find(s => s.id === subject);
+      const result = await homeworkApi.create({
+        title,
+        description: description || undefined,
+        subject: selectedSubject?.name || subject,
+        classId,
+        dueDate
+      });
+
+      // Refresh homework list
+      const homeworkData = await homeworkApi.getAll();
+      const transformedHomework = homeworkData.map((h: any) => ({
+        id: h.id,
+        subject: h.subject || "Subject",
+        title: h.title || h.subject || "Homework",
+        dueDate: h.dueDate || "",
+        status: h.status || "active",
+        submissions: 0
+      }));
+      setSentHomework(transformedHomework);
+
+      // Reset form
+      setTitle("");
+      setDescription("");
+      setDueDate("");
+      setSubject("");
+      
+      toast.success("Homework created successfully!");
+    } catch (error: any) {
+      console.error('Error creating homework:', error);
+      toast.error(error?.message || "Failed to create homework");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (

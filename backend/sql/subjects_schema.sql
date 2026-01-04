@@ -17,3 +17,4 @@ CREATE TABLE IF NOT EXISTS subjects (
     FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE
 );
 
+
