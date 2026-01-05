@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import { useLocation } from "react-router-dom";
 import { UnifiedLayout } from "@/components/layout/UnifiedLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,6 +15,7 @@ import {
   EyeOff,
   Loader2,
   Copy,
+  RefreshCw,
 } from "lucide-react";
 import {
   Dialog,
@@ -35,6 +37,8 @@ import { teachersApi, Teacher } from "@/lib/api";
 
 export default function TeacherManagement() {
   const { user } = useAuth();
+  const location = useLocation();
+  const lastPathnameRef = useRef<string>("");
   const [searchQuery, setSearchQuery] = useState("");
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -52,16 +56,27 @@ export default function TeacherManagement() {
   const [teacherPhone, setTeacherPhone] = useState("");
 
   useEffect(() => {
+    // Track navigation to force reload when coming to this page
+    const isNavigatingToPage = lastPathnameRef.current !== location.pathname;
+    if (isNavigatingToPage) {
+      lastPathnameRef.current = location.pathname;
+    }
     loadTeachers();
-  }, []);
+  }, [location.pathname]);
 
   const loadTeachers = async () => {
     setIsLoading(true);
     try {
       const data = await teachersApi.getAll();
-      setTeachers(data);
-    } catch (error) {
+      console.log('Loaded teachers:', data); // Debug log
+      setTeachers(data || []);
+      
+      if (!data || data.length === 0) {
+        toast.info("No teachers found. Add your first teacher to get started.");
+      }
+    } catch (error: any) {
       console.error('Failed to load teachers:', error);
+      toast.error(error?.message || "Failed to load teachers. Please refresh the page.");
       setTeachers([]);
     } finally {
       setIsLoading(false);
@@ -190,7 +205,17 @@ export default function TeacherManagement() {
             <h1 className="page-title">Teacher Management</h1>
             <p className="text-muted-foreground mt-1">Create teacher accounts with username & password login.</p>
           </div>
-          <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={loadTeachers}
+              disabled={isLoading}
+            >
+              <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+              Refresh
+            </Button>
+            <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
             <DialogTrigger asChild>
               <Button>
                 <Plus className="w-4 h-4 mr-2" />
@@ -251,6 +276,7 @@ export default function TeacherManagement() {
               </form>
             </DialogContent>
           </Dialog>
+          </div>
         </div>
 
         {/* Edit Teacher Dialog */}
@@ -356,67 +382,81 @@ export default function TeacherManagement() {
         </div>
 
         <div className="data-table">
-          <table className="w-full">
-            <thead>
-              <tr>
-                <th>Teacher</th>
-                <th>Username</th>
-                <th>Contact</th>
-                <th>Subjects</th>
-                <th>Status</th>
-                <th className="text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredTeachers.map((teacher) => (
-                <tr key={teacher.id}>
-                  <td>
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
-                        <Users className="w-5 h-5 text-primary" />
-                      </div>
-                      <div>
-                        <p className="font-medium">{teacher.name}</p>
-                        <p className="text-xs text-muted-foreground">{teacher.email}</p>
-                      </div>
-                    </div>
-                  </td>
-                  <td>
-                    <button onClick={() => copyCredentials(teacher.username)} className="flex items-center gap-1 font-mono text-sm bg-muted px-2 py-1 rounded hover:bg-muted/80">
-                      {teacher.username}
-                      <Copy className="w-3 h-3" />
-                    </button>
-                  </td>
-                  <td className="text-muted-foreground">{teacher.phone || "-"}</td>
-                  <td>{teacher.subjects?.join(", ") || "-"}</td>
-                  <td>
-                    <span className={`badge ${teacher.isActive ? "badge-success" : "bg-muted text-muted-foreground"}`}>
-                      {teacher.isActive ? "Active" : "Inactive"}
-                    </span>
-                  </td>
-                  <td className="text-right">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon"><MoreHorizontal className="w-4 h-4" /></Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => handleEdit(teacher)}>
-                          <Edit className="w-4 h-4 mr-2" />Edit
-                        </DropdownMenuItem>
-                        <DropdownMenuItem 
-                          className="text-destructive" 
-                          onClick={() => handleDeactivate(teacher)}
-                        >
-                          <Trash2 className="w-4 h-4 mr-2" />
-                          {teacher.isActive ? "Deactivate" : "Activate"}
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </td>
+          {isLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+              <span className="ml-2 text-muted-foreground">Loading teachers...</span>
+            </div>
+          ) : filteredTeachers.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12">
+              <Users className="w-12 h-12 text-muted-foreground mb-4" />
+              <p className="text-muted-foreground">
+                {searchQuery ? "No teachers found matching your search." : "No teachers found. Add your first teacher to get started."}
+              </p>
+            </div>
+          ) : (
+            <table className="w-full">
+              <thead>
+                <tr>
+                  <th>Teacher</th>
+                  <th>Username</th>
+                  <th>Contact</th>
+                  <th>Subjects</th>
+                  <th>Status</th>
+                  <th className="text-right">Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {filteredTeachers.map((teacher) => (
+                  <tr key={teacher.id}>
+                    <td>
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
+                          <Users className="w-5 h-5 text-primary" />
+                        </div>
+                        <div>
+                          <p className="font-medium">{teacher.name}</p>
+                          <p className="text-xs text-muted-foreground">{teacher.email || "-"}</p>
+                        </div>
+                      </div>
+                    </td>
+                    <td>
+                      <button onClick={() => copyCredentials(teacher.username)} className="flex items-center gap-1 font-mono text-sm bg-muted px-2 py-1 rounded hover:bg-muted/80">
+                        {teacher.username}
+                        <Copy className="w-3 h-3" />
+                      </button>
+                    </td>
+                    <td className="text-muted-foreground">{teacher.phone || "-"}</td>
+                    <td>{teacher.subjects && teacher.subjects.length > 0 ? teacher.subjects.join(", ") : "-"}</td>
+                    <td>
+                      <span className={`badge ${teacher.isActive ? "badge-success" : "bg-muted text-muted-foreground"}`}>
+                        {teacher.isActive ? "Active" : "Inactive"}
+                      </span>
+                    </td>
+                    <td className="text-right">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon"><MoreHorizontal className="w-4 h-4" /></Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => handleEdit(teacher)}>
+                            <Edit className="w-4 h-4 mr-2" />Edit
+                          </DropdownMenuItem>
+                          <DropdownMenuItem 
+                            className="text-destructive" 
+                            onClick={() => handleDeactivate(teacher)}
+                          >
+                            <Trash2 className="w-4 h-4 mr-2" />
+                            {teacher.isActive ? "Deactivate" : "Activate"}
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       </div>
     </UnifiedLayout>

@@ -23,6 +23,8 @@ const registrationLinksRoutes = require('./routes/registrationLinks');
 const uploadRoutes = require('./routes/upload');
 const timetableRoutes = require('./routes/timetable');
 const attendanceRoutes = require('./routes/attendance');
+const testsRoutes = require('./routes/tests');
+const academicYearsRoutes = require('./routes/academicYears');
 
 // Use routes
 app.use('/api/auth', authRoutes);
@@ -36,6 +38,8 @@ app.use('/api/registration-links', registrationLinksRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/timetable', timetableRoutes);
 app.use('/api/attendance', attendanceRoutes);
+app.use('/api/tests', testsRoutes);
+app.use('/api/academic-years', academicYearsRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

@@ -90,6 +90,7 @@ const apiRequest = async <T>(
         ? `${errorData.error}: ${errorData.details}` 
         : (errorData.error || 'Request failed');
       const error = new Error(errorMessage);
+      (error as any).response = { data: errorData };
       (error as any).details = errorData.details;
       (error as any).code = errorData.code;
       throw error;
@@ -257,6 +258,53 @@ export const classesApi = {
       body: JSON.stringify(data),
     });
   },
+
+  updateClassTeacher: async (classId: string, teacherId: string): Promise<{ success: boolean }> => {
+    return apiRequest(`/classes/${classId}/teacher`, {
+      method: 'PUT',
+      body: JSON.stringify({ teacherId }),
+    });
+  },
+};
+
+// ============ ACADEMIC YEARS API ============
+export const academicYearsApi = {
+  getAll: async (): Promise<any[]> => {
+    return apiRequest<any[]>('/academic-years');
+  },
+
+  getActive: async (): Promise<any> => {
+    return apiRequest<any>('/academic-years/active');
+  },
+
+  create: async (data: {
+    name: string;
+    startDate: string;
+    endDate: string;
+  }): Promise<{ success: boolean; yearId: string }> => {
+    return apiRequest('/academic-years', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  update: async (id: string, data: {
+    name?: string;
+    startDate?: string;
+    endDate?: string;
+    status?: 'active' | 'completed' | 'upcoming';
+  }): Promise<{ success: boolean }> => {
+    return apiRequest(`/academic-years/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
+  delete: async (id: string): Promise<{ success: boolean }> => {
+    return apiRequest(`/academic-years/${id}`, {
+      method: 'DELETE',
+    });
+  },
 };
 
 // ============ STUDENTS API ============
@@ -307,7 +355,7 @@ export const studentsApi = {
     });
   },
 
-  approve: async (id: string | number): Promise<{ success: boolean }> => {
+  approve: async (id: string | number): Promise<{ success: boolean; admissionNumber?: string }> => {
     return apiRequest(`/students/${id}/approve`, {
       method: 'POST',
     });
@@ -496,6 +544,33 @@ export const homeworkApi = {
       method: 'POST',
     });
   },
+
+  // Get student completions for a homework
+  getCompletions: async (homeworkId: string): Promise<{ studentId: string; completed: boolean }[]> => {
+    return apiRequest(`/homework/${homeworkId}/completions`);
+  },
+
+  // Update student completion
+  updateCompletion: async (homeworkId: string, data: {
+    studentId: string;
+    completed: boolean;
+  }): Promise<{ success: boolean }> => {
+    return apiRequest(`/homework/${homeworkId}/completions`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  // Bulk update completions
+  bulkUpdateCompletions: async (homeworkId: string, completions: Array<{
+    studentId: string;
+    completed: boolean;
+  }>): Promise<{ success: boolean }> => {
+    return apiRequest(`/homework/${homeworkId}/completions/bulk`, {
+      method: 'POST',
+      body: JSON.stringify({ completions }),
+    });
+  },
 };
 
 export const timetableApi = {
@@ -625,4 +700,46 @@ export const timetableApi = {
     apiRequest('/timetable/subjects', { method: 'POST', body: JSON.stringify(data) }),
   deleteSubject: async (id: string): Promise<any> =>
     apiRequest(`/timetable/subjects/${id}`, { method: 'DELETE' }),
+};
+
+// ============ TESTS API ============
+export const testsApi = {
+  getAll: async (): Promise<any[]> => {
+    return apiRequest<any[]>('/tests');
+  },
+
+  getById: async (testId: string): Promise<any> => {
+    return apiRequest<any>(`/tests/${testId}`);
+  },
+
+  create: async (data: {
+    name: string;
+    testTime: string;
+    classId: string;
+    subjects: Array<{
+      subjectId: string;
+      maxMarks: number;
+      syllabus: string;
+    }>;
+  }): Promise<{ success: boolean; testId: string }> => {
+    return apiRequest('/tests', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  saveResults: async (testId: string, results: Array<{
+    studentId: string;
+    subjectId: string;
+    marksObtained: number;
+  }>): Promise<{ success: boolean }> => {
+    return apiRequest(`/tests/${testId}/results`, {
+      method: 'POST',
+      body: JSON.stringify({ results }),
+    });
+  },
+
+  getResults: async (testId: string): Promise<any[]> => {
+    return apiRequest<any[]>(`/tests/${testId}/results`);
+  },
 };

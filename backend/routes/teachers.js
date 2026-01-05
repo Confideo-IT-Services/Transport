@@ -8,6 +8,11 @@ const { authenticateToken, requireAdmin } = require('../middleware/auth');
 // Get all teachers (for school admin - filtered by school)
 router.get('/', authenticateToken, requireAdmin, async (req, res) => {
   try {
+    // Check if schoolId exists
+    if (!req.user.schoolId) {
+      return res.status(400).json({ error: 'School ID not found in user token' });
+    }
+
     let query = `
       SELECT t.*, c.name as class_name, c.section as class_section
       FROM teachers t
@@ -25,19 +30,36 @@ router.get('/', authenticateToken, requireAdmin, async (req, res) => {
 
     const [teachers] = await db.query(query, params);
 
-    res.json(teachers.map(t => ({
-      id: t.id,
-      username: t.username,
-      name: t.name,
-      email: t.email,
-      phone: t.phone,
-      subjects: t.subjects ? JSON.parse(t.subjects) : [],
-      isActive: !!t.is_active,
-      className: t.class_name ? `${t.class_name} ${t.class_section || ''}`.trim() : null
-    })));
+    res.json(teachers.map(t => {
+      // Safely parse subjects JSON
+      let subjects = [];
+      if (t.subjects) {
+        try {
+          if (typeof t.subjects === 'string') {
+            subjects = JSON.parse(t.subjects);
+          } else if (Array.isArray(t.subjects)) {
+            subjects = t.subjects;
+          }
+        } catch (parseError) {
+          console.error('Error parsing subjects for teacher', t.id, ':', parseError);
+          subjects = [];
+        }
+      }
+
+      return {
+        id: t.id,
+        username: t.username,
+        name: t.name,
+        email: t.email || null,
+        phone: t.phone || null,
+        subjects: subjects,
+        isActive: !!t.is_active,
+        className: t.class_name ? `${t.class_name} ${t.class_section || ''}`.trim() : null
+      };
+    }));
   } catch (error) {
     console.error('Get teachers error:', error);
-    res.status(500).json({ error: 'Failed to fetch teachers' });
+    res.status(500).json({ error: 'Failed to fetch teachers', details: error.message });
   }
 });
 
@@ -45,6 +67,11 @@ router.get('/', authenticateToken, requireAdmin, async (req, res) => {
 router.get('/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
+    
+    // Check if schoolId exists
+    if (req.user.role === 'admin' && !req.user.schoolId) {
+      return res.status(400).json({ error: 'School ID not found in user token' });
+    }
     
     let query = 'SELECT * FROM teachers WHERE id = ?';
     const params = [id];
@@ -62,18 +89,34 @@ router.get('/:id', authenticateToken, requireAdmin, async (req, res) => {
     }
 
     const t = teachers[0];
+    
+    // Safely parse subjects JSON
+    let subjects = [];
+    if (t.subjects) {
+      try {
+        if (typeof t.subjects === 'string') {
+          subjects = JSON.parse(t.subjects);
+        } else if (Array.isArray(t.subjects)) {
+          subjects = t.subjects;
+        }
+      } catch (parseError) {
+        console.error('Error parsing subjects for teacher', t.id, ':', parseError);
+        subjects = [];
+      }
+    }
+
     res.json({
       id: t.id,
       username: t.username,
       name: t.name,
-      email: t.email,
-      phone: t.phone,
-      subjects: t.subjects ? JSON.parse(t.subjects) : [],
+      email: t.email || null,
+      phone: t.phone || null,
+      subjects: subjects,
       isActive: !!t.is_active
     });
   } catch (error) {
     console.error('Get teacher error:', error);
-    res.status(500).json({ error: 'Failed to fetch teacher' });
+    res.status(500).json({ error: 'Failed to fetch teacher', details: error.message });
   }
 });
 

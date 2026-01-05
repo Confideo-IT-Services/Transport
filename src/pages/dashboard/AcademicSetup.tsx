@@ -6,11 +6,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { teachersApi, classesApi } from "@/lib/api";
+import { teachersApi, classesApi, timetableApi, academicYearsApi } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -33,23 +34,21 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Plus, Edit, Users, BookOpen, Calendar, ChevronRight, GraduationCap, UserCheck } from "lucide-react";
 
-const academicYears = [
-  { id: 1, name: "2024-25", status: "active", startDate: "Apr 2024", endDate: "Mar 2025" },
-  { id: 2, name: "2023-24", status: "completed", startDate: "Apr 2023", endDate: "Mar 2024" },
-];
-
-// Hardcoded data removed - will load from API
-
 export default function AcademicSetup() {
   const { user } = useAuth();
   const { toast } = useToast();
   const isAdmin = user?.role === "admin";
   const [isAddClassOpen, setIsAddClassOpen] = useState(false);
   const [isAddTeacherOpen, setIsAddTeacherOpen] = useState(false);
+  const [isAddAcademicYearOpen, setIsAddAcademicYearOpen] = useState(false);
+  const [isEditTeacherOpen, setIsEditTeacherOpen] = useState(false);
+  const [editingTeacher, setEditingTeacher] = useState<any>(null);
+  const [editTeacherSubjects, setEditTeacherSubjects] = useState<string[]>([]);
   const [selectedClass, setSelectedClass] = useState<string>("");
   const [teachers, setTeachers] = useState<any[]>([]);
   const [subjects, setSubjects] = useState<string[]>([]);
   const [classesData, setClassesData] = useState<any[]>([]);
+  const [academicYears, setAcademicYears] = useState<any[]>([]);
   
   // New class form state
   const [newClass, setNewClass] = useState({
@@ -67,9 +66,43 @@ export default function AcademicSetup() {
   // New subject state
   const [newSubject, setNewSubject] = useState("");
 
+  // New academic year form state
+  const [newAcademicYear, setNewAcademicYear] = useState({
+    name: "",
+    startDate: "",
+    endDate: "",
+  });
+
   // Class teacher assignment state
   const [selectedSectionForAssign, setSelectedSectionForAssign] = useState<{className: string, sectionName: string} | null>(null);
   const [selectedTeacherForAssign, setSelectedTeacherForAssign] = useState<string>("");
+
+  // Function to calculate current academic year
+  const getCurrentAcademicYear = () => {
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth() + 1; // 1-12
+    
+    // Academic year runs from April to March
+    // If Jan-Mar, current AY is (year-1)-(year)
+    // If Apr-Dec, current AY is (year)-(year+1)
+    let startYear, endYear;
+    if (currentMonth >= 4) {
+      startYear = currentYear;
+      endYear = currentYear + 1;
+    } else {
+      startYear = currentYear - 1;
+      endYear = currentYear;
+    }
+    
+    return {
+      name: `${startYear}-${String(endYear).slice(-2)}`,
+      startYear,
+      endYear,
+      startDate: `Apr ${startYear}`,
+      endDate: `Mar ${endYear}`,
+    };
+  };
 
   // Function to load classes from API and transform to nested structure
   const loadClasses = async () => {
@@ -112,7 +145,68 @@ export default function AcademicSetup() {
     }
   };
 
-  // Fetch teachers and classes from API on component mount
+  // Load academic years from API
+  const loadAcademicYears = async () => {
+    try {
+      const yearsData = await academicYearsApi.getAll();
+      // Format dates for display
+      const formattedYears = yearsData.map((y: any) => {
+        const startDate = new Date(y.startDate);
+        const endDate = new Date(y.endDate);
+        const formatDate = (date: Date) => {
+          const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+          return `${months[date.getMonth()]} ${date.getFullYear()}`;
+        };
+        return {
+          id: y.id,
+          name: y.name,
+          status: y.status,
+          startDate: formatDate(startDate),
+          endDate: formatDate(endDate),
+          startYear: startDate.getFullYear(),
+          endYear: endDate.getFullYear(),
+        };
+      });
+      setAcademicYears(formattedYears);
+    } catch (error) {
+      console.error('Error loading academic years:', error);
+      // If no academic years exist, initialize with current year
+      const currentAY = getCurrentAcademicYear();
+      const initialYears = [
+        {
+          id: 'temp-1',
+          name: currentAY.name,
+          status: "active",
+          startDate: currentAY.startDate,
+          endDate: currentAY.endDate,
+          startYear: currentAY.startYear,
+          endYear: currentAY.endYear,
+        },
+      ];
+      setAcademicYears(initialYears);
+    }
+  };
+
+  // Initialize academic years on mount
+  useEffect(() => {
+    if (isAdmin) {
+      loadAcademicYears();
+    }
+  }, [isAdmin]);
+
+  // Load subjects from API
+  const loadSubjects = async () => {
+    try {
+      const subjectsData = await timetableApi.getSubjects();
+      const subjectNames = subjectsData.map((s: any) => s.name || s.code);
+      setSubjects(subjectNames);
+    } catch (error) {
+      console.error('Error loading subjects:', error);
+      // Keep subjects as empty array on error
+    }
+  };
+
+  // Fetch teachers, classes, and subjects from API on component mount
   useEffect(() => {
     const loadTeachers = async () => {
       try {
@@ -127,6 +221,7 @@ export default function AcademicSetup() {
     if (isAdmin) {
       loadTeachers();
       loadClasses(); // Load classes on mount
+      loadSubjects(); // Load subjects from API
     }
   }, [isAdmin]);
 
@@ -183,25 +278,189 @@ export default function AcademicSetup() {
     }
   };
 
-  const handleAddTeacher = () => {
+  const handleAddTeacher = async () => {
     if (!newTeacher.name.trim() || newTeacher.subjects.length === 0) {
+      toast({
+        title: "Validation Error",
+        description: "Please enter teacher name and select at least one subject",
+        variant: "destructive",
+      });
       return;
     }
-    const teacher = {
-      id: teachers.length + 1,
-      name: newTeacher.name.trim(),
-      subjects: newTeacher.subjects,
-    };
-    setTeachers([...teachers, teacher]);
-    setNewTeacher({ name: "", subjects: [] });
-    setIsAddTeacherOpen(false);
+
+    try {
+      // Generate base username from name (lowercase, replace spaces with dots)
+      let baseUsername = newTeacher.name.trim().toLowerCase().replace(/\s+/g, '.');
+      // Add "teacher." prefix to avoid conflicts with students or other users
+      let username = `teacher.${baseUsername}`;
+      
+      // Check if username already exists and make it unique
+      let counter = 1;
+      const existingTeachers = await teachersApi.getAll();
+      const existingUsernames = new Set(existingTeachers.map((t: any) => t.username || ''));
+      
+      while (existingUsernames.has(username)) {
+        username = `teacher.${baseUsername}${counter}`;
+        counter++;
+      }
+
+      // Generate a default password (can be changed later)
+      const defaultPassword = `Teacher@${Date.now().toString().slice(-6)}`;
+
+      // Call API to create teacher
+      await teachersApi.create({
+        username: username,
+        password: defaultPassword,
+        name: newTeacher.name.trim(),
+        subjects: newTeacher.subjects,
+      });
+
+      toast({
+        title: "Success",
+        description: `Teacher created successfully. Username: ${username}, Default password has been set.`,
+      });
+
+      // Reset form and close dialog
+      setNewTeacher({ name: "", subjects: [] });
+      setIsAddTeacherOpen(false);
+
+      // Reload teachers to show the new teacher
+      try {
+        const teachersData = await teachersApi.getAll();
+        setTeachers(teachersData || []);
+      } catch (reloadError) {
+        console.error('Error reloading teachers:', reloadError);
+        // Don't show error to user, just log it - teacher was created successfully
+      }
+    } catch (error: any) {
+      console.error('Error creating teacher:', error);
+      
+      // Show more specific error message
+      let errorMessage = "Failed to create teacher. Please try again.";
+      if (error?.message) {
+        if (error.message.includes('Username already exists')) {
+          errorMessage = "A teacher with a similar username already exists. Please try a different name or contact support.";
+        } else {
+          errorMessage = error.message;
+        }
+      }
+      
+      toast({
+        title: "Error",
+        description: errorMessage,
+        variant: "destructive",
+      });
+    }
   };
 
-  const handleAddSubject = () => {
+  const handleAddSubject = async () => {
     const trimmed = newSubject.trim();
-    if (!trimmed || subjects.includes(trimmed)) return;
-    setSubjects([...subjects, trimmed]);
-    setNewSubject("");
+    if (!trimmed) {
+      toast({
+        title: "Validation Error",
+        description: "Please enter a subject name",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (subjects.includes(trimmed)) {
+      toast({
+        title: "Validation Error",
+        description: "Subject already exists",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      // Generate code from name (uppercase, first 3-4 letters)
+      const code = trimmed.toUpperCase().replace(/\s+/g, '').substring(0, 4);
+      
+      // Call API to create subject
+      await timetableApi.createSubject({
+        code: code,
+        name: trimmed,
+      });
+
+      toast({
+        title: "Success",
+        description: "Subject created successfully",
+      });
+
+      // Reload subjects from API
+      await loadSubjects();
+      setNewSubject("");
+    } catch (error: any) {
+      console.error('Error creating subject:', error);
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to create subject. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Handle create academic year
+  const handleCreateAcademicYear = async () => {
+    if (!newAcademicYear.name.trim() || !newAcademicYear.startDate || !newAcademicYear.endDate) {
+      toast({
+        title: "Validation Error",
+        description: "Please fill in all fields",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Validate date format
+    const startDate = new Date(newAcademicYear.startDate);
+    const endDate = new Date(newAcademicYear.endDate);
+    
+    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+      toast({
+        title: "Validation Error",
+        description: "Please enter valid dates",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (endDate <= startDate) {
+      toast({
+        title: "Validation Error",
+        description: "End date must be after start date",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      // Call API to create academic year
+      await academicYearsApi.create({
+        name: newAcademicYear.name.trim(),
+        startDate: newAcademicYear.startDate,
+        endDate: newAcademicYear.endDate,
+      });
+      
+      toast({
+        title: "Success",
+        description: "Academic year created successfully",
+      });
+
+      // Reset form and close dialog
+      setNewAcademicYear({ name: "", startDate: "", endDate: "" });
+      setIsAddAcademicYearOpen(false);
+
+      // Reload academic years to show the new year
+      await loadAcademicYears();
+    } catch (error: any) {
+      console.error('Error creating academic year:', error);
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to create academic year. Please try again.",
+        variant: "destructive",
+      });
+    }
   };
 
   const toggleSubject = (subject: string) => {
@@ -213,26 +472,117 @@ export default function AcademicSetup() {
     }));
   };
 
-  const handleAssignClassTeacher = () => {
-    if (!selectedSectionForAssign || !selectedTeacherForAssign) return;
-    
-    setClassesData(prev => prev.map(cls => {
-      if (cls.name === selectedSectionForAssign.className) {
-        return {
-          ...cls,
-          sections: cls.sections.map(sec => {
-            if (sec.name === selectedSectionForAssign.sectionName) {
-              return { ...sec, classTeacher: selectedTeacherForAssign };
-            }
-            return sec;
-          })
-        };
+  // Handle opening edit teacher dialog
+  const handleOpenEditTeacher = (teacher: any) => {
+    setEditingTeacher(teacher);
+    setEditTeacherSubjects(teacher.subjects || []);
+    setIsEditTeacherOpen(true);
+  };
+
+  // Handle updating teacher
+  const handleUpdateTeacher = async () => {
+    if (!editingTeacher || editTeacherSubjects.length === 0) {
+      toast({
+        title: "Validation Error",
+        description: "Please select at least one subject",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      // Call API to update teacher
+      await teachersApi.update(editingTeacher.id, {
+        subjects: editTeacherSubjects,
+      });
+
+      toast({
+        title: "Success",
+        description: "Teacher updated successfully",
+      });
+
+      // Reset form and close dialog
+      setEditingTeacher(null);
+      setEditTeacherSubjects([]);
+      setIsEditTeacherOpen(false);
+
+      // Reload teachers to show updated data
+      const teachersData = await teachersApi.getAll();
+      setTeachers(teachersData || []);
+    } catch (error: any) {
+      console.error('Error updating teacher:', error);
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to update teacher. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Toggle subject in edit mode
+  const toggleEditSubject = (subject: string) => {
+    setEditTeacherSubjects(prev =>
+      prev.includes(subject)
+        ? prev.filter(s => s !== subject)
+        : [...prev, subject]
+    );
+  };
+
+  const handleAssignClassTeacher = async () => {
+    if (!selectedSectionForAssign || !selectedTeacherForAssign) {
+      toast({
+        title: "Validation Error",
+        description: "Please select a class-section and teacher",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      // Find the class ID and teacher ID
+      const classData = classesData.find(c => c.name === selectedSectionForAssign.className);
+      if (!classData) {
+        throw new Error("Class not found");
       }
-      return cls;
-    }));
-    
-    setSelectedSectionForAssign(null);
-    setSelectedTeacherForAssign("");
+
+      // Find the section's class ID (each section is a separate class in DB)
+      const classesDataRaw = await classesApi.getAll();
+      const sectionClass = classesDataRaw.find((c: any) => 
+        c.name === selectedSectionForAssign.className && 
+        c.section === selectedSectionForAssign.sectionName
+      );
+
+      if (!sectionClass) {
+        throw new Error("Class section not found");
+      }
+
+      // Find teacher ID from name
+      const teacher = teachers.find(t => t.name === selectedTeacherForAssign);
+      if (!teacher) {
+        throw new Error("Teacher not found");
+      }
+
+      // Call API to update class teacher
+      await classesApi.updateClassTeacher(sectionClass.id, teacher.id);
+
+      toast({
+        title: "Success",
+        description: "Class teacher assigned successfully",
+      });
+
+      // Reload classes to show updated assignment
+      await loadClasses();
+      
+      setSelectedSectionForAssign(null);
+      setSelectedTeacherForAssign("");
+    } catch (error: any) {
+      console.error('Error assigning class teacher:', error);
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to assign class teacher. Please try again.",
+        variant: "destructive",
+      });
+    }
   };
 
   // Generate all class-section combinations for assignment
@@ -278,10 +628,55 @@ export default function AcademicSetup() {
             <div className="flex justify-between items-center">
               <h2 className="text-lg font-medium">Academic Years</h2>
               {isAdmin && (
-                <Button size="sm">
-                  <Plus className="w-4 h-4 mr-2" />
-                  Add Academic Year
-                </Button>
+                <Dialog open={isAddAcademicYearOpen} onOpenChange={setIsAddAcademicYearOpen}>
+                  <DialogTrigger asChild>
+                    <Button size="sm">
+                      <Plus className="w-4 h-4 mr-2" />
+                      Add Academic Year
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>Add New Academic Year</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-4 py-4">
+                      <div className="space-y-2">
+                        <Label>Academic Year Name *</Label>
+                        <Input 
+                          placeholder="e.g., 2025-26" 
+                          value={newAcademicYear.name}
+                          onChange={(e) => setNewAcademicYear(prev => ({ ...prev, name: e.target.value }))}
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Format: YYYY-YY (e.g., 2025-26)
+                        </p>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Start Date *</Label>
+                        <Input 
+                          type="date"
+                          value={newAcademicYear.startDate}
+                          onChange={(e) => setNewAcademicYear(prev => ({ ...prev, startDate: e.target.value }))}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>End Date *</Label>
+                        <Input 
+                          type="date"
+                          value={newAcademicYear.endDate}
+                          onChange={(e) => setNewAcademicYear(prev => ({ ...prev, endDate: e.target.value }))}
+                        />
+                      </div>
+                      <Button 
+                        className="w-full" 
+                        onClick={handleCreateAcademicYear}
+                        disabled={!newAcademicYear.name.trim() || !newAcademicYear.startDate || !newAcademicYear.endDate}
+                      >
+                        Create Academic Year
+                      </Button>
+                    </div>
+                  </DialogContent>
+                </Dialog>
               )}
             </div>
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
@@ -720,6 +1115,62 @@ export default function AcademicSetup() {
               )}
             </div>
 
+            {/* Edit Teacher Dialog */}
+            <Dialog open={isEditTeacherOpen} onOpenChange={(open) => {
+              setIsEditTeacherOpen(open);
+              if (!open) {
+                setEditingTeacher(null);
+                setEditTeacherSubjects([]);
+              }
+            }}>
+              <DialogContent className="max-w-md">
+                <DialogHeader>
+                  <DialogTitle>Edit Teacher Subjects</DialogTitle>
+                  <DialogDescription>
+                    Update subjects for {editingTeacher?.name}
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                  <div className="space-y-2">
+                    <Label>Teacher Name</Label>
+                    <Input 
+                      value={editingTeacher?.name || ""}
+                      disabled
+                      className="bg-muted"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Subjects Teaching *</Label>
+                    <div className="flex gap-2 flex-wrap p-3 border rounded-lg bg-muted/30 max-h-40 overflow-y-auto">
+                      {subjects.map((subject) => (
+                        <Badge 
+                          key={subject}
+                          variant={editTeacherSubjects.includes(subject) ? "default" : "outline"}
+                          className="cursor-pointer transition-colors"
+                          onClick={() => toggleEditSubject(subject)}
+                        >
+                          {subject}
+                        </Badge>
+                      ))}
+                    </div>
+                    {editTeacherSubjects.length > 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        Selected: {editTeacherSubjects.join(", ")}
+                      </p>
+                    )}
+                  </div>
+                  <Button 
+                    className="w-full" 
+                    onClick={handleUpdateTeacher}
+                    disabled={!editingTeacher || editTeacherSubjects.length === 0}
+                  >
+                    <Edit className="w-4 h-4 mr-2" />
+                    Update Teacher
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+
             {/* Teacher Table */}
             <Card>
               <CardContent className="pt-6">
@@ -753,7 +1204,11 @@ export default function AcademicSetup() {
                         </TableCell>
                         {isAdmin && (
                           <TableCell className="text-right">
-                            <Button variant="ghost" size="icon">
+                            <Button 
+                              variant="ghost" 
+                              size="icon"
+                              onClick={() => handleOpenEditTeacher(teacher)}
+                            >
                               <Edit className="w-4 h-4" />
                             </Button>
                           </TableCell>

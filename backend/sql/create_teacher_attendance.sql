@@ -20,3 +20,5 @@ CREATE TABLE IF NOT EXISTS teacher_attendance (
     FOREIGN KEY (marked_by) REFERENCES users(id) ON DELETE SET NULL
 );
 
+
+

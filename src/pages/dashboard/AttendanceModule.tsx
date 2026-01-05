@@ -91,6 +91,10 @@ export default function AttendanceModule() {
   const [markingTeacherId, setMarkingTeacherId] = useState<string | null>(null);
   const [teacherStatus, setTeacherStatus] = useState<'present' | 'absent' | 'late' | 'leave'>('present');
   const [teacherRemarks, setTeacherRemarks] = useState('');
+  const [isViewHistoryOpen, setIsViewHistoryOpen] = useState(false);
+  const [selectedTeacherForHistory, setSelectedTeacherForHistory] = useState<{ id: string; name: string } | null>(null);
+  const [teacherHistory, setTeacherHistory] = useState<any[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
 
   // Memoize today's date string to prevent infinite loops
   const today = useMemo(() => new Date(), []);
@@ -650,7 +654,40 @@ export default function AttendanceModule() {
                                     </DialogFooter>
                                   </DialogContent>
                                 </Dialog>
-                                <Button variant="ghost" size="sm">View History</Button>
+                                <Button 
+                                  variant="ghost" 
+                                  size="sm"
+                                  onClick={async () => {
+                                    setSelectedTeacherForHistory({ id: teacher.id, name: teacher.name });
+                                    setIsViewHistoryOpen(true);
+                                    setIsLoadingHistory(true);
+                                    try {
+                                      // Get history for last 30 days
+                                      const endDate = new Date();
+                                      const startDate = new Date();
+                                      startDate.setDate(startDate.getDate() - 30);
+                                      
+                                      const history = await attendanceApi.getTeacherAttendanceHistory(
+                                        teacher.id,
+                                        format(startDate, 'yyyy-MM-dd'),
+                                        format(endDate, 'yyyy-MM-dd')
+                                      );
+                                      setTeacherHistory(history || []);
+                                    } catch (error: any) {
+                                      console.error('Error loading teacher history:', error);
+                                      toast({
+                                        title: "Error",
+                                        description: error?.message || "Failed to load attendance history",
+                                        variant: "destructive"
+                                      });
+                                      setTeacherHistory([]);
+                                    } finally {
+                                      setIsLoadingHistory(false);
+                                    }
+                                  }}
+                                >
+                                  View History
+                                </Button>
                               </div>
                             </TableCell>
                           </TableRow>
@@ -1253,6 +1290,162 @@ export default function AttendanceModule() {
           </TabsContent>
         </Tabs>
       </div>
+
+      {/* View History Dialog */}
+      <Dialog open={isViewHistoryOpen} onOpenChange={(open) => {
+        setIsViewHistoryOpen(open);
+        if (!open) {
+          setSelectedTeacherForHistory(null);
+          setTeacherHistory([]);
+        }
+      }}>
+        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              Attendance History - {selectedTeacherForHistory?.name}
+            </DialogTitle>
+            <DialogDescription>
+              View attendance records for the last 30 days
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            {isLoadingHistory ? (
+              <div className="text-center py-8">
+                <Clock className="w-8 h-8 mx-auto text-muted-foreground animate-spin mb-2" />
+                <p className="text-muted-foreground">Loading history...</p>
+              </div>
+            ) : teacherHistory.length === 0 ? (
+              <div className="text-center py-8">
+                <CalendarIcon className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
+                <p className="text-muted-foreground">No attendance history found</p>
+              </div>
+            ) : (
+              <>
+                {/* Summary Stats */}
+                <div className="grid grid-cols-4 gap-4 mb-4">
+                  <Card>
+                    <CardContent className="pt-4">
+                      <div className="text-2xl font-bold text-secondary">
+                        {teacherHistory.filter((h: any) => h.status === 'present' || h.status === 'Present').length}
+                      </div>
+                      <p className="text-xs text-muted-foreground">Present</p>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="pt-4">
+                      <div className="text-2xl font-bold text-destructive">
+                        {teacherHistory.filter((h: any) => h.status === 'absent' || h.status === 'Absent').length}
+                      </div>
+                      <p className="text-xs text-muted-foreground">Absent</p>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="pt-4">
+                      <div className="text-2xl font-bold text-accent">
+                        {teacherHistory.filter((h: any) => h.status === 'leave' || h.status === 'Leave').length}
+                      </div>
+                      <p className="text-xs text-muted-foreground">On Leave</p>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="pt-4">
+                      <div className="text-2xl font-bold text-blue-600">
+                        {teacherHistory.filter((h: any) => h.status === 'late' || h.status === 'Late').length}
+                      </div>
+                      <p className="text-xs text-muted-foreground">Late</p>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                {/* History Table */}
+                <div className="border rounded-lg overflow-hidden">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Date</TableHead>
+                        <TableHead>Check In</TableHead>
+                        <TableHead>Check Out</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Remarks</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {teacherHistory
+                        .sort((a: any, b: any) => {
+                          const dateA = new Date(a.date || a.attendanceDate || 0);
+                          const dateB = new Date(b.date || b.attendanceDate || 0);
+                          return dateB.getTime() - dateA.getTime();
+                        })
+                        .map((record: any, index: number) => {
+                          const recordDate = record.date || record.attendanceDate;
+                          const checkIn = record.checkInTime || record.checkIn || record.check_in_time;
+                          const checkOut = record.checkOutTime || record.checkOut || record.check_out_time;
+                          const status = record.status || 'not-marked';
+                          const remarks = record.remarks || record.notes || '';
+
+                          return (
+                            <TableRow key={record.id || index}>
+                              <TableCell className="font-medium">
+                                {recordDate ? format(new Date(recordDate), 'dd MMM yyyy (EEE)') : '-'}
+                              </TableCell>
+                              <TableCell>
+                                {checkIn ? (
+                                  typeof checkIn === 'string' && checkIn.includes(':') ? (
+                                    checkIn.length > 5 ? format(new Date(checkIn), 'hh:mm a') : checkIn
+                                  ) : (
+                                    format(new Date(checkIn), 'hh:mm a')
+                                  )
+                                ) : (
+                                  <span className="text-muted-foreground">-</span>
+                                )}
+                              </TableCell>
+                              <TableCell>
+                                {checkOut ? (
+                                  typeof checkOut === 'string' && checkOut.includes(':') ? (
+                                    checkOut.length > 5 ? format(new Date(checkOut), 'hh:mm a') : checkOut
+                                  ) : (
+                                    format(new Date(checkOut), 'hh:mm a')
+                                  )
+                                ) : (
+                                  <span className="text-muted-foreground">-</span>
+                                )}
+                              </TableCell>
+                              <TableCell>
+                                <Badge
+                                  className={
+                                    status === 'present' || status === 'Present'
+                                      ? 'bg-secondary'
+                                      : status === 'absent' || status === 'Absent'
+                                      ? 'bg-destructive'
+                                      : status === 'leave' || status === 'Leave'
+                                      ? 'bg-accent'
+                                      : status === 'late' || status === 'Late'
+                                      ? 'bg-blue-600'
+                                      : 'bg-muted'
+                                  }
+                                >
+                                  {status.charAt(0).toUpperCase() + status.slice(1).toLowerCase()}
+                                </Badge>
+                              </TableCell>
+                              <TableCell className="max-w-xs truncate" title={remarks}>
+                                {remarks || <span className="text-muted-foreground">-</span>}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                    </TableBody>
+                  </Table>
+                </div>
+              </>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsViewHistoryOpen(false)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </UnifiedLayout>
   );
 }

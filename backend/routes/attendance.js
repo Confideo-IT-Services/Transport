@@ -541,9 +541,9 @@ router.get('/stats/monthly', authenticateToken, async (req, res) => {
       SELECT 
         DATE_FORMAT(date, '%Y-%m') as month,
         DATE_FORMAT(date, '%M %Y') as monthName,
-        COUNT(DISTINCT CASE WHEN status = 'present' THEN student_id END) as present,
-        COUNT(DISTINCT CASE WHEN status = 'absent' THEN student_id END) as absent,
-        COUNT(DISTINCT CASE WHEN status = 'leave' THEN student_id END) as leave
+        COUNT(CASE WHEN status = 'present' THEN 1 END) as present,
+        COUNT(CASE WHEN status = 'absent' THEN 1 END) as absent,
+        COUNT(CASE WHEN status = 'leave' THEN 1 END) as leave
       FROM attendance
       WHERE YEAR(date) = ?
     `;

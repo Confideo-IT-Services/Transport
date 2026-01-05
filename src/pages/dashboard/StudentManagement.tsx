@@ -39,7 +39,7 @@ interface FieldConfig {
 }
 
 interface Student {
-  id: number;
+  id: string | number; // Can be UUID string or number
   name: string;
   class: string;
   section: string;
@@ -60,6 +60,7 @@ interface Student {
   admissionNumber?: string;
   registrationCode?: string | null;
   submittedData?: any;
+  classId?: string;
 }
 
 // Component to display student profile with only submitted fields
@@ -73,8 +74,8 @@ function StudentProfileView({
   student: Student; 
   fieldConfig: FieldConfig[]; 
   onFieldConfigLoad: (config: FieldConfig[]) => void;
-  onApprove: (id: number) => void;
-  onReject: (id: number) => void;
+  onApprove: (id: string | number) => void;
+  onReject: (id: string | number) => void;
 }) {
   useEffect(() => {
     // Fetch field config from registration link if available
@@ -468,28 +469,22 @@ export default function StudentManagement() {
     toast.success("Link copied to clipboard!");
   };
 
-  const handleApprove = async (studentId: number) => {
+  const handleApprove = async (studentId: string | number) => {
     try {
-      await studentsApi.approve(studentId);
-      
-      // Update local state
-      setStudents(prev => prev.map(s => 
-        s.id === studentId 
-          ? { ...s, status: "approved" as const, admissionNumber: `ADM${new Date().getFullYear()}${String(studentId).padStart(4, "0")}` }
-          : s
-      ));
+      const response = await studentsApi.approve(studentId);
       
       toast.success("Student approved and added to class!");
       
-      // Reload data to ensure consistency
+      // Reload data to ensure consistency (admission number will come from backend)
       await loadData();
     } catch (error: any) {
       console.error('Error approving student:', error);
-      toast.error(error?.message || "Failed to approve student");
+      const errorMessage = error?.response?.data?.error || error?.message || "Failed to approve student";
+      toast.error(errorMessage);
     }
   };
 
-  const handleReject = async (studentId: number) => {
+  const handleReject = async (studentId: string | number) => {
     try {
       await studentsApi.reject(studentId);
       
@@ -504,7 +499,8 @@ export default function StudentManagement() {
       await loadData();
     } catch (error: any) {
       console.error('Error rejecting student:', error);
-      toast.error(error?.message || "Failed to reject student");
+      const errorMessage = error?.response?.data?.error || error?.message || "Failed to reject student";
+      toast.error(errorMessage);
     }
   };
 
@@ -577,8 +573,9 @@ export default function StudentManagement() {
 
   const filteredStudents = students.filter((student) => {
     const matchesSearch = student.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      student.rollNo.includes(searchTerm);
-    const matchesClass = filterClass === "all" || student.class === filterClass;
+      (student.rollNo && student.rollNo.toLowerCase().includes(searchTerm.toLowerCase()));
+    // Fix: Compare classId instead of class name
+    const matchesClass = filterClass === "all" || student.classId === filterClass;
     const matchesStatus = filterStatus === "all" || student.status === filterStatus;
     return matchesSearch && matchesClass && matchesStatus;
   });
@@ -751,6 +748,34 @@ export default function StudentManagement() {
           </TabsContent>
 
           <TabsContent value="approved" className="space-y-4 mt-4">
+            {/* Filters */}
+            <div className="flex flex-wrap items-center gap-4">
+              <div className="relative flex-1 max-w-md">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search by name or roll number..."
+                  className="pl-10"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
+              </div>
+              <Select value={filterClass} onValueChange={setFilterClass}>
+                <SelectTrigger className="w-40">
+                  <Filter className="w-4 h-4 mr-2" />
+                  <SelectValue placeholder="Class" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Classes</SelectItem>
+                  {classes.map(c => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.name}{c.section ? ` - ${c.section}` : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Students Table */}
             <div className="border border-border rounded-lg overflow-hidden">
               <table className="w-full">
                 <thead className="bg-muted/50">
@@ -763,7 +788,7 @@ export default function StudentManagement() {
                   </tr>
                 </thead>
                 <tbody>
-                  {students.filter(s => s.status === "approved").map((student) => (
+                  {filteredStudents.filter(s => s.status === "approved").map((student) => (
                     <tr key={student.id} className="border-t border-border">
                       <td className="p-4">
                         <div className="flex items-center gap-3">
@@ -796,6 +821,11 @@ export default function StudentManagement() {
                   ))}
                 </tbody>
               </table>
+              {filteredStudents.filter(s => s.status === "approved").length === 0 && (
+                <div className="p-8 text-center text-muted-foreground">
+                  No approved students found
+                </div>
+              )}
             </div>
           </TabsContent>
         </Tabs>

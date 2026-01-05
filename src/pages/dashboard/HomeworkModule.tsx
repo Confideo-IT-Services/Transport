@@ -34,14 +34,15 @@ interface SubjectHomework {
 }
 
 interface Student {
-  id: number;
+  id: number; // Frontend ID (for display/UI)
+  uuid: string; // Original UUID from database (REQUIRED for API calls)
   name: string;
   rollNo: string;
   completed: boolean;
 }
 
 interface HomeworkItem {
-  id: number;
+  id: string; // Changed to string to match UUID from backend
   subjects: SubjectHomework[];
   dueDate: string;
   status: "active" | "completed" | "draft";
@@ -61,14 +62,14 @@ interface StudentFrequency {
 }
 
 const defaultStudents: Student[] = [
-  { id: 1, name: "Aarav Sharma", rollNo: "01", completed: false },
-  { id: 2, name: "Priya Patel", rollNo: "02", completed: false },
-  { id: 3, name: "Rahul Kumar", rollNo: "03", completed: false },
-  { id: 4, name: "Ananya Singh", rollNo: "04", completed: false },
-  { id: 5, name: "Vikram Reddy", rollNo: "05", completed: false },
-  { id: 6, name: "Sneha Gupta", rollNo: "06", completed: false },
-  { id: 7, name: "Arjun Nair", rollNo: "07", completed: false },
-  { id: 8, name: "Kavya Iyer", rollNo: "08", completed: false },
+  { id: 1, uuid: "1", name: "Aarav Sharma", rollNo: "01", completed: false },
+  { id: 2, uuid: "2", name: "Priya Patel", rollNo: "02", completed: false },
+  { id: 3, uuid: "3", name: "Rahul Kumar", rollNo: "03", completed: false },
+  { id: 4, uuid: "4", name: "Ananya Singh", rollNo: "04", completed: false },
+  { id: 5, uuid: "5", name: "Vikram Reddy", rollNo: "05", completed: false },
+  { id: 6, uuid: "6", name: "Sneha Gupta", rollNo: "06", completed: false },
+  { id: 7, uuid: "7", name: "Arjun Nair", rollNo: "07", completed: false },
+  { id: 8, uuid: "8", name: "Kavya Iyer", rollNo: "08", completed: false },
 ];
 
 const defaultSubjects = [
@@ -150,12 +151,20 @@ export default function HomeworkModule() {
         for (const classId of uniqueClassIds) {
           try {
             const classStudents = await studentsApi.getByClass(classId);
-            studentsMap[classId] = classStudents.map((s: any, index: number) => ({
-              id: parseInt(s.id) || index + 1,
-              name: s.name,
-              rollNo: s.rollNo || String(index + 1).padStart(2, '0'),
-              completed: false
-            }));
+            studentsMap[classId] = classStudents.map((s: any, index: number) => {
+              // Handle UUID strings - UUIDs are typically 36 chars with dashes or 32 chars without
+              // If it's not a simple number, treat it as UUID
+              const idStr = String(s.id);
+              const isUuid = typeof s.id === 'string' && (idStr.length > 10 || idStr.includes('-'));
+              const numericId = isUuid ? (index + 1) : (parseInt(s.id) || index + 1);
+              return {
+                id: numericId,
+                uuid: idStr, // Always preserve original UUID as string
+                name: s.name,
+                rollNo: s.rollNo || s.roll_no || String(index + 1).padStart(2, '0'),
+                completed: false // Will be updated from completion API
+              };
+            });
           } catch (error) {
             console.error(`Error loading students for class ${classId}:`, error);
             studentsMap[classId] = [];
@@ -164,21 +173,47 @@ export default function HomeworkModule() {
         
         setClassStudentsMap(studentsMap);
         
+        // Load completion status for each homework
+        const homeworkWithCompletions = await Promise.all(
+          homeworkData.map(async (h: any) => {
+            try {
+              const completions = await homeworkApi.getCompletions(h.id);
+              const completionMap = new Map(
+                completions.map((c: any) => [c.studentId, c.completed])
+              );
+              
+              // Update students with completion status
+              // Match by student UUID from database
+              const students = (studentsMap[h.classId] || []).map(s => ({
+                ...s,
+                completed: completionMap.get(s.uuid) || false // Use UUID for matching
+              }));
+              
+              return { ...h, students };
+            } catch (error) {
+              console.error(`Error loading completions for homework ${h.id}:`, error);
+              return { ...h, students: studentsMap[h.classId] || [] };
+            }
+          })
+        );
+        
         // Transform backend data to frontend format
-        const transformedHomework: HomeworkItem[] = homeworkData.map((h: any) => ({
-          id: parseInt(h.id) || Date.now(),
-          subjects: [{
-            subjectId: h.subject?.toLowerCase().replace(/\s+/g, '-') || 'subject',
-            subjectName: h.subject || 'Subject',
-            description: h.description || ''
-          }],
-          dueDate: h.dueDate || '',
-          status: h.status === 'completed' ? 'completed' : h.status === 'active' ? 'active' : 'draft',
-          createdAt: h.createdAt || new Date().toISOString().split('T')[0],
-          sentToParents: false, // Backend doesn't track this yet
-          students: studentsMap[h.classId] || [],
-          classId: h.classId // Store classId for future reference
-        }));
+        const transformedHomework: HomeworkItem[] = homeworkWithCompletions
+          .filter((h: any) => h.id) // Filter out any homework without an ID
+          .map((h: any) => ({
+            id: String(h.id), // Ensure it's a string (UUID)
+            subjects: [{
+              subjectId: h.subject?.toLowerCase().replace(/\s+/g, '-') || 'subject',
+              subjectName: h.subject || 'Subject',
+              description: h.description || ''
+            }],
+            dueDate: h.dueDate || '',
+            status: h.status === 'completed' ? 'completed' : h.status === 'active' ? 'active' : 'draft',
+            createdAt: h.createdAt || new Date().toISOString().split('T')[0],
+            sentToParents: false, // Backend doesn't track this yet
+            students: h.students || [],
+            classId: h.classId // Store classId for future reference
+          }));
         setHomework(transformedHomework);
       } catch (error) {
         console.error('Error loading homework data:', error);
@@ -207,12 +242,18 @@ export default function HomeworkModule() {
       
       try {
         const classStudents = await studentsApi.getByClass(selectedClassId);
-        const students = classStudents.map((s: any, index: number) => ({
-          id: parseInt(s.id) || index + 1,
-          name: s.name,
-          rollNo: s.rollNo || String(index + 1).padStart(2, '0'),
-          completed: false
-        }));
+        const students = classStudents.map((s: any, index: number) => {
+          const idStr = String(s.id);
+          const isUuid = typeof s.id === 'string' && (idStr.length > 10 || idStr.includes('-'));
+          const numericId = isUuid ? (index + 1) : (parseInt(s.id) || index + 1);
+          return {
+            id: numericId,
+            uuid: idStr, // Always preserve original UUID as string
+            name: s.name,
+            rollNo: s.rollNo || s.roll_no || String(index + 1).padStart(2, '0'),
+            completed: false
+          };
+        });
         setStudentsInClass(students);
         setClassStudentsMap(prev => ({ ...prev, [selectedClassId]: students }));
       } catch (error) {
@@ -300,12 +341,17 @@ export default function HomeworkModule() {
           } else {
             try {
               const classStudents = await studentsApi.getByClass(selectedClassId);
-              students = classStudents.map((s: any, index: number) => ({
-                id: parseInt(s.id) || index + 1,
-                name: s.name,
-                rollNo: s.rollNo || String(index + 1).padStart(2, '0'),
-                completed: false
-              }));
+              students = classStudents.map((s: any, index: number) => {
+                const isUuid = typeof s.id === 'string' && s.id.includes('-');
+                const numericId = isUuid ? (index + 1) : (parseInt(s.id) || index + 1);
+                return {
+                  id: numericId,
+                  uuid: String(s.id), // Always preserve original UUID as string
+                  name: s.name,
+                  rollNo: s.rollNo || s.roll_no || String(index + 1).padStart(2, '0'),
+                  completed: false
+                };
+              });
               setClassStudentsMap(prev => ({ ...prev, [selectedClassId]: students }));
             } catch (error) {
               console.error('Error loading students for new homework:', error);
@@ -372,58 +418,168 @@ export default function HomeworkModule() {
         // Fetch students for this class if not already loaded
         if (!classStudentsMap[hw.classId]) {
           const classStudents = await studentsApi.getByClass(hw.classId);
-          const students = classStudents.map((s: any, index: number) => ({
-            id: parseInt(s.id) || index + 1,
-            name: s.name,
-            rollNo: s.rollNo || String(index + 1).padStart(2, '0'),
-            completed: false
-          }));
-          setClassStudentsMap(prev => ({ ...prev, [hw.classId!]: students }));
-          const updatedHw = { ...hw, students };
-          setSelectedHomework(updatedHw);
-          setHomework(homework.map(h => h.id === hw.id ? updatedHw : h));
+          const students = classStudents.map((s: any, index: number) => {
+            const isUuid = typeof s.id === 'string' && s.id.includes('-');
+            const numericId = isUuid ? (index + 1) : (parseInt(s.id) || index + 1);
+            return {
+              id: numericId,
+              uuid: String(s.id), // Always preserve original UUID as string
+              name: s.name,
+              rollNo: s.rollNo || s.roll_no || String(index + 1).padStart(2, '0'),
+              completed: false
+            };
+          });
+          
+          // Load completion status for this homework
+          try {
+            const completions = await homeworkApi.getCompletions(hw.id);
+            const completionMap = new Map(
+              completions.map((c: any) => [c.studentId, c.completed])
+            );
+            // Update students with completion status
+            const studentsWithCompletion = students.map(s => ({
+              ...s,
+              completed: completionMap.get(s.uuid) || false
+            }));
+            setClassStudentsMap(prev => ({ ...prev, [hw.classId!]: studentsWithCompletion }));
+            const updatedHw = { ...hw, students: studentsWithCompletion };
+            setSelectedHomework(updatedHw);
+            setHomework(homework.map(h => h.id === hw.id ? updatedHw : h));
+          } catch (completionError) {
+            console.error('Error loading completions:', completionError);
+            setClassStudentsMap(prev => ({ ...prev, [hw.classId!]: students }));
+            const updatedHw = { ...hw, students };
+            setSelectedHomework(updatedHw);
+            setHomework(homework.map(h => h.id === hw.id ? updatedHw : h));
+          }
         } else {
-          // Use cached students
-          const updatedHw = { ...hw, students: classStudentsMap[hw.classId] };
-          setSelectedHomework(updatedHw);
+          // Use cached students, but refresh completion status
+          try {
+            const completions = await homeworkApi.getCompletions(hw.id);
+            const completionMap = new Map(
+              completions.map((c: any) => [c.studentId, c.completed])
+            );
+            const studentsWithCompletion = classStudentsMap[hw.classId].map(s => ({
+              ...s,
+              completed: completionMap.get(s.uuid) || false
+            }));
+            const updatedHw = { ...hw, students: studentsWithCompletion };
+            setSelectedHomework(updatedHw);
+          } catch (completionError) {
+            console.error('Error loading completions:', completionError);
+            const updatedHw = { ...hw, students: classStudentsMap[hw.classId] };
+            setSelectedHomework(updatedHw);
+          }
         }
       } catch (error) {
         console.error('Error loading students for homework:', error);
         setSelectedHomework(hw);
       }
     } else {
-      setSelectedHomework(hw);
+      // Students are already loaded, but refresh completion status
+      try {
+        const completions = await homeworkApi.getCompletions(hw.id);
+        const completionMap = new Map(
+          completions.map((c: any) => [c.studentId, c.completed])
+        );
+        const studentsWithCompletion = hw.students.map(s => ({
+          ...s,
+          completed: completionMap.get(s.uuid) || s.completed || false
+        }));
+        const updatedHw = { ...hw, students: studentsWithCompletion };
+        setSelectedHomework(updatedHw);
+      } catch (completionError) {
+        console.error('Error loading completions:', completionError);
+        setSelectedHomework(hw);
+      }
     }
     setIsCompletionDialogOpen(true);
   };
 
-  const toggleStudentCompletion = (studentId: number) => {
+  const toggleStudentCompletion = async (studentId: number) => {
     if (!selectedHomework) return;
 
+    const student = selectedHomework.students.find(s => s.id === studentId);
+    if (!student) {
+      toast.error('Student not found');
+      return;
+    }
+
+    if (!student.uuid) {
+      toast.error('Student UUID is missing. Please refresh the page.');
+      return;
+    }
+
+    if (!selectedHomework.id) {
+      toast.error('Homework ID is missing');
+      return;
+    }
+
+    const newCompletedStatus = !student.completed;
     const updatedStudents = selectedHomework.students.map(s =>
-      s.id === studentId ? { ...s, completed: !s.completed } : s
+      s.id === studentId ? { ...s, completed: newCompletedStatus } : s
     );
 
     const updatedHomework = { ...selectedHomework, students: updatedStudents };
     setSelectedHomework(updatedHomework);
     setHomework(homework.map(h => h.id === selectedHomework.id ? updatedHomework : h));
+    
+    // Save to backend
+    try {
+      await homeworkApi.updateCompletion(selectedHomework.id, {
+        studentId: student.uuid, // Use UUID
+        completed: newCompletedStatus
+      });
+    } catch (error: any) {
+      console.error('Error saving completion:', error);
+      // Extract error message from various possible locations
+      const errorMessage = error?.message || error?.error || 'Failed to save completion status';
+      toast.error(errorMessage);
+      // Revert on error
+      const revertedStudents = selectedHomework.students;
+      setSelectedHomework({ ...selectedHomework, students: revertedStudents });
+      setHomework(homework.map(h => h.id === selectedHomework.id ? selectedHomework : h));
+    }
   };
 
   const markAllComplete = async () => {
     if (!selectedHomework) return;
     
+    if (!selectedHomework.id) {
+      toast.error('Homework ID is missing');
+      return;
+    }
+
+    // Validate that all students have UUIDs
+    const studentsWithoutUuid = selectedHomework.students.filter(s => !s.uuid);
+    if (studentsWithoutUuid.length > 0) {
+      toast.error('Some students are missing UUIDs. Please refresh the page.');
+      return;
+    }
+    
     try {
-      // Mark homework as completed in backend
-      await homeworkApi.complete(selectedHomework.id.toString());
-      
       const updatedStudents = selectedHomework.students.map(s => ({ ...s, completed: true }));
+      
+      // Save all completions to backend using UUIDs
+      await homeworkApi.bulkUpdateCompletions(
+        selectedHomework.id,
+        updatedStudents.map(s => ({
+          studentId: s.uuid, // Use UUID, not the integer ID
+          completed: true
+        }))
+      );
+      
+      // Mark homework as completed in backend
+      await homeworkApi.complete(selectedHomework.id);
+      
       const updatedHomework = { ...selectedHomework, students: updatedStudents, status: "completed" as const };
       setSelectedHomework(updatedHomework);
       setHomework(homework.map(h => h.id === selectedHomework.id ? updatedHomework : h));
       toast.success("All students marked as complete");
     } catch (error: any) {
       console.error('Error completing homework:', error);
-      toast.error(error?.message || "Failed to mark homework as complete");
+      const errorMsg = error?.message || error?.error || "Failed to mark homework as complete";
+      toast.error(errorMsg);
     }
   };
 
@@ -443,9 +599,14 @@ export default function HomeworkModule() {
   );
 
   const studentFrequency: StudentFrequency[] = allStudents.map(student => {
-    const completedHomework = homework.filter(h => 
-      h.status !== "draft" && h.students.find(s => s.id === student.id)?.completed
-    );
+    // Match by UUID if available, otherwise by id
+    const completedHomework = homework.filter(h => {
+      if (h.status === "draft") return false;
+      const studentInHomework = h.students.find(s => 
+        (student.uuid && s.uuid === student.uuid) || s.id === student.id
+      );
+      return studentInHomework?.completed || false;
+    });
     const totalHomework = homework.filter(h => h.status !== "draft").length;
     const percentage = totalHomework > 0 ? Math.round((completedHomework.length / totalHomework) * 100) : 0;
 

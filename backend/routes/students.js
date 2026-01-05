@@ -47,6 +47,7 @@ router.get('/', authenticateToken, requireAdmin, async (req, res) => {
       photoUrl: s.photo_url,
       avatar: s.photo_url || '',
       status: s.status,
+      admissionNumber: s.admission_number || null,
       createdAt: s.created_at,
       submittedAt: s.created_at,
       registrationCode: s.registration_code || null,
@@ -84,6 +85,7 @@ router.get('/pending', authenticateToken, requireAdmin, async (req, res) => {
       parentEmail: s.parent_email,
       parentName: s.parent_name,
       status: s.status,
+      admissionNumber: s.admission_number || null,
       createdAt: s.created_at
     })));
   } catch (error) {
@@ -230,9 +232,44 @@ router.post('/:id/approve', authenticateToken, requireAdmin, async (req, res) =>
     const { id } = req.params;
     const schoolId = req.user.schoolId;
 
-    // Verify student belongs to admin's school
+    // First, ensure the admission_number column exists BEFORE trying to query it
+    try {
+      // Check if column exists by trying to select it
+      await db.query('SELECT admission_number FROM students LIMIT 1');
+    } catch (err) {
+      // Column doesn't exist, create it
+      if (err.message && err.message.includes("Unknown column 'admission_number'")) {
+        console.log('Creating admission_number column...');
+        try {
+          await db.query('ALTER TABLE students ADD COLUMN admission_number VARCHAR(50)');
+          console.log('✅ admission_number column created');
+        } catch (alterErr) {
+          console.error('Error creating admission_number column:', alterErr);
+          // If it still fails, throw the error
+          if (!alterErr.message || !alterErr.message.includes('Duplicate column name')) {
+            throw alterErr;
+          }
+        }
+        
+        // Try to add index
+        try {
+          await db.query('CREATE INDEX idx_admission_number ON students(admission_number)');
+          console.log('✅ admission_number index created');
+        } catch (indexErr) {
+          // Index might already exist, ignore
+          if (!indexErr.message || !indexErr.message.includes('Duplicate key name')) {
+            console.log('Note: Could not create index, may already exist');
+          }
+        }
+      } else {
+        // Some other error, rethrow it
+        throw err;
+      }
+    }
+
+    // Now verify student belongs to admin's school (column exists now)
     const [students] = await db.query(
-      'SELECT id FROM students WHERE id = ? AND school_id = ?',
+      'SELECT id, admission_number FROM students WHERE id = ? AND school_id = ?',
       [id, schoolId]
     );
 
@@ -240,14 +277,64 @@ router.post('/:id/approve', authenticateToken, requireAdmin, async (req, res) =>
       return res.status(404).json({ error: 'Student not found' });
     }
 
-    const [result] = await db.query("UPDATE students SET status = 'approved' WHERE id = ?", [id]);
+    // Generate admission number if not already exists
+    let admissionNumber = students[0].admission_number;
+    if (!admissionNumber) {
+      const currentYear = new Date().getFullYear();
+      // Use last 4 characters of UUID or generate sequential number
+      const studentIdSuffix = id.slice(-4).toUpperCase();
+      admissionNumber = `ADM${currentYear}${studentIdSuffix}`;
+      
+      // Ensure uniqueness - if exists, append number
+      let counter = 1;
+      let uniqueAdmissionNumber = admissionNumber;
+      while (true) {
+        try {
+          const [existing] = await db.query(
+            'SELECT id FROM students WHERE admission_number = ?',
+            [uniqueAdmissionNumber]
+          );
+          if (existing.length === 0) {
+            break;
+          }
+          uniqueAdmissionNumber = `${admissionNumber}${counter}`;
+          counter++;
+        } catch (err) {
+          // If column doesn't exist in query, break (shouldn't happen now)
+          if (err.message && err.message.includes("Unknown column 'admission_number'")) {
+            break;
+          }
+          throw err;
+        }
+      }
+      admissionNumber = uniqueAdmissionNumber;
+    }
 
-    console.log('✅ Student approved:', { id, affectedRows: result.affectedRows });
+    // Now update with admission number
+    const [result] = await db.query(
+      "UPDATE students SET status = 'approved', admission_number = ? WHERE id = ?", 
+      [admissionNumber, id]
+    );
 
-    res.json({ success: true });
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Student not found or already approved' });
+    }
+
+    console.log('✅ Student approved:', { id, admissionNumber, affectedRows: result.affectedRows });
+
+    res.json({ success: true, admissionNumber });
   } catch (error) {
     console.error('Approve student error:', error);
-    res.status(500).json({ error: 'Failed to approve student' });
+    console.error('Error details:', {
+      message: error.message,
+      code: error.code,
+      sqlState: error.sqlState,
+      sqlMessage: error.sqlMessage
+    });
+    res.status(500).json({ 
+      error: 'Failed to approve student',
+      details: error.message 
+    });
   }
 });
 

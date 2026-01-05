@@ -130,4 +130,74 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
   }
 });
 
+// Update class teacher (School Admin only)
+router.put('/:id/teacher', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { teacherId } = req.body;
+
+    if (!teacherId) {
+      return res.status(400).json({ error: 'Teacher ID is required' });
+    }
+
+    const schoolId = req.user.schoolId;
+    if (!schoolId) {
+      return res.status(400).json({ error: 'School ID not found' });
+    }
+
+    // Verify class belongs to school
+    const [classes] = await db.query(
+      'SELECT id FROM classes WHERE id = ? AND school_id = ?',
+      [id, schoolId]
+    );
+
+    if (classes.length === 0) {
+      return res.status(404).json({ error: 'Class not found or access denied' });
+    }
+
+    // Verify teacher belongs to school
+    const [teachers] = await db.query(
+      'SELECT id FROM teachers WHERE id = ? AND school_id = ?',
+      [teacherId, schoolId]
+    );
+
+    if (teachers.length === 0) {
+      return res.status(404).json({ error: 'Teacher not found or access denied' });
+    }
+
+    // Get old class teacher to clear their class_id
+    const [oldClass] = await db.query(
+      'SELECT class_teacher_id FROM classes WHERE id = ?',
+      [id]
+    );
+
+    if (oldClass.length > 0 && oldClass[0].class_teacher_id) {
+      // Clear old teacher's class_id
+      await db.query(
+        'UPDATE teachers SET class_id = NULL WHERE id = ?',
+        [oldClass[0].class_teacher_id]
+      );
+    }
+
+    // Update class teacher
+    await db.query(
+      'UPDATE classes SET class_teacher_id = ? WHERE id = ?',
+      [teacherId, id]
+    );
+
+    // Update teacher's class_id
+    await db.query(
+      'UPDATE teachers SET class_id = ? WHERE id = ?',
+      [id, teacherId]
+    );
+
+    console.log('✅ Class teacher updated:', { classId: id, teacherId });
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Update class teacher error:', error);
+    res.status(500).json({ error: 'Failed to update class teacher' });
+  }
+});
+
 module.exports = router;
