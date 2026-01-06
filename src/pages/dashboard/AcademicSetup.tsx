@@ -32,7 +32,21 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Edit, Users, BookOpen, Calendar, ChevronRight, GraduationCap, UserCheck } from "lucide-react";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import { Plus, Edit, Users, BookOpen, Calendar, ChevronRight, GraduationCap, UserCheck, Check, ChevronsUpDown } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 export default function AcademicSetup() {
   const { user } = useAuth();
@@ -59,9 +73,13 @@ export default function AcademicSetup() {
   
   // New teacher form state
   const [newTeacher, setNewTeacher] = useState({
-    name: "",
+    teacherId: "",
     subjects: [] as string[],
   });
+
+  // Teacher search state
+  const [teacherSearchOpen, setTeacherSearchOpen] = useState(false);
+  const [teacherSearchQuery, setTeacherSearchQuery] = useState("");
 
   // New subject state
   const [newSubject, setNewSubject] = useState("");
@@ -279,75 +297,60 @@ export default function AcademicSetup() {
   };
 
   const handleAddTeacher = async () => {
-    if (!newTeacher.name.trim() || newTeacher.subjects.length === 0) {
+    if (!newTeacher.teacherId || newTeacher.subjects.length === 0) {
       toast({
         title: "Validation Error",
-        description: "Please enter teacher name and select at least one subject",
+        description: "Please select a teacher and at least one subject",
         variant: "destructive",
       });
       return;
     }
 
     try {
-      // Generate base username from name (lowercase, replace spaces with dots)
-      let baseUsername = newTeacher.name.trim().toLowerCase().replace(/\s+/g, '.');
-      // Add "teacher." prefix to avoid conflicts with students or other users
-      let username = `teacher.${baseUsername}`;
-      
-      // Check if username already exists and make it unique
-      let counter = 1;
-      const existingTeachers = await teachersApi.getAll();
-      const existingUsernames = new Set(existingTeachers.map((t: any) => t.username || ''));
-      
-      while (existingUsernames.has(username)) {
-        username = `teacher.${baseUsername}${counter}`;
-        counter++;
+      // Get the selected teacher to merge existing subjects
+      const selectedTeacher = teachers.find(t => t.id === newTeacher.teacherId);
+      if (!selectedTeacher) {
+        toast({
+          title: "Error",
+          description: "Selected teacher not found",
+          variant: "destructive",
+        });
+        return;
       }
 
-      // Generate a default password (can be changed later)
-      const defaultPassword = `Teacher@${Date.now().toString().slice(-6)}`;
+      // Merge existing subjects with new ones (avoid duplicates)
+      const existingSubjects = selectedTeacher.subjects || [];
+      const allSubjects = [...new Set([...existingSubjects, ...newTeacher.subjects])];
 
-      // Call API to create teacher
-      await teachersApi.create({
-        username: username,
-        password: defaultPassword,
-        name: newTeacher.name.trim(),
-        subjects: newTeacher.subjects,
+      // Update teacher with new subjects
+      await teachersApi.update(newTeacher.teacherId, {
+        subjects: allSubjects,
       });
 
       toast({
         title: "Success",
-        description: `Teacher created successfully. Username: ${username}, Default password has been set.`,
+        description: `Subjects assigned to ${selectedTeacher.name} successfully`,
       });
 
       // Reset form and close dialog
-      setNewTeacher({ name: "", subjects: [] });
+      setNewTeacher({ teacherId: "", subjects: [] });
+      setTeacherSearchQuery("");
+      setTeacherSearchOpen(false);
       setIsAddTeacherOpen(false);
 
-      // Reload teachers to show the new teacher
+      // Reload teachers to show updated data
       try {
         const teachersData = await teachersApi.getAll();
         setTeachers(teachersData || []);
       } catch (reloadError) {
         console.error('Error reloading teachers:', reloadError);
-        // Don't show error to user, just log it - teacher was created successfully
       }
     } catch (error: any) {
-      console.error('Error creating teacher:', error);
-      
-      // Show more specific error message
-      let errorMessage = "Failed to create teacher. Please try again.";
-      if (error?.message) {
-        if (error.message.includes('Username already exists')) {
-          errorMessage = "A teacher with a similar username already exists. Please try a different name or contact support.";
-        } else {
-          errorMessage = error.message;
-        }
-      }
+      console.error('Error updating teacher:', error);
       
       toast({
         title: "Error",
-        description: errorMessage,
+        description: error?.message || "Failed to assign subjects. Please try again.",
         variant: "destructive",
       });
     }
@@ -1040,7 +1043,14 @@ export default function AcademicSetup() {
                 <p className="text-sm text-muted-foreground">Add teachers and assign subjects they teach</p>
               </div>
               {isAdmin && (
-                <Dialog open={isAddTeacherOpen} onOpenChange={setIsAddTeacherOpen}>
+                <Dialog open={isAddTeacherOpen} onOpenChange={(open) => {
+                  setIsAddTeacherOpen(open);
+                  if (!open) {
+                    setNewTeacher({ teacherId: "", subjects: [] });
+                    setTeacherSearchQuery("");
+                    setTeacherSearchOpen(false);
+                  }
+                }}>
                   <DialogTrigger asChild>
                     <Button size="sm">
                       <Plus className="w-4 h-4 mr-2" />
@@ -1054,11 +1064,61 @@ export default function AcademicSetup() {
                     <div className="space-y-4 py-4">
                       <div className="space-y-2">
                         <Label>Teacher Name *</Label>
-                        <Input 
-                          placeholder="e.g., Mr. John Doe" 
-                          value={newTeacher.name}
-                          onChange={(e) => setNewTeacher(prev => ({ ...prev, name: e.target.value }))}
-                        />
+                        <Popover open={teacherSearchOpen} onOpenChange={setTeacherSearchOpen}>
+                          <PopoverTrigger asChild>
+                            <Button
+                              variant="outline"
+                              role="combobox"
+                              aria-expanded={teacherSearchOpen}
+                              className="w-full justify-between"
+                            >
+                              {newTeacher.teacherId
+                                ? (() => {
+                                    const selectedTeacher = teachers.find((t) => t.id === newTeacher.teacherId);
+                                    return selectedTeacher ? selectedTeacher.name : "Select teacher...";
+                                  })()
+                                : "Select teacher..."}
+                              <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-[400px] p-0" align="start">
+                            <Command>
+                              <CommandInput 
+                                placeholder="Search teachers by name..." 
+                                value={teacherSearchQuery}
+                                onValueChange={setTeacherSearchQuery}
+                              />
+                              <CommandList>
+                                <CommandEmpty>No teacher found.</CommandEmpty>
+                                <CommandGroup>
+                                  {teachers
+                                    .filter((teacher) =>
+                                      teacher.name.toLowerCase().includes(teacherSearchQuery.toLowerCase())
+                                    )
+                                    .map((teacher) => (
+                                      <CommandItem
+                                        key={teacher.id}
+                                        value={teacher.name}
+                                        onSelect={() => {
+                                          setNewTeacher(prev => ({ ...prev, teacherId: teacher.id }));
+                                          setTeacherSearchOpen(false);
+                                          setTeacherSearchQuery("");
+                                        }}
+                                      >
+                                        <Check
+                                          className={cn(
+                                            "mr-2 h-4 w-4",
+                                            newTeacher.teacherId === teacher.id ? "opacity-100" : "opacity-0"
+                                          )}
+                                        />
+                                        <span className="font-medium">{teacher.name}</span>
+                                      </CommandItem>
+                                    ))}
+                                </CommandGroup>
+                              </CommandList>
+                            </Command>
+                          </PopoverContent>
+                        </Popover>
                       </div>
                       <div className="space-y-2">
                         <Label>Subjects Teaching *</Label>
@@ -1104,7 +1164,7 @@ export default function AcademicSetup() {
                       <Button 
                         className="w-full" 
                         onClick={handleAddTeacher}
-                        disabled={!newTeacher.name.trim() || newTeacher.subjects.length === 0}
+                        disabled={!newTeacher.teacherId || newTeacher.subjects.length === 0}
                       >
                         <GraduationCap className="w-4 h-4 mr-2" />
                         Add Teacher

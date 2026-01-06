@@ -169,13 +169,14 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
 router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, email, phone, subjects, classId } = req.body;
+    const { name, username, email, phone, subjects, classId, password } = req.body;
+    const schoolId = req.user.schoolId;
 
     // Verify teacher belongs to admin's school
     if (req.user.role === 'admin') {
       const [teachers] = await db.query(
         'SELECT id FROM teachers WHERE id = ? AND school_id = ?',
-        [id, req.user.schoolId]
+        [id, schoolId]
       );
       if (teachers.length === 0) {
         return res.status(404).json({ error: 'Teacher not found' });
@@ -186,10 +187,28 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
     const values = [];
 
     if (name) { updates.push('name = ?'); values.push(name); }
+    if (username) {
+      // Check if username already exists for another teacher in the same school
+      const [existing] = await db.query(
+        'SELECT id FROM teachers WHERE username = ? AND school_id = ? AND id != ?',
+        [username, schoolId, id]
+      );
+      if (existing.length > 0) {
+        return res.status(400).json({ error: 'Username already exists in this school' });
+      }
+      updates.push('username = ?'); 
+      values.push(username);
+    }
     if (email !== undefined) { updates.push('email = ?'); values.push(email || null); }
     if (phone !== undefined) { updates.push('phone = ?'); values.push(phone || null); }
     if (subjects) { updates.push('subjects = ?'); values.push(JSON.stringify(subjects)); }
     if (classId !== undefined) { updates.push('class_id = ?'); values.push(classId || null); }
+    if (password) {
+      const bcrypt = require('bcryptjs');
+      const hashedPassword = await bcrypt.hash(password, 10);
+      updates.push('password = ?');
+      values.push(hashedPassword);
+    }
 
     if (updates.length === 0) {
       return res.status(400).json({ error: 'No fields to update' });

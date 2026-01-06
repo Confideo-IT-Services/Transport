@@ -335,6 +335,8 @@ function StudentProfileView({
 
 const defaultFields: FieldConfig[] = [
   { id: "studentName", fieldName: "studentName", label: "Student Name", fieldType: "text", mandatory: true, enabled: true },
+  { id: "admissionNumber", fieldName: "admissionNumber", label: "Admission Number", fieldType: "text", mandatory: true, enabled: true },
+  { id: "rollNo", fieldName: "rollNo", label: "Roll Number", fieldType: "text", mandatory: false, enabled: true },
   { id: "photo", fieldName: "photo", label: "Student Photo", fieldType: "file", mandatory: true, enabled: true },
   { id: "dateOfBirth", fieldName: "dateOfBirth", label: "Date of Birth", fieldType: "date", mandatory: true, enabled: true },
   { id: "gender", fieldName: "gender", label: "Gender", fieldType: "select", mandatory: true, enabled: true, options: ["Male", "Female", "Other"] },

@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { UnifiedLayout } from "@/components/layout/UnifiedLayout";
 import { useAuth } from "@/contexts/AuthContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -26,7 +27,15 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
+  DialogFooter,
+  DialogDescription,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { 
   IndianRupee, 
@@ -36,58 +45,767 @@ import {
   AlertCircle,
   Bell,
   Search,
-  Eye
+  Eye,
+  Loader2,
+  Edit,
+  X,
+  MoreVertical
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-
-const feeCategories = [
-  { id: 1, name: "Tuition Fee", amount: 15000, frequency: "Quarterly" },
-  { id: 2, name: "Transport Fee", amount: 3000, frequency: "Monthly" },
-  { id: 3, name: "Lab Fee", amount: 2000, frequency: "Yearly" },
-  { id: 4, name: "Sports Fee", amount: 1500, frequency: "Yearly" },
-  { id: 5, name: "Library Fee", amount: 500, frequency: "Yearly" },
-];
-
-const classFeeStructure = [
-  { class: "Class 1-2", tuition: 12000, transport: 2500, lab: 0, total: 14500 },
-  { class: "Class 3-5", tuition: 15000, transport: 3000, lab: 2000, total: 20000 },
-  { class: "Class 6-8", tuition: 18000, transport: 3000, lab: 3000, total: 24000 },
-  { class: "Class 9-10", tuition: 22000, transport: 3500, lab: 4000, total: 29500 },
-];
-
-const studentFees = [
-  { id: 1, name: "Aarav Sharma", rollNo: 1, class: "5A", totalFee: 20000, paid: 20000, pending: 0, status: "paid" },
-  { id: 2, name: "Ananya Patel", rollNo: 2, class: "5A", totalFee: 20000, paid: 15000, pending: 5000, status: "partial" },
-  { id: 3, name: "Arjun Kumar", rollNo: 3, class: "5A", totalFee: 20000, paid: 0, pending: 20000, status: "unpaid" },
-  { id: 4, name: "Diya Singh", rollNo: 4, class: "5A", totalFee: 20000, paid: 20000, pending: 0, status: "paid" },
-  { id: 5, name: "Ishaan Gupta", rollNo: 5, class: "5A", totalFee: 20000, paid: 10000, pending: 10000, status: "partial" },
-  { id: 6, name: "Kavya Reddy", rollNo: 6, class: "5A", totalFee: 20000, paid: 20000, pending: 0, status: "paid" },
-  { id: 7, name: "Lakshmi Nair", rollNo: 7, class: "5A", totalFee: 20000, paid: 5000, pending: 15000, status: "partial" },
-  { id: 8, name: "Manav Joshi", rollNo: 8, class: "5A", totalFee: 20000, paid: 0, pending: 20000, status: "unpaid" },
-];
+import { feesApi, classesApi, academicYearsApi } from "@/lib/api";
+import { format } from "date-fns";
 
 export default function FeesModule() {
   const { user } = useAuth();
   const { toast } = useToast();
   const isAdmin = user?.role === "admin";
-  const [selectedClass, setSelectedClass] = useState("5A");
+  
+  // State
+  const [loading, setLoading] = useState(true);
+  const [studentFees, setStudentFees] = useState<any[]>([]);
+  const [feeCategories, setFeeCategories] = useState<any[]>([]);
+  const [feeStructure, setFeeStructure] = useState<any[]>([]);
+  const [classes, setClasses] = useState<any[]>([]);
+  const [academicYears, setAcademicYears] = useState<any[]>([]);
+  const [summary, setSummary] = useState({
+    totalCollected: 0,
+    totalPending: 0,
+    fullyPaidCount: 0,
+    unpaidCount: 0
+  });
+  
+  // Filters
+  const [selectedClassId, setSelectedClassId] = useState<string>("all");
   const [searchTerm, setSearchTerm] = useState("");
 
-  const filteredStudents = studentFees.filter(s => 
-    s.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    s.rollNo.toString().includes(searchTerm)
-  );
+  // Dialog states
+  const [isAddCategoryOpen, setIsAddCategoryOpen] = useState(false);
+  const [isEditCategoryOpen, setIsEditCategoryOpen] = useState(false);
+  const [isViewStudentFeeOpen, setIsViewStudentFeeOpen] = useState(false);
+  const [isEditStructureOpen, setIsEditStructureOpen] = useState(false);
+  const [isRecordPaymentOpen, setIsRecordPaymentOpen] = useState(false);
+  const [isCreateFeeOpen, setIsCreateFeeOpen] = useState(false);
+  const [isEditFeeOpen, setIsEditFeeOpen] = useState(false);
+  const [editingStudentFee, setEditingStudentFee] = useState<any>(null);
+  
+  // Form states
+  const [newCategory, setNewCategory] = useState({
+    name: "",
+    amount: "",
+    frequency: "monthly" as "monthly" | "quarterly" | "yearly",
+    description: ""
+  });
+  const [editingCategory, setEditingCategory] = useState<any>(null);
+  const [selectedStudentFee, setSelectedStudentFee] = useState<any>(null);
+  const [studentFeeDetails, setStudentFeeDetails] = useState<any>(null);
+  const [selectedStudentForFee, setSelectedStudentForFee] = useState<any>(null);
+  const [newPayment, setNewPayment] = useState({
+    component: "",
+    amount: "",
+    paymentDate: format(new Date(), "yyyy-MM-dd"),
+    paymentMethod: "cash" as "cash" | "cheque" | "online" | "bank_transfer",
+    transactionId: "",
+    receiptNumber: "",
+    remarks: ""
+  });
+  const [feeStructureForStudent, setFeeStructureForStudent] = useState<any>(null);
+  const [isBreakdownOpen, setIsBreakdownOpen] = useState(false);
+  const [breakdownData, setBreakdownData] = useState<any>(null);
+  const [newStudentFee, setNewStudentFee] = useState({
+    academicYearId: "",
+    frequency: "yearly" as "yearly" | "quarterly" | "monthly",
+    tuitionFee: "",
+    transportFee: "",
+    labFee: "",
+    otherComponents: [] as Array<{ id: string; name: string; amount: string }>,
+    dueDate: format(new Date(), "yyyy-MM-dd")
+  });
+  const [editingStructure, setEditingStructure] = useState<any>(null);
+  const [structureForm, setStructureForm] = useState({
+    classId: "",
+    academicYearId: "",
+    frequency: "yearly" as "yearly" | "quarterly" | "monthly",
+    tuitionFee: "",
+    transportFee: "",
+    labFee: "",
+    otherComponents: [] as Array<{ id: string; name: string; amount: string }>
+  });
 
-  const totalCollected = studentFees.reduce((sum, s) => sum + s.paid, 0);
-  const totalPending = studentFees.reduce((sum, s) => sum + s.pending, 0);
-  const paidCount = studentFees.filter(s => s.status === "paid").length;
-  const unpaidCount = studentFees.filter(s => s.status === "unpaid").length;
+  // Load classes and academic years
+  useEffect(() => {
+    const loadInitialData = async () => {
+      try {
+        const [classesData, yearsData] = await Promise.all([
+          classesApi.getAll(),
+          academicYearsApi.getAll().catch(() => [])
+        ]);
+        setClasses(classesData || []);
+        setAcademicYears(yearsData || []);
+      } catch (error) {
+        console.error('Error loading initial data:', error);
+      }
+    };
+    loadInitialData();
+  }, []);
 
-  const sendReminder = (studentName: string) => {
+  // Load all data
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        setLoading(true);
+        const [feesData, categoriesData, structureData, summaryData] = await Promise.all([
+          feesApi.getStudentFees(selectedClassId !== "all" ? selectedClassId : undefined, searchTerm || undefined),
+          feesApi.getCategories(),
+          feesApi.getFeeStructure(),
+          feesApi.getSummary()
+        ]);
+        
+        setStudentFees(feesData || []);
+        setFeeCategories(categoriesData || []);
+        setFeeStructure(structureData || []);
+        setSummary(summaryData || {
+          totalCollected: 0,
+          totalPending: 0,
+          fullyPaidCount: 0,
+          unpaidCount: 0
+        });
+      } catch (error: any) {
+        console.error('Error loading fees data:', error);
+        toast({
+          title: "Error",
+          description: error?.message || "Failed to load fees data",
+          variant: "destructive"
+        });
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadData();
+  }, [selectedClassId, searchTerm, toast]);
+
+  // Filter students
+  const filteredStudents = studentFees.filter(s => {
+    if (selectedClassId !== "all" && s.classId !== selectedClassId) return false;
+    if (searchTerm) {
+      const search = searchTerm.toLowerCase();
+      return (
+        s.studentName?.toLowerCase().includes(search) ||
+        s.rollNo?.toString().includes(search)
+      );
+    }
+    return true;
+  });
+
+  // Handlers
+  const handleAddCategory = async () => {
+    try {
+      if (!newCategory.name || !newCategory.amount) {
+        toast({
+          title: "Error",
+          description: "Please fill in all required fields",
+          variant: "destructive"
+        });
+        return;
+      }
+
+      await feesApi.createCategory({
+        name: newCategory.name,
+        amount: parseFloat(newCategory.amount),
+        frequency: newCategory.frequency,
+        description: newCategory.description || undefined
+      });
+
+      toast({
+        title: "Success",
+        description: "Fee category created successfully"
+      });
+
+      setIsAddCategoryOpen(false);
+      setNewCategory({ name: "", amount: "", frequency: "monthly", description: "" });
+      
+      // Reload categories
+      const categories = await feesApi.getCategories();
+      setFeeCategories(categories || []);
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to create category",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const handleEditCategory = async () => {
+    try {
+      if (!editingCategory || !editingCategory.name || !editingCategory.amount) {
+        toast({
+          title: "Error",
+          description: "Please fill in all required fields",
+          variant: "destructive"
+        });
+        return;
+      }
+
+      await feesApi.updateCategory(editingCategory.id, {
+        name: editingCategory.name,
+        amount: parseFloat(editingCategory.amount),
+        frequency: editingCategory.frequency,
+        description: editingCategory.description || undefined,
+        isActive: editingCategory.isActive !== false
+      });
+
+      toast({
+        title: "Success",
+        description: "Fee category updated successfully"
+      });
+
+      setIsEditCategoryOpen(false);
+      setEditingCategory(null);
+      
+      // Reload categories
+      const categories = await feesApi.getCategories();
+      setFeeCategories(categories || []);
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to update category",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const handleDeleteCategory = async (categoryId: string) => {
+    try {
+      await feesApi.deleteCategory(categoryId);
+      toast({
+        title: "Success",
+        description: "Fee category deleted successfully"
+      });
+      
+      // Reload categories
+      const categories = await feesApi.getCategories();
+      setFeeCategories(categories || []);
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to delete category",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const handleViewStudentFee = async (studentFee: any) => {
+    try {
+      setSelectedStudentFee(studentFee);
+      setIsViewStudentFeeOpen(true);
+      
+      const details = await feesApi.getStudentFeeById(studentFee.studentId);
+      setStudentFeeDetails(details);
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to load student fee details",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const handleOpenRecordPayment = async (studentFee: any) => {
+    setSelectedStudentFee(studentFee);
+    setIsRecordPaymentOpen(true);
+    
+    // Fetch fee structure for this student's class
+    try {
+      const structures = await feesApi.getFeeStructure();
+      const structure = structures.find((s: any) => s.classId === studentFee.classId);
+      setFeeStructureForStudent(structure);
+    } catch (error) {
+      console.error('Error fetching fee structure:', error);
+    }
+  };
+
+  const handleRecordPayment = async () => {
+    try {
+      if (!selectedStudentFee || !newPayment.amount || !newPayment.component) {
+        toast({
+          title: "Error",
+          description: "Please fill in all required fields including component",
+          variant: "destructive"
+        });
+        return;
+      }
+
+      await feesApi.recordPayment({
+        studentFeeId: selectedStudentFee.id,
+        amount: parseFloat(newPayment.amount),
+        paymentDate: newPayment.paymentDate,
+        paymentMethod: newPayment.paymentMethod,
+        component: newPayment.component,
+        transactionId: newPayment.transactionId || undefined,
+        receiptNumber: newPayment.receiptNumber || undefined,
+        remarks: newPayment.remarks || undefined
+      });
+
+      toast({
+        title: "Success",
+        description: "Payment recorded successfully"
+      });
+
+      setIsRecordPaymentOpen(false);
+      setFeeStructureForStudent(null);
+      setNewPayment({
+        component: "",
+        amount: "",
+        paymentDate: format(new Date(), "yyyy-MM-dd"),
+        paymentMethod: "cash",
+        transactionId: "",
+        receiptNumber: "",
+        remarks: ""
+      });
+      
+      // Reload data
+      const [feesData, summaryData] = await Promise.all([
+        feesApi.getStudentFees(selectedClassId !== "all" ? selectedClassId : undefined, searchTerm || undefined),
+        feesApi.getSummary()
+      ]);
+      setStudentFees(feesData || []);
+      setSummary(summaryData || summary);
+      
+      // Reload student fee details if dialog is open
+      if (selectedStudentFee) {
+        const details = await feesApi.getStudentFeeById(selectedStudentFee.studentId);
+        setStudentFeeDetails(details);
+      }
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to record payment",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const handleSendReminder = async (studentFee: any) => {
+    try {
+      // Fetch reminder data from backend
+      const result = await feesApi.sendReminder(studentFee.studentId);
+      
+      if (!result.parentPhone) {
+        toast({
+          title: "Error",
+          description: "Parent phone number is not available for this student",
+          variant: "destructive"
+        });
+        return;
+      }
+
+      // Generate WhatsApp message
+      const message = `Dear Parent,
+
+This is a reminder regarding fee payment for your child *${result.studentName}* (${result.className}).
+
+*Pending Amount:* ₹${result.pendingAmount.toLocaleString('en-IN')}
+
+Please clear the dues at the earliest to avoid any inconvenience.
+
+Thank you,
+${result.schoolName}`;
+
+      // Create WhatsApp Web URL
+      const phoneNumber = result.parentPhone.replace(/\D/g, ''); // Remove all non-digits
+      const encodedMessage = encodeURIComponent(message);
+      const whatsappUrl = `https://wa.me/91${phoneNumber}?text=${encodedMessage}`;
+      
+      // Open WhatsApp Web
+      window.open(whatsappUrl, "_blank");
+      
+      toast({
+        title: "WhatsApp Opened",
+        description: `Sending fee reminder to ${result.studentName}'s parent`
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to send reminder",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const handleViewBreakdown = async (studentFee: any, type: 'paid' | 'pending') => {
+    try {
+      if (!studentFee.hasFeeRecord) {
+        toast({
+          title: "Info",
+          description: "No fee record found for this student",
+          variant: "default"
+        });
+        return;
+      }
+
+      const breakdown = await feesApi.getComponentBreakdown(studentFee.studentId);
+      setBreakdownData({ ...breakdown, type });
+      setSelectedStudentFee(studentFee);
+      setIsBreakdownOpen(true);
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to load breakdown",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const handleExportReport = () => {
     toast({
-      title: "Reminder Sent",
-      description: `Fee reminder sent to ${studentName}'s parents.`,
+      title: "Coming Soon",
+      description: "Export functionality will be available soon"
     });
+  };
+
+  // Calculate total fee from all components
+  const calculateTotalFee = () => {
+    const tuition = parseFloat(structureForm.tuitionFee) || 0;
+    const transport = parseFloat(structureForm.transportFee) || 0;
+    const lab = parseFloat(structureForm.labFee) || 0;
+    const other = structureForm.otherComponents.reduce((sum, comp) => {
+      return sum + (parseFloat(comp.amount) || 0);
+    }, 0);
+    return tuition + transport + lab + other;
+  };
+
+  // Calculate total fee for student fee form
+  const calculateStudentFeeTotal = () => {
+    const tuition = parseFloat(newStudentFee.tuitionFee) || 0;
+    const transport = parseFloat(newStudentFee.transportFee) || 0;
+    const lab = parseFloat(newStudentFee.labFee) || 0;
+    const other = newStudentFee.otherComponents.reduce((sum, comp) => {
+      return sum + (parseFloat(comp.amount) || 0);
+    }, 0);
+    return tuition + transport + lab + other;
+  };
+
+  // Add new fee component
+  const handleAddComponent = () => {
+    const newId = `comp-${Date.now()}`;
+    setStructureForm({
+      ...structureForm,
+      otherComponents: [
+        ...structureForm.otherComponents,
+        { id: newId, name: "", amount: "" }
+      ]
+    });
+  };
+
+  // Remove fee component
+  const handleRemoveComponent = (id: string) => {
+    setStructureForm({
+      ...structureForm,
+      otherComponents: structureForm.otherComponents.filter(comp => comp.id !== id)
+    });
+  };
+
+  const handleCreateStudentFee = async () => {
+    try {
+      if (!selectedStudentForFee || !newStudentFee.tuitionFee) {
+        toast({
+          title: "Error",
+          description: "Please enter at least tuition fee",
+          variant: "destructive"
+        });
+        return;
+      }
+
+      const totalFee = calculateStudentFeeTotal();
+      
+      // Format other components
+      const components = newStudentFee.otherComponents
+        .filter(comp => comp.name && comp.amount)
+        .map(comp => ({
+          id: comp.id,
+          name: comp.name,
+          amount: parseFloat(comp.amount) || 0
+        }));
+
+      // Store frequency in metadata within otherFees
+      const otherFees = components.length > 0 || newStudentFee.frequency ? {
+        components: components,
+        _metadata: {
+          frequency: newStudentFee.frequency
+        }
+      } : undefined;
+
+      if (editingStudentFee) {
+        // Update existing fee
+        // Get the student fee ID - it should be in feeId, id, or fee_id
+        const studentFeeId = editingStudentFee.feeId || editingStudentFee.id || editingStudentFee.fee_id;
+        if (!studentFeeId) {
+          toast({
+            title: "Error",
+            description: "Student fee ID not found. Please try again.",
+            variant: "destructive"
+          });
+          return;
+        }
+        
+        await feesApi.updateStudentFee(studentFeeId, {
+          totalFee: totalFee,
+          tuitionFee: parseFloat(newStudentFee.tuitionFee) || 0,
+          transportFee: parseFloat(newStudentFee.transportFee) || 0,
+          labFee: parseFloat(newStudentFee.labFee) || 0,
+          otherFees: otherFees,
+          frequency: newStudentFee.frequency,
+          dueDate: newStudentFee.dueDate || undefined
+        });
+
+        toast({
+          title: "Success",
+          description: "Student fee updated successfully"
+        });
+      } else {
+        // Create new fee
+        const result = await feesApi.createStudentFee({
+          studentId: selectedStudentForFee.studentId,
+          classId: selectedStudentForFee.classId,
+          academicYearId: newStudentFee.academicYearId || undefined,
+          totalFee: totalFee,
+          tuitionFee: parseFloat(newStudentFee.tuitionFee) || 0,
+          transportFee: parseFloat(newStudentFee.transportFee) || 0,
+          labFee: parseFloat(newStudentFee.labFee) || 0,
+          otherFees: otherFees,
+          frequency: newStudentFee.frequency,
+          dueDate: newStudentFee.dueDate || undefined
+        });
+
+        toast({
+          title: "Success",
+          description: result.updated ? "Student fee updated successfully" : "Student fee created successfully"
+        });
+      }
+
+      setIsCreateFeeOpen(false);
+      setIsEditFeeOpen(false);
+      setSelectedStudentForFee(null);
+      setEditingStudentFee(null);
+      setNewStudentFee({
+        academicYearId: "",
+        frequency: "yearly",
+        tuitionFee: "",
+        transportFee: "",
+        labFee: "",
+        otherComponents: [],
+        dueDate: format(new Date(), "yyyy-MM-dd")
+      });
+      
+      // Reload data
+      const feesData = await feesApi.getStudentFees(
+        selectedClassId !== "all" ? selectedClassId : undefined, 
+        searchTerm || undefined
+      );
+      setStudentFees(feesData || []);
+      
+      // Reload summary
+      const summaryData = await feesApi.getSummary();
+      setSummary(summaryData || summary);
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to create student fee",
+        variant: "destructive"
+      });
+    }
+  };
+
+
+  const handleOpenEditStructure = (structure?: any) => {
+    if (structure) {
+      // Editing existing structure
+      setEditingStructure(structure);
+      
+      // Parse otherFees if it exists
+      let otherComponents: Array<{ id: string; name: string; amount: string }> = [];
+      let frequency: "yearly" | "quarterly" | "monthly" = "yearly";
+      
+      if (structure.otherFees) {
+        try {
+          const parsed = typeof structure.otherFees === 'string' 
+            ? JSON.parse(structure.otherFees) 
+            : structure.otherFees;
+          
+          // Handle new structure with metadata
+          if (parsed && parsed.components && Array.isArray(parsed.components)) {
+            otherComponents = parsed.components.map((item: any, index: number) => ({
+              id: item.id || `comp-${index}-${Date.now()}`,
+              name: item.name || "",
+              amount: item.amount?.toString() || ""
+            }));
+            // Extract frequency from metadata
+            if (parsed._metadata && parsed._metadata.frequency) {
+              frequency = parsed._metadata.frequency;
+            }
+          } 
+          // Handle old structure (direct array)
+          else if (Array.isArray(parsed)) {
+            otherComponents = parsed.map((item: any, index: number) => ({
+              id: item.id || `comp-${index}-${Date.now()}`,
+              name: item.name || "",
+              amount: item.amount?.toString() || ""
+            }));
+          }
+        } catch (e) {
+          console.error('Error parsing otherFees:', e);
+        }
+      }
+      
+      // Use frequency from structure if available
+      if (structure.frequency) {
+        frequency = structure.frequency;
+      }
+      
+      setStructureForm({
+        classId: structure.classId || "",
+        academicYearId: structure.academicYearId || "",
+        frequency: frequency,
+        tuitionFee: structure.tuitionFee?.toString() || "",
+        transportFee: structure.transportFee?.toString() || "",
+        labFee: structure.labFee?.toString() || "",
+        otherComponents
+      });
+    } else {
+      // Creating new structure
+      setEditingStructure(null);
+      setStructureForm({
+        classId: "",
+        academicYearId: "",
+        tuitionFee: "",
+        transportFee: "",
+        labFee: "",
+        otherComponents: []
+      });
+    }
+    setIsEditStructureOpen(true);
+  };
+
+  const handleSaveStructure = async () => {
+    try {
+      if (!structureForm.classId || !structureForm.tuitionFee) {
+        toast({
+          title: "Error",
+          description: "Please select a class and enter at least tuition fee",
+          variant: "destructive"
+        });
+        return;
+      }
+
+      const totalFee = calculateTotalFee();
+      
+      if (totalFee <= 0) {
+        toast({
+          title: "Error",
+          description: "Total fee must be greater than 0. Please enter at least one fee component.",
+          variant: "destructive"
+        });
+        return;
+      }
+
+      // Format other components for storage with metadata
+      const components = structureForm.otherComponents
+        .filter(comp => comp.name && comp.amount)
+        .map(comp => ({
+          id: comp.id,
+          name: comp.name,
+          amount: parseFloat(comp.amount) || 0
+        }));
+
+      // Store frequency in metadata within otherFees
+      const otherFees = components.length > 0 || structureForm.frequency ? {
+        components: components,
+        _metadata: {
+          frequency: structureForm.frequency
+        }
+      } : undefined;
+
+      await feesApi.updateFeeStructure({
+        classId: structureForm.classId,
+        academicYearId: structureForm.academicYearId || undefined,
+        totalFee: totalFee,
+        tuitionFee: parseFloat(structureForm.tuitionFee) || 0,
+        transportFee: parseFloat(structureForm.transportFee) || 0,
+        labFee: parseFloat(structureForm.labFee) || 0,
+        otherFees: otherFees,
+        frequency: structureForm.frequency
+      });
+
+      toast({
+        title: "Success",
+        description: editingStructure 
+          ? "Fee structure updated successfully" 
+          : "Fee structure created successfully. Student fees will be auto-created for all approved students in this class."
+      });
+
+      setIsEditStructureOpen(false);
+      setEditingStructure(null);
+      setStructureForm({
+        classId: "",
+        academicYearId: "",
+        frequency: "yearly",
+        tuitionFee: "",
+        transportFee: "",
+        labFee: "",
+        otherComponents: []
+      });
+
+      // Reload fee structure and student fees (student fees are auto-created from structure)
+      const [structureData, feesData, summaryData] = await Promise.all([
+        feesApi.getFeeStructure(),
+        feesApi.getStudentFees(selectedClassId !== "all" ? selectedClassId : undefined, searchTerm || undefined),
+        feesApi.getSummary()
+      ]);
+      setFeeStructure(structureData || []);
+      setStudentFees(feesData || []);
+      setSummary(summaryData || summary);
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to save fee structure",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const handleDeleteStructure = async (structureId: string) => {
+    if (!confirm('Are you sure you want to delete this fee structure? This action cannot be undone.')) {
+      return;
+    }
+
+    try {
+      await feesApi.deleteFeeStructure(structureId);
+      toast({
+        title: "Success",
+        description: "Fee structure deleted successfully"
+      });
+      
+      // Reload fee structure
+      const structures = await feesApi.getFeeStructure();
+      setFeeStructure(structures || []);
+      
+      // Reload student fees to reflect changes
+      const feesData = await feesApi.getStudentFees(
+        selectedClassId !== "all" ? selectedClassId : undefined, 
+        searchTerm || undefined
+      );
+      setStudentFees(feesData || []);
+      
+      // Reload summary
+      const summaryData = await feesApi.getSummary();
+      setSummary(summaryData || summary);
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to delete fee structure",
+        variant: "destructive"
+      });
+    }
   };
 
   return (
@@ -110,7 +828,7 @@ export default function FeesModule() {
                 View Only
               </Badge>
             )}
-            <Button variant="outline">
+            <Button variant="outline" onClick={handleExportReport}>
               <Download className="w-4 h-4 mr-2" />
               Export Report
             </Button>
@@ -126,7 +844,7 @@ export default function FeesModule() {
                   <IndianRupee className="w-6 h-6 text-secondary" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold">₹{totalCollected.toLocaleString()}</p>
+                  <p className="text-2xl font-bold">₹{summary.totalCollected.toLocaleString()}</p>
                   <p className="text-sm text-muted-foreground">Total Collected</p>
                 </div>
               </div>
@@ -139,7 +857,7 @@ export default function FeesModule() {
                   <AlertCircle className="w-6 h-6 text-destructive" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold">₹{totalPending.toLocaleString()}</p>
+                  <p className="text-2xl font-bold">₹{summary.totalPending.toLocaleString()}</p>
                   <p className="text-sm text-muted-foreground">Total Pending</p>
                 </div>
               </div>
@@ -152,7 +870,7 @@ export default function FeesModule() {
                   <CheckCircle2 className="w-6 h-6 text-primary" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold">{paidCount}</p>
+                  <p className="text-2xl font-bold">{summary.fullyPaidCount}</p>
                   <p className="text-sm text-muted-foreground">Fully Paid</p>
                 </div>
               </div>
@@ -165,7 +883,7 @@ export default function FeesModule() {
                   <AlertCircle className="w-6 h-6 text-accent" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold">{unpaidCount}</p>
+                  <p className="text-2xl font-bold">{summary.unpaidCount}</p>
                   <p className="text-sm text-muted-foreground">Unpaid</p>
                 </div>
               </div>
@@ -196,73 +914,230 @@ export default function FeesModule() {
                         onChange={(e) => setSearchTerm(e.target.value)}
                       />
                     </div>
-                    <Select value={selectedClass} onValueChange={setSelectedClass}>
-                      <SelectTrigger className="w-32">
-                        <SelectValue />
+                    <Select value={selectedClassId} onValueChange={setSelectedClassId}>
+                      <SelectTrigger className="w-48">
+                        <SelectValue placeholder="Select class" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="5A">Class 5A</SelectItem>
-                        <SelectItem value="5B">Class 5B</SelectItem>
-                        <SelectItem value="4A">Class 4A</SelectItem>
+                        <SelectItem value="all">All Classes</SelectItem>
+                        {classes.map((cls) => (
+                          <SelectItem key={cls.id} value={cls.id}>
+                            {cls.name}{cls.section ? ` - Section ${cls.section}` : ''}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
                 </div>
               </CardHeader>
               <CardContent>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Roll No</TableHead>
-                      <TableHead>Student Name</TableHead>
-                      <TableHead>Total Fee</TableHead>
-                      <TableHead>Paid</TableHead>
-                      <TableHead>Pending</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredStudents.map((student) => (
-                      <TableRow key={student.id}>
-                        <TableCell>{student.rollNo}</TableCell>
-                        <TableCell className="font-medium">{student.name}</TableCell>
-                        <TableCell>₹{student.totalFee.toLocaleString()}</TableCell>
-                        <TableCell className="text-secondary">₹{student.paid.toLocaleString()}</TableCell>
-                        <TableCell className={student.pending > 0 ? "text-destructive" : ""}>
-                          ₹{student.pending.toLocaleString()}
-                        </TableCell>
-                        <TableCell>
-                          <Badge 
-                            className={
-                              student.status === "paid" ? "bg-secondary" : 
-                              student.status === "partial" ? "bg-accent" : "bg-destructive"
-                            }
-                          >
-                            {student.status}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex justify-end gap-2">
-                            {student.pending > 0 && (
-                              <Button 
-                                size="sm" 
-                                variant="outline"
-                                onClick={() => sendReminder(student.name)}
-                              >
-                                <Bell className="w-4 h-4 mr-1" />
-                                Remind
-                              </Button>
-                            )}
-                            {isAdmin && (
-                              <Button size="sm" variant="ghost">View</Button>
-                            )}
-                          </div>
-                        </TableCell>
+                {loading ? (
+                  <div className="flex items-center justify-center py-12">
+                    <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+                  </div>
+                ) : filteredStudents.length === 0 ? (
+                  <div className="text-center py-12 text-muted-foreground">
+                    <p>No approved students found</p>
+                  </div>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Roll No</TableHead>
+                        <TableHead>Student Name</TableHead>
+                        <TableHead>Class</TableHead>
+                        <TableHead>Total Fee</TableHead>
+                        <TableHead>Paid</TableHead>
+                        <TableHead>Pending</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredStudents.map((student) => (
+                        <TableRow key={student.id}>
+                          <TableCell>{student.rollNo || '-'}</TableCell>
+                          <TableCell className="font-medium">{student.studentName}</TableCell>
+                          <TableCell>{student.className}{student.classSection ? ` - ${student.classSection}` : ''}</TableCell>
+                          <TableCell>
+                            {student.status === 'no-fee' || !student.hasFeeRecord ? (
+                              <span className="text-muted-foreground">-</span>
+                            ) : (
+                              `₹${student.totalFee.toLocaleString()}`
+                            )}
+                          </TableCell>
+                          <TableCell 
+                            className={`text-secondary ${student.hasFeeRecord ? 'cursor-pointer hover:underline' : ''}`}
+                            onClick={() => student.hasFeeRecord && handleViewBreakdown(student, 'paid')}
+                          >
+                            {student.status === 'no-fee' || !student.hasFeeRecord ? (
+                              <span className="text-muted-foreground">-</span>
+                            ) : (
+                              `₹${student.paidAmount.toLocaleString()}`
+                            )}
+                          </TableCell>
+                          <TableCell 
+                            className={`${student.pendingAmount > 0 ? "text-destructive" : ""} ${student.hasFeeRecord ? 'cursor-pointer hover:underline' : ''}`}
+                            onClick={() => student.hasFeeRecord && handleViewBreakdown(student, 'pending')}
+                          >
+                            {student.status === 'no-fee' || !student.hasFeeRecord ? (
+                              <span className="text-muted-foreground">-</span>
+                            ) : (
+                              `₹${student.pendingAmount.toLocaleString()}`
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            {student.status === 'no-fee' || !student.hasFeeRecord ? (
+                              <Badge variant="outline" className="bg-muted">
+                                No Fee
+                              </Badge>
+                            ) : (
+                              <Badge 
+                                className={
+                                  student.status === "paid" ? "bg-secondary" : 
+                                  student.status === "partial" ? "bg-accent" : "bg-destructive"
+                                }
+                              >
+                                {student.status}
+                              </Badge>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {isAdmin ? (
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button variant="ghost" size="icon">
+                                    <MoreVertical className="w-4 h-4" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  <DropdownMenuItem onClick={() => handleViewStudentFee(student)}>
+                                    <Eye className="w-4 h-4 mr-2" />
+                                    View
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => handleSendReminder(student)}>
+                                    <Bell className="w-4 h-4 mr-2" />
+                                    Remind
+                                  </DropdownMenuItem>
+                                  {student.hasFeeRecord ? (
+                                    <DropdownMenuItem onClick={async () => {
+                                      try {
+                                        // Fetch existing fee details
+                                        const feeDetails = await feesApi.getStudentFeeById(student.studentId);
+                                        setEditingStudentFee({
+                                          ...student,
+                                          feeId: feeDetails.id || student.feeId || student.id
+                                        });
+                                        setSelectedStudentForFee(student);
+                                        
+                                        // Load existing fee data
+                                        const otherFees = feeDetails.otherFees || {};
+                                        const components = otherFees.components || [];
+                                        
+                                        setNewStudentFee({
+                                          academicYearId: feeDetails.academicYearId || "",
+                                          frequency: otherFees._metadata?.frequency || "yearly",
+                                          tuitionFee: feeDetails.tuitionFee?.toString() || "",
+                                          transportFee: feeDetails.transportFee?.toString() || "",
+                                          labFee: feeDetails.labFee?.toString() || "",
+                                          otherComponents: components.map((c: any) => ({
+                                            id: `comp-${Date.now()}-${Math.random()}`,
+                                            name: c.name || "",
+                                            amount: c.amount?.toString() || ""
+                                          })),
+                                          dueDate: feeDetails.dueDate || format(new Date(), "yyyy-MM-dd")
+                                        });
+                                        
+                                        setIsEditFeeOpen(true);
+                                      } catch (error: any) {
+                                        toast({
+                                          title: "Error",
+                                          description: error?.message || "Failed to load fee details",
+                                          variant: "destructive"
+                                        });
+                                      }
+                                    }}>
+                                      <Edit className="w-4 h-4 mr-2" />
+                                      Edit Fee
+                                    </DropdownMenuItem>
+                                  ) : (
+                                    <DropdownMenuItem onClick={() => {
+                                      setSelectedStudentForFee(student);
+                                      setEditingStudentFee(null);
+                                      
+                                      // Replicate the fee structure for this student's class
+                                      // This pre-fills the form with class structure, but all fields are editable
+                                      // to allow applying discounts for individual students
+                                      const classStructure = feeStructure.find(f => f.classId === student.classId);
+                                      if (classStructure) {
+                                        // Pre-fill with class structure - all fields editable for discounts
+                                        const otherFees = classStructure.otherFees || {};
+                                        const components = otherFees.components || [];
+                                        
+                                        setNewStudentFee({
+                                          academicYearId: classStructure.academicYearId || "",
+                                          frequency: otherFees._metadata?.frequency || "yearly",
+                                          tuitionFee: classStructure.tuitionFee?.toString() || "",
+                                          transportFee: classStructure.transportFee?.toString() || "",
+                                          labFee: classStructure.labFee?.toString() || "",
+                                          otherComponents: components.map((c: any) => ({
+                                            id: `comp-${Date.now()}-${Math.random()}`,
+                                            name: c.name || "",
+                                            amount: c.amount?.toString() || ""
+                                          })),
+                                          dueDate: format(new Date(), "yyyy-MM-dd")
+                                        });
+                                      } else {
+                                        // No class structure - empty form
+                                        setNewStudentFee({
+                                          academicYearId: "",
+                                          frequency: "yearly",
+                                          tuitionFee: "",
+                                          transportFee: "",
+                                          labFee: "",
+                                          otherComponents: [],
+                                          dueDate: format(new Date(), "yyyy-MM-dd")
+                                        });
+                                      }
+                                      setIsCreateFeeOpen(true);
+                                    }}>
+                                      <Plus className="w-4 h-4 mr-2" />
+                                      Create Fee
+                                    </DropdownMenuItem>
+                                  )}
+                                  <DropdownMenuItem onClick={() => handleOpenRecordPayment(student)}>
+                                    <IndianRupee className="w-4 h-4 mr-2" />
+                                    Record Payment
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            ) : (
+                              <div className="flex justify-end gap-2">
+                                {student.pendingAmount > 0 && (
+                                  <Button 
+                                    size="sm" 
+                                    variant="outline"
+                                    onClick={() => handleSendReminder(student)}
+                                  >
+                                    <Bell className="w-4 h-4 mr-1" />
+                                    Remind
+                                  </Button>
+                                )}
+                                <Button 
+                                  size="sm" 
+                                  variant="ghost"
+                                  onClick={() => handleViewStudentFee(student)}
+                                >
+                                  View
+                                </Button>
+                              </div>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
@@ -272,35 +1147,97 @@ export default function FeesModule() {
             <TabsContent value="structure" className="space-y-4">
               <div className="flex justify-between items-center">
                 <h2 className="text-lg font-medium">Class-wise Fee Structure</h2>
-                <Button size="sm">
+                <Button size="sm" onClick={() => handleOpenEditStructure()}>
                   <Plus className="w-4 h-4 mr-2" />
-                  Edit Structure
+                  Add Structure
                 </Button>
               </div>
-              <Card>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Class Range</TableHead>
-                      <TableHead>Tuition (Quarterly)</TableHead>
-                      <TableHead>Transport (Monthly)</TableHead>
-                      <TableHead>Lab (Yearly)</TableHead>
-                      <TableHead>Total (Quarterly)</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {classFeeStructure.map((fee, index) => (
-                      <TableRow key={index}>
-                        <TableCell className="font-medium">{fee.class}</TableCell>
-                        <TableCell>₹{fee.tuition.toLocaleString()}</TableCell>
-                        <TableCell>₹{fee.transport.toLocaleString()}</TableCell>
-                        <TableCell>₹{fee.lab.toLocaleString()}</TableCell>
-                        <TableCell className="font-semibold">₹{fee.total.toLocaleString()}</TableCell>
+              {loading ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+                </div>
+              ) : feeStructure.length === 0 ? (
+                <Card>
+                  <CardContent className="py-12 text-center text-muted-foreground">
+                    <p>No fee structure defined. Click "Edit Structure" to add one.</p>
+                  </CardContent>
+                </Card>
+              ) : (
+                <Card>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Class</TableHead>
+                        <TableHead>Frequency</TableHead>
+                        <TableHead>Tuition</TableHead>
+                        <TableHead>Transport</TableHead>
+                        <TableHead>Lab</TableHead>
+                        <TableHead>Total</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </Card>
+                    </TableHeader>
+                    <TableBody>
+                      {feeStructure.map((fee) => {
+                        // Extract frequency from otherFees metadata
+                        let frequency = "Yearly";
+                        if (fee.otherFees) {
+                          try {
+                            const parsed = typeof fee.otherFees === 'string' 
+                              ? JSON.parse(fee.otherFees) 
+                              : fee.otherFees;
+                            if (parsed && parsed._metadata && parsed._metadata.frequency) {
+                              frequency = parsed._metadata.frequency.charAt(0).toUpperCase() + parsed._metadata.frequency.slice(1);
+                            }
+                          } catch (e) {
+                            // Ignore
+                          }
+                        } else if (fee.frequency) {
+                          frequency = fee.frequency.charAt(0).toUpperCase() + fee.frequency.slice(1);
+                        }
+                        
+                        return (
+                          <TableRow key={fee.id}>
+                            <TableCell className="font-medium">
+                              {fee.className}{fee.classSection ? ` - ${fee.classSection}` : ''}
+                              {fee.academicYearName && (
+                                <span className="text-xs text-muted-foreground block mt-1">
+                                  {fee.academicYearName}
+                                </span>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="outline">{frequency}</Badge>
+                            </TableCell>
+                            <TableCell>₹{fee.tuitionFee.toLocaleString()}</TableCell>
+                            <TableCell>₹{fee.transportFee.toLocaleString()}</TableCell>
+                            <TableCell>₹{fee.labFee.toLocaleString()}</TableCell>
+                            <TableCell className="font-semibold">₹{fee.totalFee.toLocaleString()}</TableCell>
+                            <TableCell className="text-right">
+                              <div className="flex items-center justify-end gap-2">
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => handleOpenEditStructure(fee)}
+                                >
+                                  <Edit className="w-4 h-4" />
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => handleDeleteStructure(fee.id)}
+                                  className="text-destructive hover:text-destructive"
+                                >
+                                  <X className="w-4 h-4" />
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </Card>
+              )}
             </TabsContent>
           )}
 
@@ -309,7 +1246,7 @@ export default function FeesModule() {
             <TabsContent value="categories" className="space-y-4">
               <div className="flex justify-between items-center">
                 <h2 className="text-lg font-medium">Fee Categories</h2>
-                <Dialog>
+                <Dialog open={isAddCategoryOpen} onOpenChange={setIsAddCategoryOpen}>
                   <DialogTrigger asChild>
                     <Button size="sm">
                       <Plus className="w-4 h-4 mr-2" />
@@ -322,16 +1259,28 @@ export default function FeesModule() {
                     </DialogHeader>
                     <div className="space-y-4 py-4">
                       <div className="space-y-2">
-                        <label className="text-sm font-medium">Category Name</label>
-                        <Input placeholder="e.g., Exam Fee" />
+                        <Label>Category Name</Label>
+                        <Input 
+                          placeholder="e.g., Exam Fee" 
+                          value={newCategory.name}
+                          onChange={(e) => setNewCategory({...newCategory, name: e.target.value})}
+                        />
                       </div>
                       <div className="space-y-2">
-                        <label className="text-sm font-medium">Amount (₹)</label>
-                        <Input type="number" placeholder="Enter amount" />
+                        <Label>Amount (₹)</Label>
+                        <Input 
+                          type="number" 
+                          placeholder="Enter amount"
+                          value={newCategory.amount}
+                          onChange={(e) => setNewCategory({...newCategory, amount: e.target.value})}
+                        />
                       </div>
                       <div className="space-y-2">
-                        <label className="text-sm font-medium">Frequency</label>
-                        <Select>
+                        <Label>Frequency</Label>
+                        <Select 
+                          value={newCategory.frequency} 
+                          onValueChange={(value: any) => setNewCategory({...newCategory, frequency: value})}
+                        >
                           <SelectTrigger>
                             <SelectValue placeholder="Select frequency" />
                           </SelectTrigger>
@@ -342,30 +1291,863 @@ export default function FeesModule() {
                           </SelectContent>
                         </Select>
                       </div>
-                      <Button className="w-full">Add Category</Button>
+                      <div className="space-y-2">
+                        <Label>Description (Optional)</Label>
+                        <Input 
+                          placeholder="Enter description"
+                          value={newCategory.description}
+                          onChange={(e) => setNewCategory({...newCategory, description: e.target.value})}
+                        />
+                      </div>
+                      <DialogFooter>
+                        <Button variant="outline" onClick={() => setIsAddCategoryOpen(false)}>
+                          Cancel
+                        </Button>
+                        <Button onClick={handleAddCategory}>Add Category</Button>
+                      </DialogFooter>
                     </div>
                   </DialogContent>
                 </Dialog>
               </div>
-              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                {feeCategories.map((category) => (
-                  <Card key={category.id}>
-                    <CardContent className="pt-6">
-                      <div className="flex items-start justify-between">
-                        <div>
-                          <h3 className="font-semibold">{category.name}</h3>
-                          <p className="text-2xl font-bold mt-2">₹{category.amount.toLocaleString()}</p>
-                          <Badge variant="outline" className="mt-2">{category.frequency}</Badge>
+              {loading ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+                </div>
+              ) : feeCategories.length === 0 ? (
+                <Card>
+                  <CardContent className="py-12 text-center text-muted-foreground">
+                    <p>No fee categories. Click "Add Category" to create one.</p>
+                  </CardContent>
+                </Card>
+              ) : (
+                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                  {feeCategories.map((category) => (
+                    <Card key={category.id}>
+                      <CardContent className="pt-6">
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1">
+                            <h3 className="font-semibold">{category.name}</h3>
+                            <p className="text-2xl font-bold mt-2">₹{category.amount.toLocaleString()}</p>
+                            <Badge variant="outline" className="mt-2 capitalize">
+                              {category.frequency}
+                            </Badge>
+                            {category.description && (
+                              <p className="text-sm text-muted-foreground mt-2">{category.description}</p>
+                            )}
+                          </div>
+                          <div className="flex gap-1">
+                            <Button 
+                              variant="ghost" 
+                              size="sm"
+                              onClick={() => {
+                                setEditingCategory(category);
+                                setIsEditCategoryOpen(true);
+                              }}
+                            >
+                              <Edit className="w-4 h-4" />
+                            </Button>
+                            <Button 
+                              variant="ghost" 
+                              size="sm"
+                              onClick={() => handleDeleteCategory(category.id)}
+                            >
+                              <X className="w-4 h-4" />
+                            </Button>
+                          </div>
                         </div>
-                        <Button variant="ghost" size="sm">Edit</Button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
             </TabsContent>
           )}
         </Tabs>
+
+        {/* Edit Category Dialog */}
+        <Dialog open={isEditCategoryOpen} onOpenChange={setIsEditCategoryOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Edit Fee Category</DialogTitle>
+            </DialogHeader>
+            {editingCategory && (
+              <div className="space-y-4 py-4">
+                <div className="space-y-2">
+                  <Label>Category Name</Label>
+                  <Input 
+                    value={editingCategory.name}
+                    onChange={(e) => setEditingCategory({...editingCategory, name: e.target.value})}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Amount (₹)</Label>
+                  <Input 
+                    type="number"
+                    value={editingCategory.amount}
+                    onChange={(e) => setEditingCategory({...editingCategory, amount: e.target.value})}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Frequency</Label>
+                  <Select 
+                    value={editingCategory.frequency} 
+                    onValueChange={(value: any) => setEditingCategory({...editingCategory, frequency: value})}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="monthly">Monthly</SelectItem>
+                      <SelectItem value="quarterly">Quarterly</SelectItem>
+                      <SelectItem value="yearly">Yearly</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Description (Optional)</Label>
+                  <Input 
+                    value={editingCategory.description || ""}
+                    onChange={(e) => setEditingCategory({...editingCategory, description: e.target.value})}
+                  />
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setIsEditCategoryOpen(false)}>
+                    Cancel
+                  </Button>
+                  <Button onClick={handleEditCategory}>Update Category</Button>
+                </DialogFooter>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+
+        {/* View Student Fee Dialog */}
+        <Dialog open={isViewStudentFeeOpen} onOpenChange={setIsViewStudentFeeOpen}>
+          <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Student Fee Details</DialogTitle>
+              <DialogDescription>
+                {selectedStudentFee?.studentName} - {selectedStudentFee?.className}
+              </DialogDescription>
+            </DialogHeader>
+            {studentFeeDetails ? (
+              <div className="space-y-4 py-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-muted-foreground">Total Fee</Label>
+                    <p className="text-2xl font-bold">₹{studentFeeDetails.totalFee.toLocaleString()}</p>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground">Pending Amount</Label>
+                    <p className={`text-2xl font-bold ${studentFeeDetails.pendingAmount > 0 ? 'text-destructive' : 'text-secondary'}`}>
+                      ₹{studentFeeDetails.pendingAmount.toLocaleString()}
+                    </p>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground">Paid Amount</Label>
+                    <p className="text-2xl font-bold text-secondary">₹{studentFeeDetails.paidAmount.toLocaleString()}</p>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground">Status</Label>
+                    <div className="mt-2">
+                      <Badge 
+                        className={
+                          studentFeeDetails.status === "paid" ? "bg-secondary" : 
+                          studentFeeDetails.status === "partial" ? "bg-accent" : "bg-destructive"
+                        }
+                      >
+                        {studentFeeDetails.status}
+                      </Badge>
+                    </div>
+                  </div>
+                </div>
+                
+                {studentFeeDetails.payments && studentFeeDetails.payments.length > 0 && (
+                  <div>
+                    <Label className="text-lg font-semibold">Payment History</Label>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Date</TableHead>
+                          <TableHead>Amount</TableHead>
+                          <TableHead>Method</TableHead>
+                          <TableHead>Receipt No</TableHead>
+                          <TableHead>Remarks</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {studentFeeDetails.payments.map((payment: any) => (
+                          <TableRow key={payment.id}>
+                            <TableCell>{format(new Date(payment.paymentDate), "dd MMM yyyy")}</TableCell>
+                            <TableCell>₹{payment.amount.toLocaleString()}</TableCell>
+                            <TableCell className="capitalize">{payment.paymentMethod}</TableCell>
+                            <TableCell>{payment.receiptNumber || '-'}</TableCell>
+                            <TableCell>{payment.remarks || '-'}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+              </div>
+            )}
+            <DialogFooter>
+              {selectedStudentFee && selectedStudentFee.pendingAmount > 0 && (
+                <Button onClick={() => {
+                  setIsViewStudentFeeOpen(false);
+                  handleOpenRecordPayment(selectedStudentFee);
+                }}>
+                  Record Payment
+                </Button>
+              )}
+              <Button variant="outline" onClick={() => setIsViewStudentFeeOpen(false)}>
+                Close
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Record Payment Dialog */}
+        <Dialog open={isRecordPaymentOpen} onOpenChange={setIsRecordPaymentOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Record Payment</DialogTitle>
+              <DialogDescription>
+                {selectedStudentFee?.studentName} - Pending: ₹{selectedStudentFee?.pendingAmount.toLocaleString()}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label>Component *</Label>
+                <Select 
+                  value={newPayment.component || undefined} 
+                  onValueChange={(value) => setNewPayment({...newPayment, component: value})}
+                  disabled={!feeStructureForStudent}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select fee component" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {feeStructureForStudent ? (
+                      <>
+                        {feeStructureForStudent.tuitionFee > 0 && (
+                          <SelectItem value="tuition_fee">Tuition Fee (₹{feeStructureForStudent.tuitionFee.toLocaleString()})</SelectItem>
+                        )}
+                        {feeStructureForStudent.transportFee > 0 && (
+                          <SelectItem value="transport_fee">Transport Fee (₹{feeStructureForStudent.transportFee.toLocaleString()})</SelectItem>
+                        )}
+                        {feeStructureForStudent.labFee > 0 && (
+                          <SelectItem value="lab_fee">Lab Fee (₹{feeStructureForStudent.labFee.toLocaleString()})</SelectItem>
+                        )}
+                        {feeStructureForStudent.otherFees?.components?.map((comp: any) => {
+                          const compKey = comp.name.toLowerCase().replace(/\s+/g, '_');
+                          return (
+                            <SelectItem key={comp.name} value={compKey}>
+                              {comp.name} (₹{comp.amount.toLocaleString()})
+                            </SelectItem>
+                          );
+                        })}
+                      </>
+                    ) : (
+                      <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                        No fee structure found for this class
+                      </div>
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Amount (₹) *</Label>
+                <Input 
+                  type="number"
+                  placeholder="Enter amount"
+                  value={newPayment.amount}
+                  onChange={(e) => setNewPayment({...newPayment, amount: e.target.value})}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Payment Date *</Label>
+                <Input 
+                  type="date"
+                  value={newPayment.paymentDate}
+                  onChange={(e) => setNewPayment({...newPayment, paymentDate: e.target.value})}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Payment Method</Label>
+                <Select 
+                  value={newPayment.paymentMethod} 
+                  onValueChange={(value: any) => setNewPayment({...newPayment, paymentMethod: value})}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="cash">Cash</SelectItem>
+                    <SelectItem value="cheque">Cheque</SelectItem>
+                    <SelectItem value="online">Online</SelectItem>
+                    <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Transaction ID (Optional)</Label>
+                <Input 
+                  placeholder="Enter transaction ID"
+                  value={newPayment.transactionId}
+                  onChange={(e) => setNewPayment({...newPayment, transactionId: e.target.value})}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Receipt Number (Optional)</Label>
+                <Input 
+                  placeholder="Enter receipt number"
+                  value={newPayment.receiptNumber}
+                  onChange={(e) => setNewPayment({...newPayment, receiptNumber: e.target.value})}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Remarks (Optional)</Label>
+                <Input 
+                  placeholder="Enter remarks"
+                  value={newPayment.remarks}
+                  onChange={(e) => setNewPayment({...newPayment, remarks: e.target.value})}
+                />
+              </div>
+              <DialogFooter>
+                <Button 
+                  variant="outline" 
+                  onClick={() => {
+                    setIsRecordPaymentOpen(false);
+                    setFeeStructureForStudent(null);
+                    setNewPayment({
+                      component: "",
+                      amount: "",
+                      paymentDate: format(new Date(), "yyyy-MM-dd"),
+                      paymentMethod: "cash",
+                      transactionId: "",
+                      receiptNumber: "",
+                      remarks: ""
+                    });
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button onClick={handleRecordPayment}>Record Payment</Button>
+              </DialogFooter>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Create/Edit Fee for Individual Student Dialog */}
+        <Dialog open={isCreateFeeOpen || isEditFeeOpen} onOpenChange={(open) => {
+          if (!open) {
+            setIsCreateFeeOpen(false);
+            setIsEditFeeOpen(false);
+            setSelectedStudentForFee(null);
+            setEditingStudentFee(null);
+            setNewStudentFee({
+              academicYearId: "",
+              frequency: "yearly",
+              tuitionFee: "",
+              transportFee: "",
+              labFee: "",
+              otherComponents: [],
+              dueDate: format(new Date(), "yyyy-MM-dd")
+            });
+          }
+        }}>
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>
+                {editingStudentFee ? "Edit Fee for Student" : "Create Fee for Student"}
+              </DialogTitle>
+              <DialogDescription>
+                {selectedStudentForFee?.studentName} - {selectedStudentForFee?.className}
+                <br />
+                <span className="text-xs text-muted-foreground">
+                  {editingStudentFee 
+                    ? "Edit this student's fee structure (apply discounts or modify amounts)"
+                    : "Fee structure pre-filled from class template. Edit amounts to apply discounts for this student."}
+                </span>
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              {/* Academic Year */}
+              <div className="space-y-2">
+                <Label>Academic Year (Optional)</Label>
+                <Select 
+                  value={newStudentFee.academicYearId || undefined} 
+                  onValueChange={(value) => setNewStudentFee({...newStudentFee, academicYearId: value || ""})}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select academic year (optional)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {academicYears.map((year) => (
+                      <SelectItem key={year.id} value={year.id}>
+                        {year.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Frequency */}
+              <div className="space-y-2">
+                <Label>Frequency *</Label>
+                <Select 
+                  value={newStudentFee.frequency} 
+                  onValueChange={(value: "yearly" | "quarterly" | "monthly") => setNewStudentFee({...newStudentFee, frequency: value})}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select frequency" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="yearly">Yearly</SelectItem>
+                    <SelectItem value="quarterly">Quarterly</SelectItem>
+                    <SelectItem value="monthly">Monthly</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Fee Components */}
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <Label className="text-base font-semibold">Fee Components</Label>
+                  <Button 
+                    type="button"
+                    size="sm" 
+                    variant="outline"
+                    onClick={() => {
+                      const newId = `comp-${Date.now()}-${Math.random()}`;
+                      setNewStudentFee({
+                        ...newStudentFee,
+                        otherComponents: [
+                          ...newStudentFee.otherComponents,
+                          { id: newId, name: "", amount: "" }
+                        ]
+                      });
+                    }}
+                  >
+                    <Plus className="w-4 h-4 mr-2" />
+                    Add Component
+                  </Button>
+                </div>
+
+                {/* Tuition Fee */}
+                <div className="space-y-2">
+                  <Label>Tuition Fee (₹) *</Label>
+                  <Input 
+                    type="number"
+                    placeholder="Enter tuition fee"
+                    value={newStudentFee.tuitionFee}
+                    onChange={(e) => setNewStudentFee({...newStudentFee, tuitionFee: e.target.value})}
+                  />
+                </div>
+
+                {/* Transport Fee */}
+                <div className="space-y-2">
+                  <Label>Transport Fee (₹)</Label>
+                  <Input 
+                    type="number"
+                    placeholder="Enter transport fee"
+                    value={newStudentFee.transportFee}
+                    onChange={(e) => setNewStudentFee({...newStudentFee, transportFee: e.target.value})}
+                  />
+                </div>
+
+                {/* Lab Fee */}
+                <div className="space-y-2">
+                  <Label>Lab Fee (₹)</Label>
+                  <Input 
+                    type="number"
+                    placeholder="Enter lab fee"
+                    value={newStudentFee.labFee}
+                    onChange={(e) => setNewStudentFee({...newStudentFee, labFee: e.target.value})}
+                  />
+                </div>
+
+                {/* Other Components */}
+                {newStudentFee.otherComponents.map((component) => (
+                  <div key={component.id} className="flex gap-2 items-end">
+                    <div className="flex-1 space-y-2">
+                      <Label>Component Name</Label>
+                      <Input 
+                        placeholder="e.g., Sports Fee, Library Fee"
+                        value={component.name}
+                        onChange={(e) => {
+                          const updated = newStudentFee.otherComponents.map(comp =>
+                            comp.id === component.id ? { ...comp, name: e.target.value } : comp
+                          );
+                          setNewStudentFee({...newStudentFee, otherComponents: updated});
+                        }}
+                      />
+                    </div>
+                    <div className="flex-1 space-y-2">
+                      <Label>Amount (₹)</Label>
+                      <Input 
+                        type="number"
+                        placeholder="Enter amount"
+                        value={component.amount}
+                        onChange={(e) => {
+                          const updated = newStudentFee.otherComponents.map(comp =>
+                            comp.id === component.id ? { ...comp, amount: e.target.value } : comp
+                          );
+                          setNewStudentFee({...newStudentFee, otherComponents: updated});
+                        }}
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        setNewStudentFee({
+                          ...newStudentFee,
+                          otherComponents: newStudentFee.otherComponents.filter(comp => comp.id !== component.id)
+                        });
+                      }}
+                    >
+                      <X className="w-4 h-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+
+              {/* Total Fee (Read-only, Auto-calculated) */}
+              <div className="space-y-2 border-t pt-4">
+                <Label>Total Fee (₹) - Auto Calculated</Label>
+                <Input 
+                  type="number"
+                  value={calculateStudentFeeTotal().toFixed(2)}
+                  readOnly
+                  className="bg-muted font-semibold text-lg"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Total = Tuition + Transport + Lab + Other Components
+                </p>
+              </div>
+
+              {/* Due Date */}
+              <div className="space-y-2">
+                <Label>Due Date (Optional)</Label>
+                <Input 
+                  type="date"
+                  value={newStudentFee.dueDate}
+                  onChange={(e) => setNewStudentFee({...newStudentFee, dueDate: e.target.value})}
+                />
+              </div>
+
+              <DialogFooter>
+                <Button variant="outline" onClick={() => {
+                  setIsCreateFeeOpen(false);
+                  setIsEditFeeOpen(false);
+                  setSelectedStudentForFee(null);
+                  setEditingStudentFee(null);
+                  setNewStudentFee({
+                    academicYearId: "",
+                    frequency: "yearly",
+                    tuitionFee: "",
+                    transportFee: "",
+                    labFee: "",
+                    otherComponents: [],
+                    dueDate: format(new Date(), "yyyy-MM-dd")
+                  });
+                }}>
+                  Cancel
+                </Button>
+                <Button onClick={handleCreateStudentFee}>
+                  {editingStudentFee ? "Update Fee" : "Create Fee"}
+                </Button>
+              </DialogFooter>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Edit Fee Structure Dialog */}
+        <Dialog open={isEditStructureOpen} onOpenChange={setIsEditStructureOpen}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>
+                {editingStructure ? "Edit Fee Structure" : "Add Fee Structure"}
+              </DialogTitle>
+              <DialogDescription>
+                {editingStructure 
+                  ? "Update the fee structure for the selected class"
+                  : "Define fee structure for a class"}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label>Class *</Label>
+                <Select 
+                  value={structureForm.classId} 
+                  onValueChange={(value) => setStructureForm({...structureForm, classId: value})}
+                  disabled={!!editingStructure}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a class" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {classes.map((cls) => (
+                      <SelectItem key={cls.id} value={cls.id}>
+                        {cls.name}{cls.section ? ` - Section ${cls.section}` : ''}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {editingStructure && (
+                  <p className="text-xs text-muted-foreground">
+                    Class cannot be changed when editing
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label>Academic Year (Optional)</Label>
+                <Select 
+                  value={structureForm.academicYearId || undefined} 
+                  onValueChange={(value) => setStructureForm({...structureForm, academicYearId: value || ""})}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select academic year (optional)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {academicYears.map((year) => (
+                      <SelectItem key={year.id} value={year.id}>
+                        {year.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Frequency *</Label>
+                <Select 
+                  value={structureForm.frequency} 
+                  onValueChange={(value: "yearly" | "quarterly" | "monthly") => setStructureForm({...structureForm, frequency: value})}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select frequency" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="yearly">Yearly</SelectItem>
+                    <SelectItem value="quarterly">Quarterly</SelectItem>
+                    <SelectItem value="monthly">Monthly</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Select how often this fee structure applies
+                </p>
+              </div>
+
+              {/* Fee Components */}
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <Label className="text-base font-semibold">Fee Components</Label>
+                  <Button 
+                    type="button"
+                    size="sm" 
+                    variant="outline"
+                    onClick={handleAddComponent}
+                  >
+                    <Plus className="w-4 h-4 mr-2" />
+                    Add Component
+                  </Button>
+                </div>
+
+                {/* Tuition Fee */}
+                <div className="space-y-2">
+                  <Label>Tuition Fee (₹) *</Label>
+                  <Input 
+                    type="number"
+                    placeholder="Enter tuition fee"
+                    value={structureForm.tuitionFee}
+                    onChange={(e) => setStructureForm({...structureForm, tuitionFee: e.target.value})}
+                  />
+                </div>
+
+                {/* Transport Fee */}
+                <div className="space-y-2">
+                  <Label>Transport Fee (₹)</Label>
+                  <Input 
+                    type="number"
+                    placeholder="Enter transport fee"
+                    value={structureForm.transportFee}
+                    onChange={(e) => setStructureForm({...structureForm, transportFee: e.target.value})}
+                  />
+                </div>
+
+                {/* Lab Fee */}
+                <div className="space-y-2">
+                  <Label>Lab Fee (₹)</Label>
+                  <Input 
+                    type="number"
+                    placeholder="Enter lab fee"
+                    value={structureForm.labFee}
+                    onChange={(e) => setStructureForm({...structureForm, labFee: e.target.value})}
+                  />
+                </div>
+
+                {/* Other Components */}
+                {structureForm.otherComponents.map((component) => (
+                  <div key={component.id} className="flex gap-2 items-end">
+                    <div className="flex-1 space-y-2">
+                      <Label>Component Name</Label>
+                      <Input 
+                        placeholder="e.g., Sports Fee, Library Fee"
+                        value={component.name}
+                        onChange={(e) => {
+                          const updated = structureForm.otherComponents.map(comp =>
+                            comp.id === component.id ? { ...comp, name: e.target.value } : comp
+                          );
+                          setStructureForm({...structureForm, otherComponents: updated});
+                        }}
+                      />
+                    </div>
+                    <div className="flex-1 space-y-2">
+                      <Label>Amount (₹)</Label>
+                      <Input 
+                        type="number"
+                        placeholder="Enter amount"
+                        value={component.amount}
+                        onChange={(e) => {
+                          const updated = structureForm.otherComponents.map(comp =>
+                            comp.id === component.id ? { ...comp, amount: e.target.value } : comp
+                          );
+                          setStructureForm({...structureForm, otherComponents: updated});
+                        }}
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => handleRemoveComponent(component.id)}
+                    >
+                      <X className="w-4 h-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+
+              {/* Total Fee (Read-only, Auto-calculated) */}
+              <div className="space-y-2 border-t pt-4">
+                <Label>Total Fee (₹) - Auto Calculated</Label>
+                <Input 
+                  type="number"
+                  value={calculateTotalFee().toFixed(2)}
+                  readOnly
+                  className="bg-muted font-semibold text-lg"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Total = Tuition + Transport + Lab + Other Components
+                </p>
+              </div>
+
+              <DialogFooter>
+                <Button 
+                  variant="outline" 
+                  onClick={() => {
+                    setIsEditStructureOpen(false);
+                    setEditingStructure(null);
+                    setStructureForm({
+                      classId: "",
+                      academicYearId: "",
+                      frequency: "yearly",
+                      tuitionFee: "",
+                      transportFee: "",
+                      labFee: "",
+                      otherComponents: []
+                    });
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button onClick={handleSaveStructure}>
+                  {editingStructure ? "Update Structure" : "Create Structure"}
+                </Button>
+              </DialogFooter>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Component Breakdown Dialog */}
+        <Dialog open={isBreakdownOpen} onOpenChange={setIsBreakdownOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Component-wise {breakdownData?.type === 'paid' ? 'Paid' : 'Pending'} Breakdown</DialogTitle>
+              <DialogDescription>
+                {selectedStudentFee?.studentName} - {selectedStudentFee?.className}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              {breakdownData && breakdownData.breakdown && Object.keys(breakdownData.breakdown).length > 0 ? (
+                <>
+                  <div className="grid grid-cols-3 gap-4 p-4 bg-muted/50 rounded-lg">
+                    <div>
+                      <p className="text-sm text-muted-foreground">Total Fee</p>
+                      <p className="text-lg font-semibold">₹{breakdownData.totalFee.toLocaleString()}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Total Paid</p>
+                      <p className="text-lg font-semibold text-secondary">₹{breakdownData.paidAmount.toLocaleString()}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Total Pending</p>
+                      <p className="text-lg font-semibold text-destructive">₹{breakdownData.pendingAmount.toLocaleString()}</p>
+                    </div>
+                  </div>
+                  <div className="space-y-3">
+                    {Object.entries(breakdownData.breakdown).map(([component, data]: [string, any]) => (
+                      <div key={component} className="border rounded-lg p-4">
+                        <div className="flex justify-between items-center mb-3">
+                          <h4 className="font-semibold capitalize">{component.replace(/_/g, ' ')}</h4>
+                          <Badge variant="outline">
+                            Total: ₹{data.total.toLocaleString()}
+                          </Badge>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <p className="text-sm text-muted-foreground">Paid</p>
+                            <p className="text-lg font-semibold text-secondary">₹{data.paid.toLocaleString()}</p>
+                            {data.total > 0 && (
+                              <p className="text-xs text-muted-foreground mt-1">
+                                {((data.paid / data.total) * 100).toFixed(1)}% of total
+                              </p>
+                            )}
+                          </div>
+                          <div>
+                            <p className="text-sm text-muted-foreground">Pending</p>
+                            <p className="text-lg font-semibold text-destructive">₹{data.pending.toLocaleString()}</p>
+                            {data.total > 0 && (
+                              <p className="text-xs text-muted-foreground mt-1">
+                                {((data.pending / data.total) * 100).toFixed(1)}% of total
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <div className="text-center py-8 text-muted-foreground">
+                  <p>No component breakdown available</p>
+                </div>
+              )}
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setIsBreakdownOpen(false)}>Close</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </UnifiedLayout>
   );

@@ -366,6 +366,33 @@ export const studentsApi = {
       method: 'POST',
     });
   },
+
+  update: async (id: string | number, data: {
+    name?: string;
+    rollNo?: string;
+    address?: string;
+    dateOfBirth?: string;
+    gender?: string;
+    bloodGroup?: string;
+    fatherName?: string;
+    fatherPhone?: string;
+    fatherEmail?: string;
+    fatherOccupation?: string;
+    motherName?: string;
+    motherPhone?: string;
+    motherOccupation?: string;
+    emergencyContact?: string;
+    previousSchool?: string;
+    medicalConditions?: string;
+    parentPhone?: string;
+    parentEmail?: string;
+    parentName?: string;
+  }): Promise<{ success: boolean }> => {
+    return apiRequest(`/students/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
 };
 
 // ============ REGISTRATION LINKS API ============
@@ -741,5 +768,173 @@ export const testsApi = {
 
   getResults: async (testId: string): Promise<any[]> => {
     return apiRequest<any[]>(`/tests/${testId}/results`);
+  },
+};
+
+// ============ FEES API ============
+export const feesApi = {
+  // Student Fees
+  getStudentFees: async (classId?: string, searchTerm?: string): Promise<any[]> => {
+    const params = new URLSearchParams();
+    if (classId) params.append('classId', classId);
+    if (searchTerm) params.append('searchTerm', searchTerm);
+    const query = params.toString();
+    return apiRequest<any[]>(`/fees/students${query ? `?${query}` : ''}`);
+  },
+
+  getStudentFeeById: async (studentId: string): Promise<any> => {
+    return apiRequest<any>(`/fees/students/${studentId}`);
+  },
+
+  createStudentFee: async (data: {
+    studentId: string;
+    classId: string;
+    academicYearId?: string;
+    totalFee: number;
+    tuitionFee?: number;
+    transportFee?: number;
+    labFee?: number;
+    otherFees?: any;
+    frequency?: "yearly" | "quarterly" | "monthly";
+    dueDate?: string;
+  }): Promise<{ success: boolean; studentFeeId: string; updated?: boolean }> => {
+    return apiRequest('/fees/students', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  updateStudentFee: async (studentFeeId: string, data: {
+    totalFee: number;
+    tuitionFee?: number;
+    transportFee?: number;
+    labFee?: number;
+    otherFees?: any;
+    frequency?: "yearly" | "quarterly" | "monthly";
+    dueDate?: string;
+  }): Promise<{ success: boolean }> => {
+    return apiRequest(`/fees/students/${studentFeeId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
+  createFeesForClass: async (data: {
+    classId: string;
+    academicYearId?: string;
+    totalFee: number;
+    dueDate?: string;
+  }): Promise<{ success: boolean; created: number; skipped: number; total: number }> => {
+    return apiRequest('/fees/students/bulk', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  // Fee Categories
+  getCategories: async (): Promise<any[]> => {
+    return apiRequest<any[]>('/fees/categories');
+  },
+
+  createCategory: async (data: {
+    name: string;
+    amount: number;
+    frequency: 'monthly' | 'quarterly' | 'yearly';
+    description?: string;
+  }): Promise<{ success: boolean; categoryId: string }> => {
+    return apiRequest('/fees/categories', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  updateCategory: async (id: string, data: {
+    name?: string;
+    amount?: number;
+    frequency?: 'monthly' | 'quarterly' | 'yearly';
+    description?: string;
+    isActive?: boolean;
+  }): Promise<{ success: boolean }> => {
+    return apiRequest(`/fees/categories/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
+  deleteCategory: async (id: string): Promise<{ success: boolean }> => {
+    return apiRequest(`/fees/categories/${id}`, {
+      method: 'DELETE',
+    });
+  },
+
+  // Fee Structure
+  getFeeStructure: async (): Promise<any[]> => {
+    return apiRequest<any[]>('/fees/structure');
+  },
+
+  updateFeeStructure: async (data: {
+    classId: string;
+    academicYearId?: string;
+    totalFee: number;
+    tuitionFee?: number;
+    transportFee?: number;
+    labFee?: number;
+    otherFees?: any;
+    frequency?: "yearly" | "quarterly" | "monthly";
+  }): Promise<{ success: boolean; structureId: string }> => {
+    return apiRequest('/fees/structure', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  deleteFeeStructure: async (id: string): Promise<{ success: boolean }> => {
+    return apiRequest(`/fees/structure/${id}`, {
+      method: 'DELETE',
+    });
+  },
+
+  // Payments
+  recordPayment: async (data: {
+    studentFeeId: string;
+    amount: number;
+    paymentDate: string;
+    paymentMethod?: 'cash' | 'cheque' | 'online' | 'bank_transfer';
+    component?: string;
+    transactionId?: string;
+    receiptNumber?: string;
+    remarks?: string;
+  }): Promise<{ success: boolean; paymentId: string }> => {
+    return apiRequest('/fees/payments', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  // Component Breakdown
+  getComponentBreakdown: async (studentId: string): Promise<{
+    totalFee: number;
+    paidAmount: number;
+    pendingAmount: number;
+    breakdown: Record<string, { total: number; paid: number; pending: number }>;
+  }> => {
+    return apiRequest(`/fees/students/${studentId}/breakdown`);
+  },
+
+  // Summary
+  getSummary: async (): Promise<{
+    totalCollected: number;
+    totalPending: number;
+    fullyPaidCount: number;
+    unpaidCount: number;
+  }> => {
+    return apiRequest('/fees/summary');
+  },
+
+  // Reminders
+  sendReminder: async (studentId: string): Promise<{ success: boolean; message: string }> => {
+    return apiRequest(`/fees/reminders/${studentId}`, {
+      method: 'POST',
+    });
   },
 };

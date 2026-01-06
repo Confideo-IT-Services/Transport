@@ -69,15 +69,40 @@ router.get('/:id/students', authenticateToken, requireTeacher, async (req, res) 
       [id]
     );
 
-    res.json(students.map(s => ({
-      id: s.id,
-      name: s.name,
-      rollNo: s.roll_no,
-      parentPhone: s.parent_phone,
-      parentEmail: s.parent_email,
-      status: s.status,
-      photoUrl: s.photo_url
-    })));
+    res.json(students.map(s => {
+      // Parse submitted_data JSON if it exists
+      let submittedData = null;
+      if (s.submitted_data) {
+        try {
+          submittedData = typeof s.submitted_data === 'string' 
+            ? JSON.parse(s.submitted_data) 
+            : s.submitted_data;
+        } catch (e) {
+          console.error('Error parsing submitted_data:', e);
+          submittedData = null;
+        }
+      }
+
+      return {
+        id: s.id,
+        name: s.name,
+        rollNo: s.roll_no,
+        parentPhone: s.parent_phone,
+        parentEmail: s.parent_email,
+        parentName: s.parent_name,
+        address: s.address,
+        dateOfBirth: s.date_of_birth,
+        gender: s.gender,
+        bloodGroup: s.blood_group,
+        photoUrl: s.photo_url,
+        status: s.status,
+        admissionNumber: s.admission_number || null,
+        submittedData: submittedData,
+        // Map submitted_data fields for easy access
+        fatherName: submittedData?.fatherName || null,
+        motherName: submittedData?.motherName || null,
+      };
+    }));
   } catch (error) {
     console.error('Get class students error:', error);
     res.status(500).json({ error: 'Failed to fetch students' });

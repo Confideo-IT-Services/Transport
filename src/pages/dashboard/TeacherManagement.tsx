@@ -139,6 +139,7 @@ export default function TeacherManagement() {
     try {
       const updateData: any = {
         name: teacherName,
+        username: teacherUsername,
         email: teacherEmail,
         phone: teacherPhone,
       };
@@ -309,14 +310,13 @@ export default function TeacherManagement() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>Username</Label>
+                <Label>Username *</Label>
                 <Input 
                   value={teacherUsername} 
-                  disabled
-                  className="bg-muted"
-                  placeholder="Username cannot be changed"
+                  onChange={(e) => setTeacherUsername(e.target.value)}
+                  placeholder="e.g., priya.sharma" 
+                  required
                 />
-                <p className="text-xs text-muted-foreground">Username cannot be changed after creation</p>
               </div>
               <div className="space-y-2">
                 <Label>New Password (optional)</Label>

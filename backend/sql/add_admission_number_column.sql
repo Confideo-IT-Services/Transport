@@ -9,3 +9,4 @@ ADD COLUMN admission_number VARCHAR(50) UNIQUE NULL;
 CREATE INDEX idx_admission_number ON students(admission_number);
 
 
+

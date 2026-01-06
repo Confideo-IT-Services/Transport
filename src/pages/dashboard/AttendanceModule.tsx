@@ -26,6 +26,11 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
   Table,
   TableBody,
   TableCell,
@@ -47,6 +52,7 @@ import {
   LogOut,
   Info
 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { format, isSameDay } from "date-fns";
 import { toast } from "@/hooks/use-toast";
 
@@ -95,6 +101,12 @@ export default function AttendanceModule() {
   const [selectedTeacherForHistory, setSelectedTeacherForHistory] = useState<{ id: string; name: string } | null>(null);
   const [teacherHistory, setTeacherHistory] = useState<any[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [historyStartDate, setHistoryStartDate] = useState<Date | undefined>(() => {
+    const date = new Date();
+    date.setDate(date.getDate() - 30); // Default to 30 days ago
+    return date;
+  });
+  const [historyEndDate, setHistoryEndDate] = useState<Date | undefined>(new Date());
 
   // Memoize today's date string to prevent infinite loops
   const today = useMemo(() => new Date(), []);
@@ -579,116 +591,23 @@ export default function AttendanceModule() {
                               </Badge>
                             </TableCell>
                             <TableCell className="text-right">
-                              <div className="flex items-center justify-end gap-2">
-                                <Dialog open={markingTeacherId === teacher.id} onOpenChange={(open) => {
-                                  if (!open) {
-                                    setMarkingTeacherId(null);
-                                    setTeacherRemarks('');
-                                  }
-                                }}>
-                                  <DialogTrigger asChild>
-                                    <Button 
-                                      variant="outline" 
-                                      size="sm"
-                                      onClick={() => {
-                                        setMarkingTeacherId(teacher.id);
-                                        setTeacherStatus(teacher.status === "not-marked" || !teacher.status ? "present" : teacher.status as any);
-                                        setTeacherRemarks('');
-                                      }}
-                                    >
-                                      Mark Attendance
-                                    </Button>
-                                  </DialogTrigger>
-                                  <DialogContent>
-                                    <DialogHeader>
-                                      <DialogTitle>Mark Attendance - {teacher.name || teacher.teacherName}</DialogTitle>
-                                      <DialogDescription>
-                                        Select the attendance status for {teacher.name || teacher.teacherName} for {format(today, "MMMM d, yyyy")}
-                                      </DialogDescription>
-                                    </DialogHeader>
-                                    <div className="space-y-4 py-4">
-                                      <div className="space-y-2">
-                                        <label className="text-sm font-medium">Status</label>
-                                        <Select
-                                          value={teacherStatus}
-                                          onValueChange={(value: any) => setTeacherStatus(value)}
-                                        >
-                                          <SelectTrigger>
-                                            <SelectValue />
-                                          </SelectTrigger>
-                                          <SelectContent>
-                                            <SelectItem value="present">Present</SelectItem>
-                                            <SelectItem value="absent">Absent</SelectItem>
-                                            <SelectItem value="late">Late</SelectItem>
-                                            <SelectItem value="leave">On Leave</SelectItem>
-                                          </SelectContent>
-                                        </Select>
-                                      </div>
-                                      <div className="space-y-2">
-                                        <label className="text-sm font-medium">Remarks (Optional)</label>
-                                        <Textarea
-                                          placeholder="Add any remarks..."
-                                          value={teacherRemarks}
-                                          onChange={(e) => setTeacherRemarks(e.target.value)}
-                                        />
-                                      </div>
-                                    </div>
-                                    <DialogFooter>
-                                      <Button
-                                        variant="outline"
-                                        onClick={() => {
-                                          setMarkingTeacherId(null);
-                                          setTeacherRemarks('');
-                                        }}
-                                      >
-                                        Cancel
-                                      </Button>
-                                      <Button
-                                        onClick={async () => {
-                                          await markTeacherAttendance(teacher.id);
-                                          // Dialog will close via onOpenChange
-                                        }}
-                                      >
-                                        Save
-                                      </Button>
-                                    </DialogFooter>
-                                  </DialogContent>
-                                </Dialog>
-                                <Button 
-                                  variant="ghost" 
-                                  size="sm"
-                                  onClick={async () => {
-                                    setSelectedTeacherForHistory({ id: teacher.id, name: teacher.name });
-                                    setIsViewHistoryOpen(true);
-                                    setIsLoadingHistory(true);
-                                    try {
-                                      // Get history for last 30 days
-                                      const endDate = new Date();
-                                      const startDate = new Date();
-                                      startDate.setDate(startDate.getDate() - 30);
-                                      
-                                      const history = await attendanceApi.getTeacherAttendanceHistory(
-                                        teacher.id,
-                                        format(startDate, 'yyyy-MM-dd'),
-                                        format(endDate, 'yyyy-MM-dd')
-                                      );
-                                      setTeacherHistory(history || []);
-                                    } catch (error: any) {
-                                      console.error('Error loading teacher history:', error);
-                                      toast({
-                                        title: "Error",
-                                        description: error?.message || "Failed to load attendance history",
-                                        variant: "destructive"
-                                      });
-                                      setTeacherHistory([]);
-                                    } finally {
-                                      setIsLoadingHistory(false);
-                                    }
-                                  }}
-                                >
-                                  View History
-                                </Button>
-                              </div>
+                              <Button 
+                                variant="ghost" 
+                                size="sm"
+                                onClick={() => {
+                                  setSelectedTeacherForHistory({ id: teacher.id, name: teacher.name });
+                                  setIsViewHistoryOpen(true);
+                                  // Reset dates to default (last 30 days)
+                                  const date = new Date();
+                                  date.setDate(date.getDate() - 30);
+                                  setHistoryStartDate(date);
+                                  setHistoryEndDate(new Date());
+                                  // Don't fetch immediately - wait for user to select date range
+                                  setTeacherHistory([]);
+                                }}
+                              >
+                                View History
+                              </Button>
                             </TableCell>
                           </TableRow>
                         ))
@@ -1297,6 +1216,11 @@ export default function AttendanceModule() {
         if (!open) {
           setSelectedTeacherForHistory(null);
           setTeacherHistory([]);
+          // Reset dates to default
+          const date = new Date();
+          date.setDate(date.getDate() - 30);
+          setHistoryStartDate(date);
+          setHistoryEndDate(new Date());
         }
       }}>
         <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
@@ -1305,10 +1229,111 @@ export default function AttendanceModule() {
               Attendance History - {selectedTeacherForHistory?.name}
             </DialogTitle>
             <DialogDescription>
-              View attendance records for the last 30 days
+              Select a date range to view attendance records
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
+            {/* Date Range Picker */}
+            <div className="grid grid-cols-2 gap-4 pb-4 border-b">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Start Date</label>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      className={cn(
+                        "w-full justify-start text-left font-normal",
+                        !historyStartDate && "text-muted-foreground"
+                      )}
+                    >
+                      <CalendarIcon className="mr-2 h-4 w-4" />
+                      {historyStartDate ? format(historyStartDate, "PPP") : "Pick a date"}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0">
+                    <Calendar
+                      mode="single"
+                      selected={historyStartDate}
+                      onSelect={setHistoryStartDate}
+                      initialFocus
+                    />
+                  </PopoverContent>
+                </Popover>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">End Date</label>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      className={cn(
+                        "w-full justify-start text-left font-normal",
+                        !historyEndDate && "text-muted-foreground"
+                      )}
+                    >
+                      <CalendarIcon className="mr-2 h-4 w-4" />
+                      {historyEndDate ? format(historyEndDate, "PPP") : "Pick a date"}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0">
+                    <Calendar
+                      mode="single"
+                      selected={historyEndDate}
+                      onSelect={setHistoryEndDate}
+                      initialFocus
+                    />
+                  </PopoverContent>
+                </Popover>
+              </div>
+            </div>
+
+            {/* Fetch Button */}
+            <div className="flex justify-end">
+              <Button
+                onClick={async () => {
+                  if (!historyStartDate || !historyEndDate) {
+                    toast({
+                      title: "Error",
+                      description: "Please select both start and end dates",
+                      variant: "destructive"
+                    });
+                    return;
+                  }
+                  if (historyStartDate > historyEndDate) {
+                    toast({
+                      title: "Error",
+                      description: "Start date must be before end date",
+                      variant: "destructive"
+                    });
+                    return;
+                  }
+                  
+                  setIsLoadingHistory(true);
+                  try {
+                    const history = await attendanceApi.getTeacherAttendanceHistory(
+                      selectedTeacherForHistory?.id,
+                      format(historyStartDate, 'yyyy-MM-dd'),
+                      format(historyEndDate, 'yyyy-MM-dd')
+                    );
+                    setTeacherHistory(history || []);
+                  } catch (error: any) {
+                    console.error('Error loading teacher history:', error);
+                    toast({
+                      title: "Error",
+                      description: error?.message || "Failed to load attendance history",
+                      variant: "destructive"
+                    });
+                    setTeacherHistory([]);
+                  } finally {
+                    setIsLoadingHistory(false);
+                  }
+                }}
+                disabled={isLoadingHistory || !historyStartDate || !historyEndDate}
+              >
+                {isLoadingHistory ? "Loading..." : "Fetch History"}
+              </Button>
+            </div>
+
             {isLoadingHistory ? (
               <div className="text-center py-8">
                 <Clock className="w-8 h-8 mx-auto text-muted-foreground animate-spin mb-2" />
@@ -1317,7 +1342,7 @@ export default function AttendanceModule() {
             ) : teacherHistory.length === 0 ? (
               <div className="text-center py-8">
                 <CalendarIcon className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-                <p className="text-muted-foreground">No attendance history found</p>
+                <p className="text-muted-foreground">No attendance history found for the selected date range</p>
               </div>
             ) : (
               <>
@@ -1372,9 +1397,14 @@ export default function AttendanceModule() {
                     <TableBody>
                       {teacherHistory
                         .sort((a: any, b: any) => {
-                          const dateA = new Date(a.date || a.attendanceDate || 0);
-                          const dateB = new Date(b.date || b.attendanceDate || 0);
-                          return dateB.getTime() - dateA.getTime();
+                          try {
+                            const dateA = new Date(a.date || a.attendanceDate || 0);
+                            const dateB = new Date(b.date || b.attendanceDate || 0);
+                            if (isNaN(dateA.getTime()) || isNaN(dateB.getTime())) return 0;
+                            return dateB.getTime() - dateA.getTime();
+                          } catch {
+                            return 0;
+                          }
                         })
                         .map((record: any, index: number) => {
                           const recordDate = record.date || record.attendanceDate;
@@ -1383,32 +1413,66 @@ export default function AttendanceModule() {
                           const status = record.status || 'not-marked';
                           const remarks = record.remarks || record.notes || '';
 
+                          // Helper function to format time strings (handles TIME fields from MySQL)
+                          const formatTime = (timeValue: any): string => {
+                            if (!timeValue) return '-';
+                            
+                            // If it's a time-only string (HH:MM or HH:MM:SS format from MySQL TIME field)
+                            if (typeof timeValue === 'string' && /^\d{1,2}:\d{2}(:\d{2})?$/.test(timeValue)) {
+                              try {
+                                const [hours, minutes] = timeValue.split(':');
+                                const hour = parseInt(hours, 10);
+                                if (isNaN(hour)) return timeValue;
+                                
+                                const ampm = hour >= 12 ? 'PM' : 'AM';
+                                const displayHour = hour % 12 || 12;
+                                return `${displayHour.toString().padStart(2, '0')}:${minutes} ${ampm}`;
+                              } catch {
+                                return timeValue;
+                              }
+                            }
+                            
+                            // If it's a full datetime string, try to parse it
+                            try {
+                              const date = new Date(timeValue);
+                              if (!isNaN(date.getTime())) {
+                                return format(date, 'hh:mm a');
+                              }
+                            } catch {
+                              // Invalid date, return as-is
+                            }
+                            
+                            return '-';
+                          };
+
+                          // Helper function to format date safely
+                          const formatDate = (dateValue: any): string => {
+                            if (!dateValue) return '-';
+                            try {
+                              const date = new Date(dateValue);
+                              if (!isNaN(date.getTime())) {
+                                return format(date, 'dd MMM yyyy (EEE)');
+                              }
+                            } catch {
+                              // Invalid date
+                            }
+                            return String(dateValue);
+                          };
+
                           return (
                             <TableRow key={record.id || index}>
                               <TableCell className="font-medium">
-                                {recordDate ? format(new Date(recordDate), 'dd MMM yyyy (EEE)') : '-'}
+                                {formatDate(recordDate)}
                               </TableCell>
                               <TableCell>
-                                {checkIn ? (
-                                  typeof checkIn === 'string' && checkIn.includes(':') ? (
-                                    checkIn.length > 5 ? format(new Date(checkIn), 'hh:mm a') : checkIn
-                                  ) : (
-                                    format(new Date(checkIn), 'hh:mm a')
-                                  )
-                                ) : (
-                                  <span className="text-muted-foreground">-</span>
-                                )}
+                                <span className={checkIn ? '' : 'text-muted-foreground'}>
+                                  {formatTime(checkIn)}
+                                </span>
                               </TableCell>
                               <TableCell>
-                                {checkOut ? (
-                                  typeof checkOut === 'string' && checkOut.includes(':') ? (
-                                    checkOut.length > 5 ? format(new Date(checkOut), 'hh:mm a') : checkOut
-                                  ) : (
-                                    format(new Date(checkOut), 'hh:mm a')
-                                  )
-                                ) : (
-                                  <span className="text-muted-foreground">-</span>
-                                )}
+                                <span className={checkOut ? '' : 'text-muted-foreground'}>
+                                  {formatTime(checkOut)}
+                                </span>
                               </TableCell>
                               <TableCell>
                                 <Badge
@@ -1440,7 +1504,15 @@ export default function AttendanceModule() {
             )}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsViewHistoryOpen(false)}>
+            <Button variant="outline" onClick={() => {
+              setIsViewHistoryOpen(false);
+              setTeacherHistory([]);
+              // Reset dates to default
+              const date = new Date();
+              date.setDate(date.getDate() - 30);
+              setHistoryStartDate(date);
+              setHistoryEndDate(new Date());
+            }}>
               Close
             </Button>
           </DialogFooter>

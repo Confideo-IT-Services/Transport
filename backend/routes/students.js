@@ -102,6 +102,7 @@ router.post('/', async (req, res) => {
       name, rollNo, classId, schoolId,
       parentPhone, parentEmail, parentName,
       address, dateOfBirth, gender, bloodGroup, photoUrl,
+      admissionNumber, // Admission number from registration form
       // Dynamic fields from form
       fatherName, fatherPhone, fatherEmail, fatherOccupation,
       motherName, motherPhone, motherOccupation,
@@ -133,6 +134,11 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Name, class, and school are required' });
     }
 
+    // Validate admission number if provided (should be mandatory)
+    if (!admissionNumber || admissionNumber.trim() === '') {
+      return res.status(400).json({ error: 'Admission number is required' });
+    }
+
     // Verify school and class exist
     const [schools] = await db.query('SELECT id FROM schools WHERE id = ?', [finalSchoolId]);
     if (schools.length === 0) {
@@ -142,6 +148,43 @@ router.post('/', async (req, res) => {
     const [classes] = await db.query('SELECT id FROM classes WHERE id = ? AND school_id = ?', [finalClassId, finalSchoolId]);
     if (classes.length === 0) {
       return res.status(404).json({ error: 'Class not found' });
+    }
+
+    // Ensure admission_number column exists
+    try {
+      await db.query('SELECT admission_number FROM students LIMIT 1');
+    } catch (err) {
+      if (err.message && err.message.includes("Unknown column 'admission_number'")) {
+        console.log('Creating admission_number column...');
+        try {
+          await db.query('ALTER TABLE students ADD COLUMN admission_number VARCHAR(50)');
+          console.log('✅ admission_number column created');
+        } catch (alterErr) {
+          if (!alterErr.message || !alterErr.message.includes('Duplicate column name')) {
+            throw alterErr;
+          }
+        }
+        try {
+          await db.query('CREATE INDEX idx_admission_number ON students(admission_number)');
+          console.log('✅ admission_number index created');
+        } catch (indexErr) {
+          if (!indexErr.message || !indexErr.message.includes('Duplicate key name')) {
+            console.log('Note: Could not create index, may already exist');
+          }
+        }
+      } else {
+        throw err;
+      }
+    }
+
+    // Check if admission number already exists in this school
+    const trimmedAdmissionNumber = admissionNumber.trim();
+    const [existingAdmission] = await db.query(
+      'SELECT id FROM students WHERE admission_number = ? AND school_id = ?',
+      [trimmedAdmissionNumber, finalSchoolId]
+    );
+    if (existingAdmission.length > 0) {
+      return res.status(400).json({ error: 'Admission number already exists in this school' });
     }
 
     // Map form fields to database columns
@@ -195,13 +238,16 @@ router.post('/', async (req, res) => {
       }
     }
 
+    // Add admissionNumber to submittedData for reference
+    submittedData.admissionNumber = trimmedAdmissionNumber;
+
     const [result] = await db.query(
       `INSERT INTO students (id, name, roll_no, class_id, school_id, parent_phone, parent_email, 
-       parent_name, address, date_of_birth, gender, blood_group, photo_url, registration_code, submitted_data, status, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NOW())`,
+       parent_name, address, date_of_birth, gender, blood_group, photo_url, registration_code, submitted_data, admission_number, status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NOW())`,
       [studentId, finalName, rollNo || null, finalClassId, finalSchoolId, finalParentPhone, 
        finalParentEmail, finalParentName, address || null, dateOfBirth || null,
-       gender || null, bloodGroup || null, photoUrl || null, registrationCode || null, JSON.stringify(submittedData)]
+       gender || null, bloodGroup || null, photoUrl || null, registrationCode || null, JSON.stringify(submittedData), trimmedAdmissionNumber]
     );
 
     console.log('✅ Student created:', { 
@@ -209,6 +255,7 @@ router.post('/', async (req, res) => {
       name: finalName, 
       classId: finalClassId, 
       schoolId: finalSchoolId, 
+      admissionNumber: trimmedAdmissionNumber,
       status: 'pending',
       registrationCode: registrationCode || 'none'
     });
@@ -277,9 +324,11 @@ router.post('/:id/approve', authenticateToken, requireAdmin, async (req, res) =>
       return res.status(404).json({ error: 'Student not found' });
     }
 
-    // Generate admission number if not already exists
+    // Get admission number - it should already exist from registration
+    // Only generate if missing (for backward compatibility with old records)
     let admissionNumber = students[0].admission_number;
     if (!admissionNumber) {
+      console.log('⚠️ Admission number missing for student, generating one...');
       const currentYear = new Date().getFullYear();
       // Use last 4 characters of UUID or generate sequential number
       const studentIdSuffix = id.slice(-4).toUpperCase();
@@ -291,8 +340,8 @@ router.post('/:id/approve', authenticateToken, requireAdmin, async (req, res) =>
       while (true) {
         try {
           const [existing] = await db.query(
-            'SELECT id FROM students WHERE admission_number = ?',
-            [uniqueAdmissionNumber]
+            'SELECT id FROM students WHERE admission_number = ? AND school_id = ?',
+            [uniqueAdmissionNumber, schoolId]
           );
           if (existing.length === 0) {
             break;
@@ -308,7 +357,22 @@ router.post('/:id/approve', authenticateToken, requireAdmin, async (req, res) =>
         }
       }
       admissionNumber = uniqueAdmissionNumber;
+      console.log('✅ Generated admission number:', admissionNumber);
+    } else {
+      console.log('✅ Using existing admission number from registration:', admissionNumber);
     }
+
+    // Get student's class_id before updating
+    const [studentInfo] = await db.query(
+      'SELECT class_id FROM students WHERE id = ? AND school_id = ?',
+      [id, schoolId]
+    );
+
+    if (studentInfo.length === 0) {
+      return res.status(404).json({ error: 'Student not found' });
+    }
+
+    const studentClassId = studentInfo[0].class_id;
 
     // Now update with admission number
     const [result] = await db.query(
@@ -321,6 +385,83 @@ router.post('/:id/approve', authenticateToken, requireAdmin, async (req, res) =>
     }
 
     console.log('✅ Student approved:', { id, admissionNumber, affectedRows: result.affectedRows });
+
+    // If fee structure exists for this class, create fee record for the student
+    try {
+      const [feeStructures] = await db.query(
+        'SELECT * FROM fee_structure WHERE class_id = ? AND school_id = ?',
+        [studentClassId, schoolId]
+      );
+
+      if (feeStructures.length > 0) {
+        const structure = feeStructures[0];
+        const finalTotalFee = parseFloat(structure.total_fee) || 0;
+
+        // Check if fee record already exists
+        const [existingFee] = await db.query(
+          'SELECT id FROM student_fees WHERE student_id = ? AND class_id = ? LIMIT 1',
+          [id, studentClassId]
+        );
+
+        if (existingFee.length === 0 && finalTotalFee > 0) {
+          // Build component breakdown from fee structure
+          const componentBreakdown = {
+            tuition_fee: { total: parseFloat(structure.tuition_fee) || 0, paid: 0, pending: parseFloat(structure.tuition_fee) || 0 },
+            transport_fee: { total: parseFloat(structure.transport_fee) || 0, paid: 0, pending: parseFloat(structure.transport_fee) || 0 },
+            lab_fee: { total: parseFloat(structure.lab_fee) || 0, paid: 0, pending: parseFloat(structure.lab_fee) || 0 }
+          };
+
+          // Add other components if they exist
+          if (structure.other_fees) {
+            try {
+              const otherFees = typeof structure.other_fees === 'string' 
+                ? JSON.parse(structure.other_fees) 
+                : structure.other_fees;
+              
+              if (otherFees && otherFees.components && Array.isArray(otherFees.components)) {
+                otherFees.components.forEach(comp => {
+                  const compKey = comp.name.toLowerCase().replace(/\s+/g, '_');
+                  componentBreakdown[compKey] = { total: comp.amount || 0, paid: 0, pending: comp.amount || 0 };
+                });
+              }
+            } catch (parseError) {
+              console.error('Error parsing other_fees:', parseError);
+            }
+          }
+
+          // Create fee record
+          const studentFeeId = uuidv4();
+          
+          try {
+            await db.query(
+              `INSERT INTO student_fees (id, student_id, class_id, school_id, academic_year_id, total_fee, paid_amount, pending_amount, status, due_date, component_breakdown, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, 0, ?, 'unpaid', NULL, ?, NOW())`,
+              [
+                studentFeeId,
+                id,
+                studentClassId,
+                schoolId,
+                structure.academic_year_id || null,
+                finalTotalFee,
+                finalTotalFee,
+                JSON.stringify(componentBreakdown)
+              ]
+            );
+            console.log(`✅ Auto-created fee record for approved student ${id} in class ${studentClassId}`);
+          } catch (feeError) {
+            // If duplicate or other error, log but don't fail student approval
+            if (feeError.code === 'ER_DUP_ENTRY' || feeError.message?.includes('Duplicate')) {
+              console.log(`⚠️ Fee record already exists for student ${id}, skipping creation`);
+            } else {
+              console.error('Error creating fee record for approved student:', feeError);
+            }
+          }
+        }
+      }
+    } catch (feeStructureError) {
+      // Don't fail student approval if fee structure check fails
+      console.error('Error checking fee structure for approved student:', feeStructureError);
+    }
 
     res.json({ success: true, admissionNumber });
   } catch (error) {
@@ -366,6 +507,109 @@ router.post('/:id/reject', authenticateToken, requireAdmin, async (req, res) => 
   } catch (error) {
     console.error('Reject student error:', error);
     res.status(500).json({ error: 'Failed to reject student' });
+  }
+});
+
+// Update student (Teacher can update their class students)
+router.put('/:id', authenticateToken, requireTeacher, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const schoolId = req.user.schoolId;
+    const teacherId = req.user.id;
+
+    // Get student and verify teacher has access (student must be in teacher's assigned class)
+    const [students] = await db.query(`
+      SELECT s.*, c.class_teacher_id 
+      FROM students s
+      LEFT JOIN classes c ON s.class_id = c.id
+      WHERE s.id = ? AND s.school_id = ?
+    `, [id, schoolId]);
+
+    if (students.length === 0) {
+      return res.status(404).json({ error: 'Student not found' });
+    }
+
+    const student = students[0];
+    
+    // Verify teacher is the class teacher for this student's class
+    if (student.class_teacher_id !== teacherId) {
+      return res.status(403).json({ error: 'Access denied. You can only update students in your assigned class' });
+    }
+
+    const {
+      name, rollNo, address, dateOfBirth, gender, bloodGroup,
+      fatherName, fatherPhone, fatherEmail, fatherOccupation,
+      motherName, motherPhone, motherOccupation,
+      emergencyContact, previousSchool, medicalConditions,
+      parentPhone, parentEmail, parentName
+    } = req.body;
+
+    // Build update query dynamically
+    const updates = [];
+    const values = [];
+
+    if (name !== undefined) { updates.push('name = ?'); values.push(name); }
+    if (rollNo !== undefined) { updates.push('roll_no = ?'); values.push(rollNo); }
+    if (address !== undefined) { updates.push('address = ?'); values.push(address || null); }
+    if (dateOfBirth !== undefined) { updates.push('date_of_birth = ?'); values.push(dateOfBirth || null); }
+    if (gender !== undefined) { updates.push('gender = ?'); values.push(gender || null); }
+    if (bloodGroup !== undefined) { updates.push('blood_group = ?'); values.push(bloodGroup || null); }
+    if (parentPhone !== undefined) { updates.push('parent_phone = ?'); values.push(parentPhone || null); }
+    if (parentEmail !== undefined) { updates.push('parent_email = ?'); values.push(parentEmail || null); }
+    if (parentName !== undefined) { updates.push('parent_name = ?'); values.push(parentName || null); }
+
+    // Update submitted_data JSON if any fields are provided
+    let submittedData = null;
+    try {
+      if (student.submitted_data) {
+        submittedData = typeof student.submitted_data === 'string' 
+          ? JSON.parse(student.submitted_data) 
+          : student.submitted_data;
+      } else {
+        submittedData = {};
+      }
+    } catch (e) {
+      submittedData = {};
+    }
+
+    // Update submitted_data fields
+    if (fatherName !== undefined) submittedData.fatherName = fatherName || null;
+    if (fatherPhone !== undefined) submittedData.fatherPhone = fatherPhone || null;
+    if (fatherEmail !== undefined) submittedData.fatherEmail = fatherEmail || null;
+    if (fatherOccupation !== undefined) submittedData.fatherOccupation = fatherOccupation || null;
+    if (motherName !== undefined) submittedData.motherName = motherName || null;
+    if (motherPhone !== undefined) submittedData.motherPhone = motherPhone || null;
+    if (motherOccupation !== undefined) submittedData.motherOccupation = motherOccupation || null;
+    if (emergencyContact !== undefined) submittedData.emergencyContact = emergencyContact || null;
+    if (previousSchool !== undefined) submittedData.previousSchool = previousSchool || null;
+    if (medicalConditions !== undefined) submittedData.medicalConditions = medicalConditions || null;
+
+    if (Object.keys(submittedData).length > 0) {
+      updates.push('submitted_data = ?');
+      values.push(JSON.stringify(submittedData));
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+
+    values.push(id);
+
+    const [result] = await db.query(
+      `UPDATE students SET ${updates.join(', ')}, updated_at = NOW() WHERE id = ?`,
+      values
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Student not found' });
+    }
+
+    console.log('✅ Student updated:', { id, updatedFields: updates.length });
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Update student error:', error);
+    res.status(500).json({ error: 'Failed to update student' });
   }
 });
 

@@ -25,6 +25,7 @@ const timetableRoutes = require('./routes/timetable');
 const attendanceRoutes = require('./routes/attendance');
 const testsRoutes = require('./routes/tests');
 const academicYearsRoutes = require('./routes/academicYears');
+const feesRoutes = require('./routes/fees');
 
 // Use routes
 app.use('/api/auth', authRoutes);
@@ -40,6 +41,7 @@ app.use('/api/timetable', timetableRoutes);
 app.use('/api/attendance', attendanceRoutes);
 app.use('/api/tests', testsRoutes);
 app.use('/api/academic-years', academicYearsRoutes);
+app.use('/api/fees', feesRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
