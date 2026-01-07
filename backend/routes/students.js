@@ -510,14 +510,20 @@ router.post('/:id/reject', authenticateToken, requireAdmin, async (req, res) => 
   }
 });
 
-// Update student (Teacher can update their class students)
-router.put('/:id', authenticateToken, requireTeacher, async (req, res) => {
+// Update student (Admin can update any student, Teacher can update their class students)
+router.put('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     const schoolId = req.user.schoolId;
-    const teacherId = req.user.id;
+    const userId = req.user.id;
+    const userRole = req.user.role;
 
-    // Get student and verify teacher has access (student must be in teacher's assigned class)
+    // Verify user is admin or teacher
+    if (userRole !== 'admin' && userRole !== 'teacher') {
+      return res.status(403).json({ error: 'Access denied. Admin or Teacher role required' });
+    }
+
+    // Get student and verify access
     const [students] = await db.query(`
       SELECT s.*, c.class_teacher_id 
       FROM students s
@@ -531,9 +537,11 @@ router.put('/:id', authenticateToken, requireTeacher, async (req, res) => {
 
     const student = students[0];
     
-    // Verify teacher is the class teacher for this student's class
-    if (student.class_teacher_id !== teacherId) {
-      return res.status(403).json({ error: 'Access denied. You can only update students in your assigned class' });
+    // If teacher, verify they are the class teacher for this student's class
+    if (userRole === 'teacher') {
+      if (student.class_teacher_id !== userId) {
+        return res.status(403).json({ error: 'Access denied. You can only update students in your assigned class' });
+      }
     }
 
     const {
@@ -541,8 +549,34 @@ router.put('/:id', authenticateToken, requireTeacher, async (req, res) => {
       fatherName, fatherPhone, fatherEmail, fatherOccupation,
       motherName, motherPhone, motherOccupation,
       emergencyContact, previousSchool, medicalConditions,
-      parentPhone, parentEmail, parentName
+      parentPhone, parentEmail, parentName,
+      extra_fields // NEW: Handle extra_fields for ID cards
     } = req.body;
+
+    // Block teachers from editing extra_fields
+    if (userRole === 'teacher' && extra_fields !== undefined) {
+      return res.status(403).json({ error: 'Access denied. Only School Admins can edit ID card fields' });
+    }
+
+    // Handle extra_fields merging (only for admins)
+    let finalExtraFields = {};
+    if (userRole === 'admin' && extra_fields !== undefined) {
+      // Get existing extra_fields
+      try {
+        if (student.extra_fields) {
+          finalExtraFields = typeof student.extra_fields === 'string' 
+            ? JSON.parse(student.extra_fields) 
+            : student.extra_fields;
+        }
+      } catch (e) {
+        finalExtraFields = {};
+      }
+      
+      // Merge with new extra_fields (don't overwrite existing keys unless provided)
+      if (typeof extra_fields === 'object' && extra_fields !== null) {
+        finalExtraFields = { ...finalExtraFields, ...extra_fields };
+      }
+    }
 
     // Build update query dynamically
     const updates = [];
@@ -557,6 +591,12 @@ router.put('/:id', authenticateToken, requireTeacher, async (req, res) => {
     if (parentPhone !== undefined) { updates.push('parent_phone = ?'); values.push(parentPhone || null); }
     if (parentEmail !== undefined) { updates.push('parent_email = ?'); values.push(parentEmail || null); }
     if (parentName !== undefined) { updates.push('parent_name = ?'); values.push(parentName || null); }
+    
+    // Add extra_fields update (only if admin and provided)
+    if (userRole === 'admin' && extra_fields !== undefined) {
+      updates.push('extra_fields = ?');
+      values.push(JSON.stringify(finalExtraFields));
+    }
 
     // Update submitted_data JSON if any fields are provided
     let submittedData = null;

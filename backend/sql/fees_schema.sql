@@ -79,3 +79,4 @@ CREATE TABLE IF NOT EXISTS fee_payments (
     INDEX idx_receipt_number (receipt_number)
 );
 
+

@@ -26,6 +26,8 @@ const attendanceRoutes = require('./routes/attendance');
 const testsRoutes = require('./routes/tests');
 const academicYearsRoutes = require('./routes/academicYears');
 const feesRoutes = require('./routes/fees');
+const idCardTemplatesRoutes = require('./routes/idCardTemplates');
+const idCardGenerationRoutes = require('./routes/idCardGeneration');
 
 // Use routes
 app.use('/api/auth', authRoutes);
@@ -42,6 +44,8 @@ app.use('/api/attendance', attendanceRoutes);
 app.use('/api/tests', testsRoutes);
 app.use('/api/academic-years', academicYearsRoutes);
 app.use('/api/fees', feesRoutes);
+app.use('/api/id-templates', idCardTemplatesRoutes);
+app.use('/api/id-cards', idCardGenerationRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

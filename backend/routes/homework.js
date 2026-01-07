@@ -175,21 +175,50 @@ router.post('/:id/completions', authenticateToken, requireTeacher, async (req, r
       return res.status(400).json({ error: 'studentId and completed are required' });
     }
 
+    console.log('Update completion request:', { 
+      homeworkId: id, 
+      studentId, 
+      completed, 
+      userId: req.user.id, 
+      userRole: req.user.role,
+      schoolId: req.user.schoolId 
+    });
+
     // Verify homework exists and user has access
-    let accessQuery = 'SELECT id FROM homework WHERE id = ?';
+    let accessQuery = 'SELECT h.id, h.teacher_id, h.school_id FROM homework h WHERE h.id = ?';
     const accessParams = [id];
 
     if (req.user.role === 'teacher') {
-      accessQuery += ' AND teacher_id = ?';
-      accessParams.push(req.user.id);
+      // For teachers, check if they have access to the homework's class or school
+      accessQuery += ' AND (h.teacher_id = ? OR h.school_id = ?)';
+      accessParams.push(req.user.id, req.user.schoolId);
     } else if (req.user.role === 'admin') {
-      accessQuery += ' AND school_id = ?';
+      accessQuery += ' AND h.school_id = ?';
       accessParams.push(req.user.schoolId);
     }
 
     const [homework] = await db.query(accessQuery, accessParams);
+    
+    console.log('Homework access check:', { 
+      query: accessQuery, 
+      params: accessParams, 
+      found: homework.length > 0,
+      homework: homework[0] || null
+    });
+    
     if (homework.length === 0) {
-      return res.status(404).json({ error: 'Homework not found or access denied' });
+      // Try to find the homework without access restriction to see if it exists
+      const [anyHomework] = await db.query('SELECT id, teacher_id, school_id FROM homework WHERE id = ?', [id]);
+      if (anyHomework.length === 0) {
+        console.log('Homework does not exist in database:', id);
+        return res.status(404).json({ error: 'Homework not found' });
+      } else {
+        console.log('Homework exists but access denied:', { 
+          homework: anyHomework[0], 
+          user: { id: req.user.id, role: req.user.role, schoolId: req.user.schoolId }
+        });
+        return res.status(403).json({ error: 'Access denied to this homework' });
+      }
     }
 
     // Insert or update completion status
@@ -230,21 +259,42 @@ router.post('/:id/completions/bulk', authenticateToken, requireTeacher, async (r
       return res.status(400).json({ error: 'completions must be an array' });
     }
 
+    console.log('Bulk update completion request:', { 
+      homeworkId: id, 
+      completionsCount: completions.length,
+      userId: req.user.id, 
+      userRole: req.user.role,
+      schoolId: req.user.schoolId 
+    });
+
     // Verify homework exists and user has access
-    let accessQuery = 'SELECT id FROM homework WHERE id = ?';
+    let accessQuery = 'SELECT h.id, h.teacher_id, h.school_id FROM homework h WHERE h.id = ?';
     const accessParams = [id];
 
     if (req.user.role === 'teacher') {
-      accessQuery += ' AND teacher_id = ?';
-      accessParams.push(req.user.id);
+      // For teachers, check if they have access to the homework's class or school
+      accessQuery += ' AND (h.teacher_id = ? OR h.school_id = ?)';
+      accessParams.push(req.user.id, req.user.schoolId);
     } else if (req.user.role === 'admin') {
-      accessQuery += ' AND school_id = ?';
+      accessQuery += ' AND h.school_id = ?';
       accessParams.push(req.user.schoolId);
     }
 
     const [homework] = await db.query(accessQuery, accessParams);
+    
     if (homework.length === 0) {
-      return res.status(404).json({ error: 'Homework not found or access denied' });
+      // Try to find the homework without access restriction
+      const [anyHomework] = await db.query('SELECT id, teacher_id, school_id FROM homework WHERE id = ?', [id]);
+      if (anyHomework.length === 0) {
+        console.log('Homework does not exist in database:', id);
+        return res.status(404).json({ error: 'Homework not found' });
+      } else {
+        console.log('Homework exists but access denied:', { 
+          homework: anyHomework[0], 
+          user: { id: req.user.id, role: req.user.role, schoolId: req.user.schoolId }
+        });
+        return res.status(403).json({ error: 'Access denied to this homework' });
+      }
     }
 
     // Start transaction

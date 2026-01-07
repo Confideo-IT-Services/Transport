@@ -61,6 +61,7 @@ interface Student {
   registrationCode?: string | null;
   submittedData?: any;
   classId?: string;
+  extra_fields?: Record<string, any>; // NEW: ID card extra fields
 }
 
 // Component to display student profile with only submitted fields
@@ -390,6 +391,8 @@ export default function StudentManagement() {
   const [filterClass, setFilterClass] = useState("all");
   const [filterStatus, setFilterStatus] = useState("all");
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
+  const [editingStudent, setEditingStudent] = useState<Student | null>(null);
+  const [showEditDialog, setShowEditDialog] = useState(false);
   const [studentFieldConfig, setStudentFieldConfig] = useState<FieldConfig[]>([]);
   const [showLinkDialog, setShowLinkDialog] = useState(false);
   const [showFieldConfigDialog, setShowFieldConfigDialog] = useState(false);
@@ -503,6 +506,45 @@ export default function StudentManagement() {
       console.error('Error rejecting student:', error);
       const errorMessage = error?.response?.data?.error || error?.message || "Failed to reject student";
       toast.error(errorMessage);
+    }
+  };
+
+  const handleEditStudent = (student: Student) => {
+    setEditingStudent({ ...student });
+    setShowEditDialog(true);
+  };
+
+  const handleSaveStudent = async () => {
+    if (!editingStudent) return;
+
+    try {
+      setIsLoading(true);
+      
+      // Extract extra_fields if they exist
+      const { extra_fields, ...updateData } = editingStudent;
+      
+      // Prepare update payload
+      const payload: any = { ...updateData };
+      if (extra_fields) {
+        payload.extra_fields = extra_fields;
+      }
+
+      await studentsApi.update(editingStudent.id, payload);
+      
+      // Update local state
+      setStudents(prev => prev.map(s => 
+        s.id === editingStudent.id ? { ...s, ...editingStudent } : s
+      ));
+      
+      toast.success("Student updated successfully");
+      setShowEditDialog(false);
+      setEditingStudent(null);
+    } catch (error: any) {
+      console.error('Error updating student:', error);
+      const errorMessage = error?.response?.data?.error || error?.message || "Failed to update student";
+      toast.error(errorMessage);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -811,13 +853,24 @@ export default function StudentManagement() {
                       </td>
                       <td className="p-4 text-muted-foreground">{student.parentPhone}</td>
                       <td className="p-4">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => setSelectedStudent(student)}
-                        >
-                          <Eye className="w-4 h-4" />
-                        </Button>
+                        <div className="flex gap-2">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => setSelectedStudent(student)}
+                          >
+                            <Eye className="w-4 h-4" />
+                          </Button>
+                          {user?.role === 'admin' && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleEditStudent(student)}
+                            >
+                              <Settings className="w-4 h-4" />
+                            </Button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -1114,6 +1167,166 @@ export default function StudentManagement() {
                 onReject={handleReject}
               />
             )}
+          </DialogContent>
+        </Dialog>
+
+        {/* Edit Student Dialog */}
+        <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Edit Student</DialogTitle>
+              <DialogDescription>Update student information and ID card fields.</DialogDescription>
+            </DialogHeader>
+            {editingStudent && (
+              <div className="space-y-6">
+                {/* Basic Information */}
+                <div>
+                  <h3 className="text-lg font-semibold mb-4">Basic Information</h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label>Name</Label>
+                      <Input 
+                        value={editingStudent.name}
+                        onChange={(e) => setEditingStudent({ ...editingStudent, name: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <Label>Roll Number</Label>
+                      <Input 
+                        value={editingStudent.rollNo}
+                        onChange={(e) => setEditingStudent({ ...editingStudent, rollNo: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <Label>Date of Birth</Label>
+                      <Input 
+                        type="date"
+                        value={editingStudent.dateOfBirth}
+                        onChange={(e) => setEditingStudent({ ...editingStudent, dateOfBirth: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <Label>Gender</Label>
+                      <Select 
+                        value={editingStudent.gender}
+                        onValueChange={(value) => setEditingStudent({ ...editingStudent, gender: value })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="male">Male</SelectItem>
+                          <SelectItem value="female">Female</SelectItem>
+                          <SelectItem value="other">Other</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label>Blood Group</Label>
+                      <Input 
+                        value={editingStudent.bloodGroup || ''}
+                        onChange={(e) => setEditingStudent({ ...editingStudent, bloodGroup: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <Label>Address</Label>
+                      <Input 
+                        value={editingStudent.address || ''}
+                        onChange={(e) => setEditingStudent({ ...editingStudent, address: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* ID Card Information */}
+                <div className="border-t pt-4">
+                  <h3 className="text-lg font-semibold mb-4">ID Card Information</h3>
+                  <p className="text-sm text-muted-foreground mb-4">
+                    These fields are used for ID card generation. Only School Admins can edit these fields.
+                  </p>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label>Blood Group (ID Card)</Label>
+                      <Input 
+                        value={editingStudent.extra_fields?.blood_group || ''}
+                        onChange={(e) => setEditingStudent({ 
+                          ...editingStudent, 
+                          extra_fields: { 
+                            ...(editingStudent.extra_fields || {}), 
+                            blood_group: e.target.value 
+                          } 
+                        })}
+                        placeholder="e.g., A+, B-, O+"
+                      />
+                    </div>
+                    <div>
+                      <Label>House</Label>
+                      <Input 
+                        value={editingStudent.extra_fields?.house || ''}
+                        onChange={(e) => setEditingStudent({ 
+                          ...editingStudent, 
+                          extra_fields: { 
+                            ...(editingStudent.extra_fields || {}), 
+                            house: e.target.value 
+                          } 
+                        })}
+                        placeholder="e.g., Red House, Blue House"
+                      />
+                    </div>
+                    <div>
+                      <Label>ID Valid Until</Label>
+                      <Input 
+                        type="date"
+                        value={editingStudent.extra_fields?.id_valid_upto || ''}
+                        onChange={(e) => setEditingStudent({ 
+                          ...editingStudent, 
+                          extra_fields: { 
+                            ...(editingStudent.extra_fields || {}), 
+                            id_valid_upto: e.target.value 
+                          } 
+                        })}
+                      />
+                    </div>
+                    <div>
+                      <Label>Additional Field 1</Label>
+                      <Input 
+                        value={editingStudent.extra_fields?.additional_field_1 || ''}
+                        onChange={(e) => setEditingStudent({ 
+                          ...editingStudent, 
+                          extra_fields: { 
+                            ...(editingStudent.extra_fields || {}), 
+                            additional_field_1: e.target.value 
+                          } 
+                        })}
+                        placeholder="Custom field"
+                      />
+                    </div>
+                    <div>
+                      <Label>Additional Field 2</Label>
+                      <Input 
+                        value={editingStudent.extra_fields?.additional_field_2 || ''}
+                        onChange={(e) => setEditingStudent({ 
+                          ...editingStudent, 
+                          extra_fields: { 
+                            ...(editingStudent.extra_fields || {}), 
+                            additional_field_2: e.target.value 
+                          } 
+                        })}
+                        placeholder="Custom field"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setShowEditDialog(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleSaveStudent} disabled={isLoading}>
+                {isLoading ? "Saving..." : "Save Changes"}
+              </Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
 

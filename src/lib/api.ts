@@ -387,6 +387,7 @@ export const studentsApi = {
     parentPhone?: string;
     parentEmail?: string;
     parentName?: string;
+    extra_fields?: Record<string, any>; // NEW: ID card extra fields
   }): Promise<{ success: boolean }> => {
     return apiRequest(`/students/${id}`, {
       method: 'PUT',
@@ -462,6 +463,48 @@ export const uploadApi = {
     if (!response.ok) {
       const error = await response.json().catch(() => ({ error: 'Upload failed' }));
       throw new Error(error.error || 'Failed to upload photo');
+    }
+    
+    return response.json();
+  },
+
+  uploadIdTemplate: async (file: File): Promise<{ success: boolean; templateUrl: string; fileName: string }> => {
+    const formData = new FormData();
+    formData.append('template', file);
+    
+    const token = getToken();
+    const response = await fetch(`${API_BASE_URL}/upload/id-template`, {
+      method: 'POST',
+      headers: token ? {
+        'Authorization': `Bearer ${token}`
+      } : {},
+      body: formData,
+    });
+    
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Upload failed' }));
+      throw new Error(error.error || 'Failed to upload ID template');
+    }
+    
+    return response.json();
+  },
+
+  uploadIdLayout: async (file: File): Promise<{ success: boolean; layoutUrl: string; fileName: string }> => {
+    const formData = new FormData();
+    formData.append('layout', file);
+    
+    const token = getToken();
+    const response = await fetch(`${API_BASE_URL}/upload/id-layout`, {
+      method: 'POST',
+      headers: token ? {
+        'Authorization': `Bearer ${token}`
+      } : {},
+      body: formData,
+    });
+    
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Upload failed' }));
+      throw new Error(error.error || 'Failed to upload ID layout');
     }
     
     return response.json();
@@ -936,5 +979,147 @@ export const feesApi = {
     return apiRequest(`/fees/reminders/${studentId}`, {
       method: 'POST',
     });
+  },
+};
+
+// ============ ID CARD TEMPLATES API ============
+export interface IDCardTemplate {
+  id: string;
+  schoolId: string;
+  name: string;
+  templateData: {
+    elements?: Array<{
+      id: string;
+      type: 'photo' | 'text' | 'logo' | 'qr' | 'textbox';
+      label: string;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      fontSize?: number;
+      fontFamily?: string;
+      fontWeight?: string;
+      fontStyle?: string;
+      textAlign?: 'left' | 'center' | 'right';
+      color?: string;
+      field?: string;
+      photoShape?: 'circle' | 'square' | 'rounded' | 'rectangle';
+    }>;
+    s3_layout_url?: string; // NEW: S3 URL for layout JSON
+    field_mappings?: Record<string, string>; // NEW: Field mappings
+  };
+  layoutJsonUrl?: string; // NEW: Prefer using this for generation
+  backgroundImageUrl?: string;
+  cardWidth: number;
+  cardHeight: number;
+  orientation: 'portrait' | 'landscape';
+  sheetSize: string;
+  isDefault: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const idCardTemplatesApi = {
+  getBySchool: async (schoolId: string): Promise<IDCardTemplate[]> => {
+    return apiRequest<IDCardTemplate[]>(`/id-templates/school/${schoolId}`);
+  },
+
+  getById: async (id: string): Promise<IDCardTemplate> => {
+    return apiRequest<IDCardTemplate>(`/id-templates/${id}`);
+  },
+
+  create: async (data: {
+    schoolId: string;
+    name: string;
+    templateData?: IDCardTemplate['templateData'];
+    layoutJsonUrl?: string; // NEW
+    backgroundImageUrl?: string;
+    cardWidth?: number;
+    cardHeight?: number;
+    orientation?: 'portrait' | 'landscape';
+    sheetSize?: string;
+    isDefault?: boolean;
+  }): Promise<{ id: string; message: string }> => {
+    return apiRequest('/id-templates', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  update: async (id: string, data: {
+    name?: string;
+    templateData?: IDCardTemplate['templateData'];
+    layoutJsonUrl?: string; // NEW
+    backgroundImageUrl?: string;
+    cardWidth?: number;
+    cardHeight?: number;
+    orientation?: 'portrait' | 'landscape';
+    sheetSize?: string;
+    isDefault?: boolean;
+  }): Promise<{ message: string }> => {
+    return apiRequest(`/id-templates/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
+  delete: async (id: string): Promise<{ message: string }> => {
+    return apiRequest(`/id-templates/${id}`, {
+      method: 'DELETE',
+    });
+  },
+};
+
+// ============ ID CARD GENERATION API ============
+export interface StudentForIDCard {
+  id: string;
+  name: string;
+  rollNo: string;
+  admissionNumber: string;
+  dateOfBirth: string;
+  gender: string;
+  bloodGroup: string;
+  photoUrl: string;
+  className: string;
+  section: string;
+  class: string;
+  schoolName: string;
+  submittedData?: any;
+  fatherName?: string;
+  motherName?: string;
+  address?: string;
+  extra_fields?: Record<string, any>; // NEW
+  resolved_fields?: Record<string, any>; // NEW: Fields resolved from mappings
+}
+
+export interface IDCardGenerationResponse {
+  template_layout: any; // Layout JSON from S3
+  template_metadata: {
+    id: string;
+    name: string;
+    card_width: number;
+    card_height: number;
+    orientation: string;
+    sheet_size: string;
+    background_image_url?: string;
+  };
+  students: StudentForIDCard[];
+  missing_fields: Array<{
+    student_id: string;
+    student_name: string;
+    fields: string[];
+  }>;
+}
+
+export const idCardGenerationApi = {
+  getStudents: async (schoolId: string, templateId: string): Promise<IDCardGenerationResponse> => {
+    return apiRequest<IDCardGenerationResponse>(`/id-cards/students/${schoolId}?templateId=${templateId}`);
+  },
+
+  getPreviewData: async (studentId: string, templateId: string): Promise<{
+    student: StudentForIDCard;
+    template: IDCardTemplate;
+  }> => {
+    return apiRequest(`/id-cards/preview/${studentId}/${templateId}`);
   },
 };

@@ -120,12 +120,42 @@ router.post('/students', authenticateToken, async (req, res) => {
           markedByTeacherId = teachers[0].id;
         }
       }
-    } else {
-      markedByTeacherId = req.user.id;
+    } else if (req.user.role === 'teacher') {
+      // Verify the teacher exists in the teachers table
+      const [teacherCheck] = await db.query(
+        `SELECT id FROM teachers WHERE id = ? AND school_id = ? AND is_active = 1`,
+        [req.user.id, req.user.schoolId]
+      );
+      
+      if (teacherCheck.length > 0) {
+        markedByTeacherId = req.user.id;
+      } else {
+        // Teacher doesn't exist in teachers table - try to get class teacher or any teacher
+        const [classData] = await db.query(
+          `SELECT class_teacher_id FROM classes WHERE id = ? AND school_id = ?`,
+          [classId, req.user.schoolId]
+        );
+        
+        if (classData.length > 0 && classData[0].class_teacher_id) {
+          markedByTeacherId = classData[0].class_teacher_id;
+        } else {
+          // Fallback: get any active teacher from the school
+          const [teachers] = await db.query(
+            `SELECT id FROM teachers WHERE school_id = ? AND is_active = 1 LIMIT 1`,
+            [req.user.schoolId]
+          );
+          if (teachers.length > 0) {
+            markedByTeacherId = teachers[0].id;
+          }
+        }
+      }
     }
 
     if (!markedByTeacherId) {
-      return res.status(400).json({ error: 'No teacher available to mark attendance. Please assign a class teacher first.' });
+      return res.status(400).json({ 
+        error: 'No teacher available to mark attendance. Please ensure the teacher exists in the system or assign a class teacher first.',
+        details: 'The teacher account may not be properly linked to the teachers table.'
+      });
     }
 
     // Start transaction
