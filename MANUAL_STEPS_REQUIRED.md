@@ -215,3 +215,4 @@ If issues persist after following all steps:
 - PDF shows background + student photos + text
 - Everything matches perfectly
 
+

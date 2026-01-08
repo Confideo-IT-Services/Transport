@@ -27,16 +27,59 @@ function renderElementContent(el: IDCardElement, layout: IDCardLayout, student?:
   // photo / logo
   if (!student) {
     return (
-      <div className="w-full h-full flex items-center justify-center bg-muted text-muted-foreground text-xs">
+      <div
+        style={{
+          width: "100%",
+          height: "100%",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: "#e5e7eb",
+          color: "#6b7280",
+          fontSize: "12px",
+          fontWeight: "500",
+          border: "1px dashed #9ca3af",
+          borderRadius: "4px",
+        }}
+      >
         {el.type.toUpperCase()}
       </div>
     );
   }
 
   const url = resolveElementValue(layout, student, el);
+  
+  // Debug logging for photo elements
+  if (el.type === "photo" && student) {
+    console.log(`[IDCardRenderer] Photo element resolution:`, {
+      templateField: el.templateField,
+      resolvedValue: url || "(empty)",
+      hasResolvedFields: !!student.resolved_fields,
+      resolvedFieldsPhoto: student.resolved_fields?.[el.templateField || ""],
+      fieldMappings: layout.fieldMappings,
+      studentPhotoUrl: student.photo_url || student.photoUrl,
+      studentId: student.id,
+      studentName: student.name
+    });
+  }
+  
   if (!url) {
     return (
-      <div className="w-full h-full flex items-center justify-center bg-muted text-muted-foreground text-xs">
+      <div
+        style={{
+          width: "100%",
+          height: "100%",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: "#e5e7eb",
+          color: "#6b7280",
+          fontSize: "12px",
+          fontWeight: "500",
+          border: "1px dashed #9ca3af",
+          borderRadius: "4px",
+        }}
+      >
         {el.type.toUpperCase()}
       </div>
     );
@@ -48,6 +91,7 @@ function renderElementContent(el: IDCardElement, layout: IDCardLayout, student?:
       alt=""
       className="w-full h-full"
       style={{ objectFit: el.type === "photo" ? "cover" : "contain" }}
+      crossOrigin="anonymous"
     />
   );
 }
@@ -97,5 +141,6 @@ export function IDCardRenderer({ layout, student, renderHeightPx }: Props) {
     </div>
   );
 }
+
 
 

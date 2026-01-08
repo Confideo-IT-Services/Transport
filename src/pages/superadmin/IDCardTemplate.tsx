@@ -260,7 +260,17 @@ export default function IDCardTemplate() {
         backgroundImageUrl: normalized.backgroundImageUrl,
       });
 
-      setFieldMappings(normalized.fieldMappings || {});
+      const mappings = normalized.fieldMappings || {};
+      
+      // Log field mappings for debugging
+      console.log('[IDCardTemplate] Loaded template field mappings:', mappings);
+      
+      // If photo mapping exists but uses old "photoUrl", warn in console
+      if (mappings.photo === 'photoUrl') {
+        console.warn('[IDCardTemplate] Template uses old photo mapping "photoUrl". Consider updating to "photo_url" in the template editor.');
+      }
+      
+      setFieldMappings(mappings);
       
       setShowEditor(true);
     } catch (error) {
@@ -330,9 +340,9 @@ export default function IDCardTemplate() {
       },
     });
     
-    // Set default field mapping for photo/logo
+    // Set default field mapping for photo/logo - use "photo_url" to match STUDENT_FIELDS dropdown
     if (fieldType === "photo") {
-      setFieldMappings({ ...fieldMappings, photo: "photoUrl" });
+      setFieldMappings({ ...fieldMappings, photo: "photo_url" });
     } else if (fieldType === "logo") {
       setFieldMappings({ ...fieldMappings, logo: "schoolLogo" });
     }
@@ -380,9 +390,9 @@ export default function IDCardTemplate() {
       },
     });
     
-    // Set default field mapping for photo/logo
+    // Set default field mapping for photo/logo - use "photo_url" to match STUDENT_FIELDS dropdown
     if (elementType === "photo") {
-      setFieldMappings({ ...fieldMappings, photo: "photoUrl" });
+      setFieldMappings({ ...fieldMappings, photo: "photo_url" });
     } else if (elementType === "logo") {
       setFieldMappings({ ...fieldMappings, logo: "schoolLogo" });
     }

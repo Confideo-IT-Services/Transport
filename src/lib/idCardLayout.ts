@@ -81,11 +81,17 @@ export function normalizeElement(el: any): IDCardElement {
   const w = el?.width_percent ?? el?.width ?? 0;
   const h = el?.height_percent ?? el?.height ?? 0;
 
+  // Ensure photo elements always have templateField = "photo"
+  let templateField = el?.templateField ?? el?.template_field ?? el?.field;
+  if (type === 'photo' && !templateField) {
+    templateField = 'photo';
+  }
+
   return {
     id: String(el?.id ?? ''),
     type,
     label: String(el?.label ?? ''),
-    templateField: el?.templateField ?? el?.template_field ?? el?.field,
+    templateField,
     x_percent: toNumber(x, 0),
     y_percent: toNumber(y, 0),
     width_percent: toNumber(w, 0),
@@ -118,5 +124,6 @@ export function resolveElementValue(layout: IDCardLayout, student: any, el: IDCa
   if (val === undefined || val === null) return '';
   return String(val);
 }
+
 
 

@@ -163,3 +163,4 @@ Body: { extra_fields: { blood_group: "A+", house: "Red" } }
 - [ ] Layout calculations work for A4 and 13×19 sheets
 - [ ] Role-based access control works (admin vs teacher)
 
+

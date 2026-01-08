@@ -50,3 +50,4 @@ Expected columns in `id_card_templates`:
 - However, adding them explicitly prevents auto-migration overhead on every request
 - All new columns are nullable/have defaults, so existing data won't be affected
 
+

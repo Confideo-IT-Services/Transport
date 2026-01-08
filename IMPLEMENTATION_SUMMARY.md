@@ -228,3 +228,4 @@ For issues or questions:
 4. Check backend logs for API errors
 5. Verify all DB columns exist with `DESCRIBE students;`
 
+

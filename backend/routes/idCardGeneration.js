@@ -16,37 +16,44 @@ function normalizeLayout(rawLayout, templateRow) {
   // Supports both legacy { elements, field_mappings } and new { width_mm, elements[], fieldMappings }
   if (!rawLayout || typeof rawLayout !== 'object') rawLayout = {};
 
-  // New schema already
-  if (rawLayout.elements && rawLayout.fieldMappings) {
-    return rawLayout;
-  }
+  // Get elements and mappings (always normalize, even if structure exists)
+  const elements = rawLayout.elements || [];
+  const fieldMappings = rawLayout.fieldMappings || rawLayout.field_mappings || {};
 
-  const legacyElements = rawLayout.elements || [];
-  const legacyMappings = rawLayout.field_mappings || rawLayout.fieldMappings || {};
-
-  return {
-    id: templateRow?.id,
-    name: templateRow?.name,
-    width_mm: templateRow?.card_width || 54,
-    height_mm: templateRow?.card_height || 86,
-    orientation: templateRow?.orientation || 'portrait',
-    backgroundImageUrl: templateRow?.background_image_url || rawLayout.backgroundImageUrl,
-    elements: legacyElements.map((el) => ({
+  // ALWAYS normalize elements to ensure templateField is set correctly
+  const normalizedElements = elements.map((el) => {
+    const elementType = (el.type === 'textbox' ? 'text' : el.type);
+    // Ensure photo elements always have templateField = "photo"
+    let templateField = el.templateField || el.template_field || el.field;
+    if (elementType === 'photo' && !templateField) {
+      templateField = 'photo';
+    }
+    return {
       id: el.id,
-      type: (el.type === 'textbox' ? 'text' : el.type),
+      type: elementType,
       label: el.label,
-      templateField: el.templateField || el.template_field || el.field, // best-effort
-      x_percent: el.x_percent ?? el.x,
-      y_percent: el.y_percent ?? el.y,
-      width_percent: el.width_percent ?? el.width,
-      height_percent: el.height_percent ?? el.height,
+      templateField: templateField,
+      x_percent: el.x_percent ?? el.x ?? 0,
+      y_percent: el.y_percent ?? el.y ?? 0,
+      width_percent: el.width_percent ?? el.width ?? 0,
+      height_percent: el.height_percent ?? el.height ?? 0,
       fontSize: el.fontSize,
       fontFamily: el.fontFamily,
       fontWeight: el.fontWeight,
       color: el.color,
       align: el.align || el.textAlign,
-    })),
-    fieldMappings: legacyMappings,
+    };
+  });
+
+  return {
+    id: templateRow?.id || rawLayout.id,
+    name: templateRow?.name || rawLayout.name || 'Template',
+    width_mm: templateRow?.card_width || rawLayout.width_mm || 54,
+    height_mm: templateRow?.card_height || rawLayout.height_mm || 86,
+    orientation: templateRow?.orientation || rawLayout.orientation || 'portrait',
+    backgroundImageUrl: templateRow?.background_image_url || rawLayout.backgroundImageUrl,
+    elements: normalizedElements,
+    fieldMappings: fieldMappings,
   };
 }
 
@@ -143,30 +150,37 @@ router.get('/students/:schoolId', authenticateToken, requireSuperAdmin, async (r
         }
       }
 
-      // Flatten student data - include all fields at root level
+      // Normalize class and section
+      const classValue = student.class_name || '';
+      const sectionValue = student.class_section || '';
+      const classSection = classValue ? `${classValue}${sectionValue ? '-' + sectionValue : ''}`.trim() : '';
+
+      // Flatten student data - include all fields at root level with normalized names
       const flatData = {
         id: student.id,
-        name: student.name,
-        roll_no: student.roll_no,
-        admission_number: student.admission_number || student.roll_no,
-        rollNo: student.roll_no,
-        admissionNumber: student.admission_number || student.roll_no,
-        date_of_birth: student.date_of_birth,
-        dateOfBirth: student.date_of_birth,
-        gender: student.gender,
-        blood_group: student.blood_group,
-        bloodGroup: student.blood_group,
-        photo_url: student.photo_url,
-        photoUrl: student.photo_url,
-        class_name: student.class_name,
-        section: student.class_section,
-        class: student.class_name ? `${student.class_name}${student.class_section ? '-' + student.class_section : ''}`.trim() : '',
-        school_name: student.school_name,
-        schoolName: student.school_name,
-        parent_name: student.parent_name,
-        parent_phone: student.parent_phone,
-        parent_email: student.parent_email,
-        address: student.address,
+        name: student.name || '',
+        roll_no: student.roll_no || '',
+        admission_number: student.admission_number || student.roll_no || '',
+        rollNo: student.roll_no || '',
+        admissionNumber: student.admission_number || student.roll_no || '',
+        date_of_birth: student.date_of_birth || '',
+        dateOfBirth: student.date_of_birth || '',
+        gender: student.gender || '',
+        blood_group: student.blood_group || '',
+        bloodGroup: student.blood_group || '',
+        photo_url: student.photo_url || '',
+        photoUrl: student.photo_url || '',
+        photo: student.photo_url || '', // Normalized photo field
+        class_name: classValue,
+        section: sectionValue,
+        class: classSection,
+        className: classValue,
+        school_name: student.school_name || '',
+        schoolName: student.school_name || '',
+        parent_name: student.parent_name || '',
+        parent_phone: student.parent_phone || '',
+        parent_email: student.parent_email || '',
+        address: student.address || '',
         // Add extra_fields with dot notation support
         ...Object.keys(extraFields).reduce((acc, key) => {
           acc[`extra_fields.${key}`] = extraFields[key];
@@ -178,21 +192,51 @@ router.get('/students/:schoolId', authenticateToken, requireSuperAdmin, async (r
         ...submittedData
       };
 
-      // Resolve field mappings
+      // Resolve field mappings - ensure ALL template elements are included
       const resolvedData = {};
       const studentMissingFields = [];
 
       // For each element, resolve its templateField via fieldMappings -> student path
       (layout.elements || []).forEach((el) => {
-        const templateField = el.templateField;
+        // Ensure photo elements have templateField
+        const templateField = el.templateField || (el.type === 'photo' ? 'photo' : null);
         if (!templateField) return;
 
         const mappingPath = fieldMappings[templateField] || templateField; // fallback: allow direct student field
         const value = mappingPath.includes('.') ? getByPath(flatData, mappingPath) : flatData[mappingPath];
 
+        // Debug logging for photo fields
+        if (templateField === 'photo' || el.type === 'photo') {
+          console.log(`[ID Card Generation] Photo field resolution for student ${student.id} (${student.name}):`, {
+            templateField,
+            mappingPath,
+            value: value || '(empty/missing)',
+            valueLength: value ? String(value).length : 0,
+            availablePhotoFields: Object.keys(flatData).filter(k => k.toLowerCase().includes('photo')),
+            fieldMappings: fieldMappings,
+            elementType: el.type
+          });
+        }
+
         // Always set a key (PDF must render empty string if missing)
-        resolvedData[templateField] = (value === undefined || value === null) ? '' : value;
+        resolvedData[templateField] = (value === undefined || value === null) ? '' : String(value || '');
         if (resolvedData[templateField] === '') studentMissingFields.push(templateField);
+      });
+
+      // Ensure common fields are always in resolved_fields, even if not in template
+      const commonFields = {
+        photo: flatData.photo,
+        roll_no: flatData.roll_no,
+        name: flatData.name,
+        class: flatData.class,
+        section: flatData.section
+      };
+
+      // Merge common fields into resolved_fields (don't overwrite if already set)
+      Object.keys(commonFields).forEach(key => {
+        if (!(key in resolvedData)) {
+          resolvedData[key] = commonFields[key] || '';
+        }
       });
 
       if (studentMissingFields.length > 0) {
@@ -238,8 +282,7 @@ router.get('/preview/:studentId/:templateId', authenticateToken, requireSuperAdm
     // Get student data
     const [students] = await db.query(
       `SELECT 
-        s.id, s.name, s.roll_no, s.date_of_birth, s.gender, 
-        s.blood_group, s.photo_url, s.submitted_data,
+        s.*,
         c.name as class_name, c.section as class_section,
         sch.name as school_name
       FROM students s
@@ -266,44 +309,136 @@ router.get('/preview/:studentId/:templateId', authenticateToken, requireSuperAdm
     const s = students[0];
     const t = templates[0];
 
-    // Parse data
-    let submittedData = null;
+    // Parse template data
+    let templateData = {};
+    try {
+      templateData = typeof t.template_data === 'string' 
+        ? JSON.parse(t.template_data) 
+        : t.template_data;
+    } catch (e) {
+      console.error('Error parsing template_data:', e);
+      templateData = {};
+    }
+
+    // Fetch layout from S3 if available (same as main endpoint)
+    let templateLayout = null;
+    if (t.layout_json_url) {
+      try {
+        const layoutResponse = await fetch(t.layout_json_url);
+        if (layoutResponse.ok) {
+          templateLayout = await layoutResponse.json();
+        }
+      } catch (error) {
+        console.error('Error fetching layout from S3:', error);
+      }
+    }
+
+    // Normalize layout (same as main endpoint)
+    const layout = normalizeLayout(templateLayout || templateData, t);
+    const fieldMappings = layout.fieldMappings || {};
+
+    // Parse student extra_fields
+    let extraFields = {};
+    if (s.extra_fields) {
+      try {
+        extraFields = typeof s.extra_fields === 'string' 
+          ? JSON.parse(s.extra_fields) 
+          : s.extra_fields;
+      } catch (e) {
+        console.error('Error parsing extra_fields:', e);
+        extraFields = {};
+      }
+    }
+
+    // Parse submitted_data
+    let submittedData = {};
     if (s.submitted_data) {
       try {
         submittedData = typeof s.submitted_data === 'string' 
           ? JSON.parse(s.submitted_data) 
           : s.submitted_data;
       } catch (e) {
-        submittedData = null;
+        submittedData = {};
       }
     }
 
-    const student = {
+    // Normalize class and section
+    const classValue = s.class_name || '';
+    const sectionValue = s.class_section || '';
+    const classSection = classValue ? `${classValue}${sectionValue ? '-' + sectionValue : ''}`.trim() : '';
+
+    // Flatten student data (same as main endpoint)
+    const flatData = {
       id: s.id,
-      name: s.name,
-      rollNo: s.roll_no,
-      admissionNumber: s.roll_no,
-      dateOfBirth: s.date_of_birth,
-      gender: s.gender,
-      bloodGroup: s.blood_group,
-      photoUrl: s.photo_url,
-      className: s.class_name,
-      section: s.class_section,
-      class: s.class_name ? `${s.class_name}${s.class_section ? '-' + s.class_section : ''}`.trim() : '',
-      schoolName: s.school_name,
-      submittedData: submittedData,
-      fatherName: submittedData?.fatherName || null,
-      motherName: submittedData?.motherName || null,
-      address: submittedData?.address || null,
+      name: s.name || '',
+      roll_no: s.roll_no || '',
+      admission_number: s.admission_number || s.roll_no || '',
+      rollNo: s.roll_no || '',
+      admissionNumber: s.admission_number || s.roll_no || '',
+      date_of_birth: s.date_of_birth || '',
+      dateOfBirth: s.date_of_birth || '',
+      gender: s.gender || '',
+      blood_group: s.blood_group || '',
+      bloodGroup: s.blood_group || '',
+      photo_url: s.photo_url || '',
+      photoUrl: s.photo_url || '',
+      photo: s.photo_url || '', // Normalized photo field
+      class_name: classValue,
+      section: sectionValue,
+      class: classSection,
+      className: classValue,
+      school_name: s.school_name || '',
+      schoolName: s.school_name || '',
+      parent_name: s.parent_name || '',
+      parent_phone: s.parent_phone || '',
+      parent_email: s.parent_email || '',
+      address: s.address || '',
+      // Add extra_fields with dot notation support
+      ...Object.keys(extraFields).reduce((acc, key) => {
+        acc[`extra_fields.${key}`] = extraFields[key];
+        return acc;
+      }, {}),
+      // Also include direct access
+      extra_fields: extraFields,
+      // Add submitted_data fields
+      ...submittedData
+    };
+
+    // Resolve field mappings (same as main endpoint)
+    const resolvedData = {};
+    (layout.elements || []).forEach((el) => {
+      const templateField = el.templateField || (el.type === 'photo' ? 'photo' : null);
+      if (!templateField) return;
+
+      const mappingPath = fieldMappings[templateField] || templateField;
+      const value = mappingPath.includes('.') ? getByPath(flatData, mappingPath) : flatData[mappingPath];
+      resolvedData[templateField] = (value === undefined || value === null) ? '' : String(value || '');
+    });
+
+    // Ensure common fields are always present
+    const commonFields = {
+      photo: flatData.photo,
+      roll_no: flatData.roll_no,
+      name: flatData.name,
+      class: flatData.class,
+      section: flatData.section
+    };
+    Object.keys(commonFields).forEach(key => {
+      if (!(key in resolvedData)) {
+        resolvedData[key] = commonFields[key] || '';
+      }
+    });
+
+    const student = {
+      ...flatData,
+      resolved_fields: resolvedData
     };
 
     const template = {
       id: t.id,
       schoolId: t.school_id,
       name: t.name,
-      templateData: typeof t.template_data === 'string' 
-        ? JSON.parse(t.template_data) 
-        : t.template_data,
+      templateData: layout, // Return normalized layout
       backgroundImageUrl: t.background_image_url,
       cardWidth: t.card_width || 54,
       cardHeight: t.card_height || 86,
