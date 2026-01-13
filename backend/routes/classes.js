@@ -42,8 +42,8 @@ router.get('/', authenticateToken, requireTeacher, async (req, res) => {
   }
 });
 
-// Get students in a class
-router.get('/:id/students', authenticateToken, requireTeacher, async (req, res) => {
+// Get students in a class (accessible to both admin and teacher)
+router.get('/:id/students', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
 

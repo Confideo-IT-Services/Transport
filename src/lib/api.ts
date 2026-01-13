@@ -444,6 +444,30 @@ export const registrationLinksApi = {
   },
 };
 
+// ============ OTP API ============
+export const otpApi = {
+  send: async (mobile: string): Promise<{ success: boolean; message: string }> => {
+    return apiRequest('/otp/send', {
+      method: 'POST',
+      body: JSON.stringify({ mobile }),
+    });
+  },
+
+  verify: async (mobile: string, otp: string): Promise<{ success: boolean; message: string; verified: boolean }> => {
+    return apiRequest('/otp/verify', {
+      method: 'POST',
+      body: JSON.stringify({ mobile, otp }),
+    });
+  },
+
+  resend: async (mobile: string): Promise<{ success: boolean; message: string }> => {
+    return apiRequest('/otp/resend', {
+      method: 'POST',
+      body: JSON.stringify({ mobile }),
+    });
+  },
+};
+
 // ============ UPLOAD API ============
 
 export const uploadApi = {

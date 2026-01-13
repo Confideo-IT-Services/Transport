@@ -73,23 +73,29 @@ router.get('/students/:classId', authenticateToken, async (req, res) => {
   }
 });
 
-// Save student attendance
+// Save student attendance (teachers only)
 router.post('/students', authenticateToken, async (req, res) => {
   try {
+    // Restrict to teachers only - admins cannot mark attendance
+    if (req.user.role === 'admin') {
+      return res.status(403).json({ error: 'Admins cannot mark attendance. Only teachers can mark attendance.' });
+    }
+
+    if (req.user.role !== 'teacher') {
+      return res.status(403).json({ error: 'Only teachers can mark attendance.' });
+    }
+
     const { classId, date, students } = req.body;
 
     if (!classId || !date || !students || !Array.isArray(students)) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    // Verify access
+    // Verify access (only teachers can reach here)
     let accessQuery = 'SELECT id FROM classes WHERE id = ?';
     const accessParams = [classId];
 
-    if (req.user.role === 'admin') {
-      accessQuery += ' AND school_id = ?';
-      accessParams.push(req.user.schoolId);
-    } else if (req.user.role === 'teacher') {
+    if (req.user.role === 'teacher') {
       accessQuery += ' AND school_id = ? AND class_teacher_id = ?';
       accessParams.push(req.user.schoolId, req.user.id);
     }
@@ -259,12 +265,29 @@ router.get('/students/:classId/history', authenticateToken, async (req, res) => 
 
     const [records] = await db.query(query, params);
 
-    res.json(records.map(r => ({
-      date: r.date,
-      classId: r.class_id,
-      students: JSON.parse(r.students),
-      markedAt: r.markedAt
-    })));
+    res.json(records.map(r => {
+      // Safely parse students JSON
+      let students = [];
+      if (r.students) {
+        try {
+          if (typeof r.students === 'string') {
+            students = JSON.parse(r.students);
+          } else if (Array.isArray(r.students)) {
+            students = r.students;
+          }
+        } catch (e) {
+          console.error('Error parsing students JSON:', e);
+          students = [];
+        }
+      }
+
+      return {
+        date: r.date,
+        classId: r.class_id,
+        students: students,
+        markedAt: r.markedAt
+      };
+    }));
   } catch (error) {
     console.error('Get attendance history error:', error);
     res.status(500).json({ error: 'Failed to fetch attendance history' });

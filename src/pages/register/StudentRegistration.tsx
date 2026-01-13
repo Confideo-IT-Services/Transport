@@ -14,9 +14,9 @@ import {
 } from "@/components/ui/select";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Upload, CheckCircle, GraduationCap, Camera, X } from "lucide-react";
+import { Upload, CheckCircle, GraduationCap, Camera, X, CheckCircle2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { registrationLinksApi, studentsApi, uploadApi } from "@/lib/api";
+import { registrationLinksApi, studentsApi, uploadApi, otpApi } from "@/lib/api";
 
 interface FormField {
   id: string;
@@ -25,6 +25,8 @@ interface FormField {
   fieldType: 'text' | 'textarea' | 'radio' | 'select' | 'tel' | 'email' | 'file' | 'checkbox' | 'date';
   mandatory: boolean;
   options?: string[];
+  requires_otp?: boolean;
+  is_primary_identity?: boolean;
 }
 
 export default function StudentRegistration() {
@@ -46,6 +48,27 @@ export default function StudentRegistration() {
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
   const [showCamera, setShowCamera] = useState(false);
   const [formData, setFormData] = useState<Record<string, string | boolean>>({});
+  const [otpState, setOtpState] = useState<{
+    fieldName: string | null;
+    mobile: string;
+    otp: string;
+    isVerified: boolean;
+    isSending: boolean;
+    isVerifying: boolean;
+    error: string | null;
+    canResend: boolean;
+    resendTimer: number;
+  }>({
+    fieldName: null,
+    mobile: '',
+    otp: '',
+    isVerified: false,
+    isSending: false,
+    isVerifying: false,
+    error: null,
+    canResend: false,
+    resendTimer: 0,
+  });
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -86,6 +109,18 @@ export default function StudentRegistration() {
       }
     };
   }, []);
+
+  // Resend timer countdown
+  useEffect(() => {
+    if (otpState.resendTimer > 0) {
+      const timer = setTimeout(() => {
+        setOtpState(prev => ({ ...prev, resendTimer: prev.resendTimer - 1 }));
+      }, 1000);
+      return () => clearTimeout(timer);
+    } else if (otpState.resendTimer === 0 && !otpState.canResend) {
+      setOtpState(prev => ({ ...prev, canResend: true }));
+    }
+  }, [otpState.resendTimer, otpState.canResend]);
 
   const startCamera = async () => {
     try {
@@ -153,6 +188,120 @@ export default function StudentRegistration() {
 
   const handleInputChange = (fieldName: string, value: string | boolean) => {
     setFormData(prev => ({ ...prev, [fieldName]: value }));
+  };
+
+  // OTP handler functions
+  const handleSendOTP = async (mobile: string, fieldName: string) => {
+    const cleanedMobile = mobile.replace(/\D/g, '');
+    
+    if (cleanedMobile.length !== 10) {
+      setOtpState(prev => ({ ...prev, error: 'Please enter a valid 10-digit mobile number' }));
+      return;
+    }
+
+    setOtpState(prev => ({ 
+      ...prev, 
+      isSending: true, 
+      error: null,
+      fieldName,
+      mobile: cleanedMobile,
+      isVerified: false,
+      otp: '',
+    }));
+
+    try {
+      const response = await otpApi.send(cleanedMobile);
+      setOtpState(prev => ({ 
+        ...prev, 
+        isSending: false,
+        canResend: false,
+        resendTimer: 60, // 60 seconds cooldown
+        error: null,
+      }));
+      toast.success('OTP sent successfully to your mobile number');
+    } catch (error: any) {
+      setOtpState(prev => ({ 
+        ...prev, 
+        isSending: false,
+        error: error?.message || 'Failed to send OTP',
+      }));
+      toast.error(error?.message || 'Failed to send OTP');
+    }
+  };
+
+  const handleVerifyOTP = async () => {
+    const cleanedOtp = otpState.otp.replace(/\D/g, '');
+    
+    if (cleanedOtp.length !== 6) {
+      setOtpState(prev => ({ ...prev, error: 'Please enter a valid 6-digit OTP' }));
+      return;
+    }
+
+    setOtpState(prev => ({ ...prev, isVerifying: true, error: null }));
+
+    try {
+      const response = await otpApi.verify(otpState.mobile, cleanedOtp);
+      setOtpState(prev => ({ 
+        ...prev, 
+        isVerifying: false,
+        isVerified: true,
+        error: null,
+      }));
+      toast.success('Mobile number verified successfully');
+    } catch (error: any) {
+      setOtpState(prev => ({ 
+        ...prev, 
+        isVerifying: false,
+        error: error?.message || 'Invalid OTP',
+      }));
+      toast.error(error?.message || 'Invalid OTP. Please try again.');
+    }
+  };
+
+  const handleResendOTP = async () => {
+    if (!otpState.mobile || !otpState.fieldName) return;
+    
+    setOtpState(prev => ({ ...prev, isSending: true, error: null }));
+    
+    try {
+      await otpApi.resend(otpState.mobile);
+      setOtpState(prev => ({ 
+        ...prev, 
+        isSending: false,
+        canResend: false,
+        resendTimer: 60,
+        error: null,
+      }));
+      toast.success('OTP resent successfully');
+    } catch (error: any) {
+      setOtpState(prev => ({ 
+        ...prev, 
+        isSending: false,
+        error: error?.message || 'Failed to resend OTP',
+      }));
+      toast.error(error?.message || 'Failed to resend OTP');
+    }
+  };
+
+  // Handle phone number change - reset OTP if number changes
+  const handlePhoneChange = (fieldName: string, value: string) => {
+    handleInputChange(fieldName, value);
+    
+    // If this is the OTP-required field and number changed, reset OTP state
+    const cleanedValue = value.replace(/\D/g, '');
+    if (otpState.fieldName === fieldName && cleanedValue !== otpState.mobile) {
+      setOtpState({
+        fieldName: null,
+        mobile: '',
+        otp: '',
+        isVerified: false,
+        isSending: false,
+        isVerifying: false,
+        error: null,
+        canResend: false,
+        resendTimer: 0,
+      });
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -225,6 +374,24 @@ export default function StudentRegistration() {
       return;
     }
     
+    // Check OTP verification if required
+    const primaryPhoneField = linkData.fieldConfig.find(
+      (f) => f.fieldType === 'tel' && f.requires_otp === true && f.is_primary_identity === true
+    );
+    
+    if (primaryPhoneField) {
+      const phoneFieldName = primaryPhoneField.fieldName || primaryPhoneField.field_id || primaryPhoneField.id;
+      const phoneValue = formData[phoneFieldName];
+      const cleanedPhone = typeof phoneValue === 'string' ? phoneValue.replace(/\D/g, '') : '';
+      
+      if (!otpState.isVerified || 
+          otpState.mobile !== cleanedPhone || 
+          otpState.fieldName !== phoneFieldName) {
+        toast.error('Please verify your mobile number before submitting the form');
+        return;
+      }
+    }
+    
     try {
       // Map form data to backend format
       const studentData: any = {
@@ -260,6 +427,12 @@ export default function StudentRegistration() {
           }
         }
       });
+
+      // Add OTP verification status
+      if (primaryPhoneField) {
+        studentData.otp_verified = otpState.isVerified;
+        studentData.verified_mobile_number = otpState.isVerified ? otpState.mobile : undefined;
+      }
 
       // Submit to backend
       await studentsApi.create(studentData);
@@ -398,7 +571,122 @@ export default function StudentRegistration() {
           </div>
         );
       
-      default: // text, tel, email
+      case "tel":
+        const cleanedMobile = typeof value === 'string' ? value.replace(/\D/g, '') : '';
+        const requiresOTP = field.requires_otp === true;
+        const isPrimaryIdentity = field.is_primary_identity === true;
+        const isOTPField = requiresOTP && isPrimaryIdentity;
+        const isCurrentOTPField = otpState.fieldName === field.fieldName;
+        const showOTPUI = isOTPField && cleanedMobile.length === 10;
+
+        return (
+          <div key={field.id} className="space-y-2">
+            <Label htmlFor={field.fieldName}>
+              {field.label} {isMandatory && <span className="text-destructive">*</span>}
+              {isCurrentOTPField && otpState.isVerified && (
+                <CheckCircle2 className="inline-block w-4 h-4 text-green-500 ml-2" />
+              )}
+            </Label>
+            <Input
+              id={field.fieldName}
+              type="tel"
+              placeholder={`Enter ${field.label.toLowerCase()}`}
+              value={typeof value === 'string' ? value : ""}
+              onChange={(e) => handlePhoneChange(field.fieldName, e.target.value)}
+              maxLength={10}
+            />
+            
+            {/* OTP UI - Only show for primary identity field with requires_otp */}
+            {showOTPUI && (
+              <div className="space-y-3 p-4 border rounded-lg bg-muted/30">
+                {!isCurrentOTPField && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleSendOTP(cleanedMobile, field.fieldName)}
+                    disabled={cleanedMobile.length !== 10 || otpState.isSending}
+                    className="w-full"
+                  >
+                    {otpState.isSending ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Sending...
+                      </>
+                    ) : (
+                      'Send OTP'
+                    )}
+                  </Button>
+                )}
+                
+                {isCurrentOTPField && !otpState.isVerified && (
+                  <>
+                    <div className="space-y-2">
+                      <Label>Enter OTP</Label>
+                      <Input
+                        type="text"
+                        placeholder="Enter 6-digit OTP"
+                        value={otpState.otp}
+                        onChange={(e) => {
+                          const otpValue = e.target.value.replace(/\D/g, '').slice(0, 6);
+                          setOtpState(prev => ({ ...prev, otp: otpValue, error: null }));
+                        }}
+                        maxLength={6}
+                      />
+                      {otpState.error && (
+                        <p className="text-sm text-destructive">{otpState.error}</p>
+                      )}
+                    </div>
+                    
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={handleVerifyOTP}
+                        disabled={otpState.otp.length !== 6 || otpState.isVerifying}
+                        className="flex-1"
+                      >
+                        {otpState.isVerifying ? (
+                          <>
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            Verifying...
+                          </>
+                        ) : (
+                          'Verify OTP'
+                        )}
+                      </Button>
+                      
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={handleResendOTP}
+                        disabled={!otpState.canResend || otpState.isSending}
+                      >
+                        {otpState.isSending ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : otpState.resendTimer > 0 ? (
+                          `Resend (${otpState.resendTimer}s)`
+                        ) : (
+                          'Resend'
+                        )}
+                      </Button>
+                    </div>
+                  </>
+                )}
+                
+                {isCurrentOTPField && otpState.isVerified && (
+                  <div className="flex items-center gap-2 text-green-600">
+                    <CheckCircle2 className="w-5 h-5" />
+                    <span className="text-sm font-medium">Mobile number verified</span>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+
+      default: // text, email
         return (
           <div key={field.id} className="space-y-2">
             <Label htmlFor={field.fieldName}>

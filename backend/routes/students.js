@@ -108,6 +108,8 @@ router.post('/', async (req, res) => {
       motherName, motherPhone, motherOccupation,
       emergencyContact, previousSchool, medicalConditions,
       studentName, // Some forms might use studentName instead of name
+      otp_verified, // OTP verification status
+      verified_mobile_number, // Verified mobile number
       ...otherFields // Any other custom fields
     } = req.body;
 
@@ -118,13 +120,53 @@ router.post('/', async (req, res) => {
     // If registrationCode is provided, get schoolId and classId from registration link
     if (registrationCode) {
       const [links] = await db.query(
-        'SELECT school_id, class_id FROM registration_links WHERE link_code = ? AND is_active = TRUE AND (expires_at IS NULL OR expires_at > NOW())',
+        'SELECT school_id, class_id, field_config FROM registration_links WHERE link_code = ? AND is_active = TRUE AND (expires_at IS NULL OR expires_at > NOW())',
         [registrationCode]
       );
       if (links.length > 0) {
         finalSchoolId = links[0].school_id;
         finalClassId = links[0].class_id;
         console.log('✅ Registration link found:', { registrationCode, schoolId: finalSchoolId, classId: finalClassId });
+        
+        // Check if OTP verification is required
+        let fieldConfig = [];
+        try {
+          fieldConfig = JSON.parse(links[0].field_config || '[]');
+        } catch (e) {
+          console.error('Error parsing field_config:', e);
+        }
+        
+        // Find the primary phone field that requires OTP
+        const primaryPhoneField = fieldConfig.find(
+          (f) => f.fieldType === 'tel' && f.requires_otp === true && f.is_primary_identity === true
+        );
+        
+        if (primaryPhoneField) {
+          const phoneFieldName = primaryPhoneField.fieldName || primaryPhoneField.field_id || primaryPhoneField.id;
+          const mobileNumber = req.body[phoneFieldName] || req.body.studentPhone || req.body.parentPhone;
+          const cleanedMobile = mobileNumber ? mobileNumber.replace(/\D/g, '') : '';
+          
+          if (!cleanedMobile || cleanedMobile.length !== 10) {
+            return res.status(400).json({ 
+              error: `${primaryPhoneField.label || 'Mobile number'} is required and must be valid` 
+            });
+          }
+          
+          // Verify OTP was completed
+          if (!otp_verified || otp_verified !== true) {
+            return res.status(400).json({ 
+              error: 'Mobile number verification is required. Please verify your mobile number before submitting the form.' 
+            });
+          }
+          
+          // Verify the mobile number matches
+          const verifiedMobile = verified_mobile_number ? verified_mobile_number.replace(/\D/g, '') : '';
+          if (!verifiedMobile || verifiedMobile !== cleanedMobile) {
+            return res.status(400).json({ 
+              error: 'Mobile number verification failed. Please verify the correct mobile number.' 
+            });
+          }
+        }
       } else {
         return res.status(404).json({ error: 'Invalid or expired registration link' });
       }

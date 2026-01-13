@@ -36,6 +36,8 @@ interface FieldConfig {
   mandatory: boolean;
   enabled: boolean;
   options?: string[]; // For select and radio fields
+  requires_otp?: boolean; // For tel fields - require OTP verification
+  is_primary_identity?: boolean; // For tel fields - mark as primary identity field
 }
 
 interface Student {
@@ -408,6 +410,8 @@ export default function StudentManagement() {
     fieldType: "text" as FieldConfig['fieldType'],
     mandatory: false,
     options: "" as string | string[], // For select/radio - stored as comma-separated string in form
+    requires_otp: false, // For tel fields
+    is_primary_identity: false, // For tel fields
   });
 
   const handleGenerateLink = async () => {
@@ -439,6 +443,8 @@ export default function StudentManagement() {
           fieldType: f.fieldType,
           mandatory: f.mandatory,
           options: f.options || undefined,
+          requires_otp: f.requires_otp,
+          is_primary_identity: f.is_primary_identity,
         }));
 
       // Save to database via API - use class ID directly (it already includes section)
@@ -590,6 +596,8 @@ export default function StudentManagement() {
       mandatory: newField.mandatory,
       enabled: true,
       options: options,
+      requires_otp: newField.fieldType === 'tel' ? newField.requires_otp : undefined,
+      is_primary_identity: newField.fieldType === 'tel' ? newField.is_primary_identity : undefined,
     };
 
     setFieldConfigs(prev => [...prev, fieldToAdd]);
@@ -599,6 +607,8 @@ export default function StudentManagement() {
       fieldType: "text",
       mandatory: false,
       options: "",
+      requires_otp: false,
+      is_primary_identity: false,
     });
     setShowAddFieldDialog(false);
     toast.success("Field added successfully");
@@ -1126,6 +1136,40 @@ export default function StudentManagement() {
                   Required field
                 </Label>
               </div>
+
+              {/* OTP Configuration - Only for tel fields */}
+              {newField.fieldType === 'tel' && (
+                <div className="space-y-3 p-4 border rounded-lg bg-muted/30">
+                  <p className="text-sm font-medium">OTP Verification Settings</p>
+                  <div className="space-y-2">
+                    <div className="flex items-center space-x-2">
+                      <Checkbox
+                        id="requires_otp"
+                        checked={newField.requires_otp}
+                        onCheckedChange={(checked) => setNewField(prev => ({ ...prev, requires_otp: !!checked }))}
+                      />
+                      <Label htmlFor="requires_otp" className="cursor-pointer text-sm">
+                        Require OTP verification
+                      </Label>
+                    </div>
+                    {newField.requires_otp && (
+                      <div className="flex items-center space-x-2 ml-6">
+                        <Checkbox
+                          id="is_primary_identity"
+                          checked={newField.is_primary_identity}
+                          onCheckedChange={(checked) => setNewField(prev => ({ ...prev, is_primary_identity: !!checked }))}
+                        />
+                        <Label htmlFor="is_primary_identity" className="cursor-pointer text-sm">
+                          Mark as primary identity field
+                        </Label>
+                      </div>
+                    )}
+                    <p className="text-xs text-muted-foreground ml-6">
+                      OTP verification will be required for this phone number before form submission
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => {
@@ -1136,6 +1180,8 @@ export default function StudentManagement() {
                   fieldType: "text",
                   mandatory: false,
                   options: "",
+                  requires_otp: false,
+                  is_primary_identity: false,
                 });
               }}>
                 Cancel

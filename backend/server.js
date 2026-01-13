@@ -28,6 +28,7 @@ const academicYearsRoutes = require('./routes/academicYears');
 const feesRoutes = require('./routes/fees');
 const idCardTemplatesRoutes = require('./routes/idCardTemplates');
 const idCardGenerationRoutes = require('./routes/idCardGeneration');
+const otpRoutes = require('./routes/otp');
 
 // Use routes
 app.use('/api/auth', authRoutes);
@@ -46,6 +47,7 @@ app.use('/api/academic-years', academicYearsRoutes);
 app.use('/api/fees', feesRoutes);
 app.use('/api/id-templates', idCardTemplatesRoutes);
 app.use('/api/id-cards', idCardGenerationRoutes);
+app.use('/api/otp', otpRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

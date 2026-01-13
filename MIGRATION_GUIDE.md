@@ -51,3 +51,5 @@ Expected columns in `id_card_templates`:
 - All new columns are nullable/have defaults, so existing data won't be affected
 
 
+
+
