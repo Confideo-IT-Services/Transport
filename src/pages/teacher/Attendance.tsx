@@ -1,6 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { useAuth } from "@/contexts/AuthContext";
+import { studentsApi, attendanceApi, classesApi } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Calendar as CalendarIcon, Check, X, Clock, Save, Search } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -31,50 +33,176 @@ interface Student {
   status: AttendanceStatus;
 }
 
-const initialStudents: Student[] = [
-  { id: 1, name: "Alex Johnson", rollNo: "01", status: "present" },
-  { id: 2, name: "Emma Williams", rollNo: "02", status: "present" },
-  { id: 3, name: "Noah Brown", rollNo: "03", status: "absent" },
-  { id: 4, name: "Olivia Davis", rollNo: "04", status: "present" },
-  { id: 5, name: "Liam Wilson", rollNo: "05", status: "present" },
-  { id: 6, name: "Sophia Martinez", rollNo: "06", status: "leave" },
-  { id: 7, name: "Mason Anderson", rollNo: "07", status: "present" },
-  { id: 8, name: "Isabella Taylor", rollNo: "08", status: "present" },
-  { id: 9, name: "James Thomas", rollNo: "09", status: "absent" },
-  { id: 10, name: "Mia Garcia", rollNo: "10", status: "present" },
-];
-
-const attendanceHistory = [
-  { date: "Week 1", present: 42, absent: 3 },
-  { date: "Week 2", present: 40, absent: 5 },
-  { date: "Week 3", present: 44, absent: 1 },
-  { date: "Week 4", present: 41, absent: 4 },
-];
-
-// Historical attendance data by date
-const historicalData: Record<string, { id: number; name: string; rollNo: string; status: AttendanceStatus }[]> = {
-  "2024-01-15": [
-    { id: 1, name: "Alex Johnson", rollNo: "01", status: "present" },
-    { id: 2, name: "Emma Williams", rollNo: "02", status: "absent" },
-    { id: 3, name: "Noah Brown", rollNo: "03", status: "present" },
-    { id: 4, name: "Olivia Davis", rollNo: "04", status: "present" },
-    { id: 5, name: "Liam Wilson", rollNo: "05", status: "leave" },
-  ],
-  "2024-01-16": [
-    { id: 1, name: "Alex Johnson", rollNo: "01", status: "present" },
-    { id: 2, name: "Emma Williams", rollNo: "02", status: "present" },
-    { id: 3, name: "Noah Brown", rollNo: "03", status: "absent" },
-    { id: 4, name: "Olivia Davis", rollNo: "04", status: "present" },
-    { id: 5, name: "Liam Wilson", rollNo: "05", status: "present" },
-  ],
-};
+// Removed all hardcoded data - will be fetched from API
 
 export default function Attendance() {
   const navigate = useNavigate();
-  const [students, setStudents] = useState<Student[]>(initialStudents);
+  const { user } = useAuth();
+  const [students, setStudents] = useState<Student[]>([]);
   const [historyPeriod, setHistoryPeriod] = useState("1month");
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
-  const [historyStudents, setHistoryStudents] = useState<typeof initialStudents | null>(null);
+  const [historyStudents, setHistoryStudents] = useState<Student[] | null>(null);
+  const [attendanceHistory, setAttendanceHistory] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [classId, setClassId] = useState<string>("");
+
+  // Load students on mount
+  useEffect(() => {
+    const loadStudents = async () => {
+      setIsLoading(true);
+      try {
+        // First, get teacher's assigned class from classes API
+        let teacherClass: any = null;
+        let foundClassId = "";
+        
+        try {
+          const classesData = await classesApi.getAll();
+          if (classesData && classesData.length > 0) {
+            // Teacher should have at least one assigned class
+            teacherClass = classesData[0];
+            foundClassId = teacherClass.id;
+            setClassId(foundClassId);
+          }
+        } catch (error) {
+          console.error('Error loading classes:', error);
+        }
+        
+        // Get students for the assigned class
+        let filteredStudents: any[] = [];
+        
+        if (foundClassId) {
+          // Use getByClass API if available
+          try {
+            filteredStudents = await studentsApi.getByClass(foundClassId);
+          } catch (error) {
+            // Fallback to getAll and filter
+            const studentsData = await studentsApi.getAll();
+            filteredStudents = (studentsData || []).filter((s: any) => s.classId === foundClassId);
+          }
+        } else if (user?.className) {
+          // Fallback: try to match by className from user data
+          const studentsData = await studentsApi.getAll();
+          filteredStudents = (studentsData || []).filter((s: any) => {
+            const studentClass = `${s.class}${s.section ? ` - Section ${s.section}` : ''}`.trim();
+            const userClass = user.className?.trim();
+            
+            // Try exact match
+            if (studentClass === userClass) {
+              if (!foundClassId && s.classId) {
+                foundClassId = s.classId;
+                setClassId(foundClassId);
+              }
+              return true;
+            }
+            
+            // Try without "Section" prefix
+            const studentClassSimple = `${s.class}${s.section ? ` ${s.section}` : ''}`.trim();
+            const userClassSimple = userClass.replace(/Section\s*/i, '').trim();
+            if (studentClassSimple === userClassSimple && !foundClassId && s.classId) {
+              foundClassId = s.classId;
+              setClassId(foundClassId);
+              return true;
+            }
+            
+            return false;
+          });
+        } else {
+          // No class assigned
+          setStudents([]);
+          setIsLoading(false);
+          return;
+        }
+
+        setStudents(filteredStudents.map((s: any, index: number) => ({
+          id: parseInt(s.id) || index + 1,
+          name: s.name,
+          rollNo: s.rollNo || String(index + 1).padStart(2, '0'),
+          status: "present" as AttendanceStatus // Default status
+        })));
+
+        // Load today's attendance if classId is available
+        const currentClassId = foundClassId || classId;
+        if (currentClassId && filteredStudents.length > 0) {
+          const todayStr = format(new Date(), "yyyy-MM-dd");
+          try {
+            const attendanceData = await attendanceApi.getStudentAttendance(currentClassId, todayStr);
+            if (attendanceData && attendanceData.students) {
+              setStudents(prev => prev.map(student => {
+                const savedStatus = attendanceData.students.find((s: any) => 
+                  s.id === student.id.toString() || s.id === student.id
+                );
+                return {
+                  ...student,
+                  status: (savedStatus?.status as AttendanceStatus) || student.status
+                };
+              }));
+            }
+          } catch (error) {
+            // No attendance for today, that's okay
+            console.log('No attendance data for today');
+          }
+        }
+      } catch (error) {
+        console.error('Error loading students:', error);
+        setStudents([]);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    loadStudents();
+  }, [user]); // Removed classId from dependencies to avoid infinite loop
+
+  // Load attendance history chart data
+  useEffect(() => {
+    const loadAttendanceHistory = async () => {
+      if (!classId) return;
+      try {
+        // Calculate date range based on historyPeriod
+        const endDate = new Date();
+        const startDate = new Date();
+        if (historyPeriod === "1month") {
+          startDate.setMonth(startDate.getMonth() - 1);
+        } else if (historyPeriod === "2months") {
+          startDate.setMonth(startDate.getMonth() - 2);
+        } else if (historyPeriod === "3months") {
+          startDate.setMonth(startDate.getMonth() - 3);
+        }
+
+        const historyData = await attendanceApi.getStudentAttendanceHistory(
+          classId,
+          format(startDate, "yyyy-MM-dd"),
+          format(endDate, "yyyy-MM-dd")
+        );
+
+        // Transform data for chart (group by week)
+        if (historyData && Array.isArray(historyData)) {
+          // Group by week and calculate stats
+          const weeklyData: Record<string, { present: number; absent: number }> = {};
+          historyData.forEach((record: any) => {
+            const weekKey = format(new Date(record.date), "yyyy-'Week' w");
+            if (!weeklyData[weekKey]) {
+              weeklyData[weekKey] = { present: 0, absent: 0 };
+            }
+            if (record.students) {
+              record.students.forEach((s: any) => {
+                if (s.status === "present") weeklyData[weekKey].present++;
+                else if (s.status === "absent") weeklyData[weekKey].absent++;
+              });
+            }
+          });
+
+          setAttendanceHistory(Object.entries(weeklyData).map(([date, stats]) => ({
+            date,
+            ...stats
+          })));
+        }
+      } catch (error) {
+        console.error('Error loading attendance history:', error);
+        setAttendanceHistory([]);
+      }
+    };
+    loadAttendanceHistory();
+  }, [classId, historyPeriod]);
 
   const handleLogout = () => {
     navigate("/");
@@ -86,22 +214,28 @@ export default function Attendance() {
     );
   };
 
-  const handleDateSelect = (date: Date | undefined) => {
+  const handleDateSelect = async (date: Date | undefined) => {
     setSelectedDate(date);
-    if (date) {
+    if (date && classId) {
       const dateKey = format(date, "yyyy-MM-dd");
-      // In real app, fetch from backend
-      const data = historicalData[dateKey];
-      if (data) {
-        setHistoryStudents(data);
-      } else {
-        // Generate sample data for demo
-        setHistoryStudents(
-          initialStudents.map(s => ({
-            ...s,
-            status: ["present", "absent", "leave"][Math.floor(Math.random() * 3)] as AttendanceStatus
-          }))
-        );
+      try {
+        const attendanceData = await attendanceApi.getStudentAttendance(classId, dateKey);
+        if (attendanceData && attendanceData.students) {
+          setHistoryStudents(attendanceData.students.map((s: any) => {
+            const student = students.find(st => st.id === s.id || st.id.toString() === s.id.toString());
+            return {
+              id: student?.id || parseInt(s.id) || 0,
+              name: student?.name || `Student ${s.id}`,
+              rollNo: student?.rollNo || String(s.id).padStart(2, '0'),
+              status: (s.status as AttendanceStatus) || "present"
+            };
+          }));
+        } else {
+          setHistoryStudents(null);
+        }
+      } catch (error) {
+        console.error('Error loading attendance for date:', error);
+        setHistoryStudents(null);
       }
     } else {
       setHistoryStudents(null);
@@ -127,7 +261,9 @@ export default function Attendance() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="page-title">Attendance</h1>
-            <p className="text-muted-foreground mt-1">Mark and view attendance for Class 3A.</p>
+            <p className="text-muted-foreground mt-1">
+              Mark and view attendance for your assigned class.
+            </p>
           </div>
           <div className="flex items-center gap-2 text-muted-foreground">
             <CalendarIcon className="w-5 h-5" />
@@ -142,105 +278,137 @@ export default function Attendance() {
           </TabsList>
 
           <TabsContent value="mark" className="mt-6 space-y-6">
-            {/* Summary Stats */}
-            <div className="grid grid-cols-3 gap-4">
-              <div className="bg-success/10 rounded-xl p-4 text-center border border-success/20">
-                <Check className="w-6 h-6 text-success mx-auto mb-2" />
-                <p className="text-2xl font-bold text-success">{stats.present}</p>
-                <p className="text-sm text-muted-foreground">Present</p>
+            {isLoading ? (
+              <div className="text-center py-12 text-muted-foreground">
+                <p>Loading students...</p>
               </div>
-              <div className="bg-destructive/10 rounded-xl p-4 text-center border border-destructive/20">
-                <X className="w-6 h-6 text-destructive mx-auto mb-2" />
-                <p className="text-2xl font-bold text-destructive">{stats.absent}</p>
-                <p className="text-sm text-muted-foreground">Absent</p>
+            ) : students.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground">
+                <p>No students found for your assigned class.</p>
               </div>
-              <div className="bg-warning/10 rounded-xl p-4 text-center border border-warning/20">
-                <Clock className="w-6 h-6 text-warning mx-auto mb-2" />
-                <p className="text-2xl font-bold text-warning">{stats.leave}</p>
-                <p className="text-sm text-muted-foreground">Leave</p>
-              </div>
-            </div>
+            ) : (
+              <>
+                {/* Summary Stats */}
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="bg-success/10 rounded-xl p-4 text-center border border-success/20">
+                    <Check className="w-6 h-6 text-success mx-auto mb-2" />
+                    <p className="text-2xl font-bold text-success">{stats.present}</p>
+                    <p className="text-sm text-muted-foreground">Present</p>
+                  </div>
+                  <div className="bg-destructive/10 rounded-xl p-4 text-center border border-destructive/20">
+                    <X className="w-6 h-6 text-destructive mx-auto mb-2" />
+                    <p className="text-2xl font-bold text-destructive">{stats.absent}</p>
+                    <p className="text-sm text-muted-foreground">Absent</p>
+                  </div>
+                  <div className="bg-warning/10 rounded-xl p-4 text-center border border-warning/20">
+                    <Clock className="w-6 h-6 text-warning mx-auto mb-2" />
+                    <p className="text-2xl font-bold text-warning">{stats.leave}</p>
+                    <p className="text-sm text-muted-foreground">Leave</p>
+                  </div>
+                </div>
 
-            {/* Attendance Table */}
-            <div className="data-table">
-              <table className="w-full">
-                <thead>
-                  <tr>
-                    <th>Roll No</th>
-                    <th>Student</th>
-                    <th>Status</th>
-                    <th>Quick Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {students.map((student) => (
-                    <tr key={student.id}>
-                      <td>
-                        <span className="badge badge-info">{student.rollNo}</span>
-                      </td>
-                      <td>
-                        <div className="flex items-center gap-3">
-                          <Avatar className="w-8 h-8">
-                            <AvatarFallback className="bg-primary/10 text-primary text-sm">
-                              {student.name.split(" ").map(n => n[0]).join("")}
-                            </AvatarFallback>
-                          </Avatar>
-                          <span className="font-medium">{student.name}</span>
-                        </div>
-                      </td>
-                      <td>
-                        <Select
-                          value={student.status}
-                          onValueChange={(value: AttendanceStatus) => updateStatus(student.id, value)}
-                        >
-                          <SelectTrigger className="w-32">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="present">Present</SelectItem>
-                            <SelectItem value="absent">Absent</SelectItem>
-                            <SelectItem value="leave">Leave</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </td>
-                      <td>
-                        <div className="flex items-center gap-2">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className={student.status === "present" ? "bg-success/20 text-success" : ""}
-                            onClick={() => updateStatus(student.id, "present")}
-                          >
-                            <Check className="w-4 h-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className={student.status === "absent" ? "bg-destructive/20 text-destructive" : ""}
-                            onClick={() => updateStatus(student.id, "absent")}
-                          >
-                            <X className="w-4 h-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className={student.status === "leave" ? "bg-warning/20 text-warning" : ""}
-                            onClick={() => updateStatus(student.id, "leave")}
-                          >
-                            <Clock className="w-4 h-4" />
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                {/* Attendance Table */}
+                <div className="data-table">
+                  <table className="w-full">
+                    <thead>
+                      <tr>
+                        <th>Roll No</th>
+                        <th>Student</th>
+                        <th>Status</th>
+                        <th>Quick Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {students.map((student) => (
+                        <tr key={student.id}>
+                          <td>
+                            <span className="badge badge-info">{student.rollNo}</span>
+                          </td>
+                          <td>
+                            <div className="flex items-center gap-3">
+                              <Avatar className="w-8 h-8">
+                                <AvatarFallback className="bg-primary/10 text-primary text-sm">
+                                  {student.name.split(" ").map(n => n[0]).join("")}
+                                </AvatarFallback>
+                              </Avatar>
+                              <span className="font-medium">{student.name}</span>
+                            </div>
+                          </td>
+                          <td>
+                            <Select
+                              value={student.status}
+                              onValueChange={(value: AttendanceStatus) => updateStatus(student.id, value)}
+                            >
+                              <SelectTrigger className="w-32">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="present">Present</SelectItem>
+                                <SelectItem value="absent">Absent</SelectItem>
+                                <SelectItem value="leave">Leave</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </td>
+                          <td>
+                            <div className="flex items-center gap-2">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className={student.status === "present" ? "bg-success/20 text-success" : ""}
+                                onClick={() => updateStatus(student.id, "present")}
+                              >
+                                <Check className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className={student.status === "absent" ? "bg-destructive/20 text-destructive" : ""}
+                                onClick={() => updateStatus(student.id, "absent")}
+                              >
+                                <X className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className={student.status === "leave" ? "bg-warning/20 text-warning" : ""}
+                                onClick={() => updateStatus(student.id, "leave")}
+                              >
+                                <Clock className="w-4 h-4" />
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
 
-            <Button className="w-full sm:w-auto">
-              <Save className="w-4 h-4 mr-2" />
-              Save Attendance
-            </Button>
+                <Button 
+                  className="w-full sm:w-auto"
+                  onClick={async () => {
+                    if (!classId) {
+                      alert("No class assigned. Cannot save attendance.");
+                      return;
+                    }
+                    try {
+                      const todayStr = format(new Date(), "yyyy-MM-dd");
+                      await attendanceApi.saveStudentAttendance({
+                        classId: classId,
+                        date: todayStr,
+                        students: students.map(s => ({ id: s.id.toString(), status: s.status }))
+                      });
+                      alert("Attendance saved successfully!");
+                    } catch (error: any) {
+                      console.error('Error saving attendance:', error);
+                      alert(error?.message || "Failed to save attendance");
+                    }
+                  }}
+                >
+                  <Save className="w-4 h-4 mr-2" />
+                  Save Attendance
+                </Button>
+              </>
+            )}
           </TabsContent>
 
           <TabsContent value="history" className="mt-6 space-y-6">
@@ -361,24 +529,30 @@ export default function Attendance() {
             {/* Chart */}
             <div className="bg-card rounded-xl border border-border p-6 shadow-card">
               <h3 className="section-title">Attendance Trend</h3>
-              <div className="h-80">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={attendanceHistory}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                    <XAxis dataKey="date" stroke="hsl(var(--muted-foreground))" fontSize={12} />
-                    <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} />
-                    <Tooltip
-                      contentStyle={{
-                        backgroundColor: "hsl(var(--card))",
-                        border: "1px solid hsl(var(--border))",
-                        borderRadius: "8px",
-                      }}
-                    />
-                    <Bar dataKey="present" name="Present" fill="hsl(var(--success))" radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="absent" name="Absent" fill="hsl(var(--destructive))" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
+              {attendanceHistory.length === 0 ? (
+                <div className="text-center py-12 text-muted-foreground">
+                  <p>No attendance history data available</p>
+                </div>
+              ) : (
+                <div className="h-80">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={attendanceHistory}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                      <XAxis dataKey="date" stroke="hsl(var(--muted-foreground))" fontSize={12} />
+                      <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: "hsl(var(--card))",
+                          border: "1px solid hsl(var(--border))",
+                          borderRadius: "8px",
+                        }}
+                      />
+                      <Bar dataKey="present" name="Present" fill="hsl(var(--success))" radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="absent" name="Absent" fill="hsl(var(--destructive))" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
             </div>
           </TabsContent>
         </Tabs>

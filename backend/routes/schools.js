@@ -125,6 +125,8 @@ router.post('/', authenticateToken, requireSuperAdmin, async (req, res) => {
     const { name, type, location, address, phone, email, adminName, adminEmail, adminPassword } = req.body;
 
     if (!name || !email || !adminEmail || !adminPassword) {
+      await connection.rollback();
+      connection.release();
       return res.status(400).json({ error: 'Required fields missing' });
     }
 
@@ -135,6 +137,8 @@ router.post('/', authenticateToken, requireSuperAdmin, async (req, res) => {
     );
 
     if (existingSchools.length > 0) {
+      await connection.rollback();
+      connection.release();
       return res.status(400).json({ error: 'School with this email already exists' });
     }
 
@@ -145,6 +149,8 @@ router.post('/', authenticateToken, requireSuperAdmin, async (req, res) => {
     );
 
     if (existingAdmins.length > 0) {
+      await connection.rollback();
+      connection.release();
       return res.status(400).json({ error: 'Admin with this email already exists' });
     }
 
@@ -158,34 +164,52 @@ router.post('/', authenticateToken, requireSuperAdmin, async (req, res) => {
 
     // Create school
     const schoolId = uuidv4();
-    await connection.query(
+    const [schoolResult] = await connection.query(
       `INSERT INTO schools (id, name, code, type, location, address, phone, email, status, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', NOW())`,
       [schoolId, name, schoolCode, type || 'K-12', location || '', address || '', phone || '', email]
     );
 
+    console.log('✅ School created:', { schoolId, name, code: schoolCode });
+
     // Create school admin
     const adminId = uuidv4();
     const hashedPassword = await bcrypt.hash(adminPassword, 10);
-    await connection.query(
+    const [adminResult] = await connection.query(
       `INSERT INTO users (id, email, password, name, role, school_id, is_active, created_at)
        VALUES (?, ?, ?, ?, 'admin', ?, true, NOW())`,
       [adminId, adminEmail, hashedPassword, adminName || 'School Admin', schoolId]
     );
 
+    console.log('✅ Admin created:', { adminId, email: adminEmail, schoolId });
+
     await connection.commit();
+    console.log('✅ Transaction committed successfully');
+
+    connection.release();
 
     res.status(201).json({
       success: true,
       schoolId,
-      schoolCode
+      schoolCode,
+      adminId,
+      message: 'School and admin created successfully'
     });
   } catch (error) {
     await connection.rollback();
-    console.error('Create school error:', error);
-    res.status(500).json({ error: 'Failed to create school' });
-  } finally {
+    console.error('❌ Create school error:', error);
+    console.error('Error details:', {
+      code: error.code,
+      errno: error.errno,
+      sqlState: error.sqlState,
+      sqlMessage: error.sqlMessage,
+      sql: error.sql ? error.sql.substring(0, 200) : null
+    });
     connection.release();
+    res.status(500).json({ 
+      error: 'Failed to create school',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
 
@@ -211,10 +235,12 @@ router.put('/:id', authenticateToken, requireSuperAdmin, async (req, res) => {
     }
 
     values.push(id);
-    await db.query(
+    const [result] = await db.query(
       `UPDATE schools SET ${updates.join(', ')} WHERE id = ?`,
       values
     );
+
+    console.log('✅ School updated:', { id, affectedRows: result.affectedRows });
 
     res.json({ success: true });
   } catch (error) {

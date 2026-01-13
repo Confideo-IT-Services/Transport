@@ -50,6 +50,12 @@ const navItems: NavItem[] = [
     roles: ["admin"]
   },
   { 
+    label: "My Students", 
+    href: "/dashboard/my-students", 
+    icon: GraduationCap,
+    roles: ["teacher"]
+  },
+  { 
     label: "Timetable", 
     href: "/dashboard/timetable", 
     icon: Calendar,

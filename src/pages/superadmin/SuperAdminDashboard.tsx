@@ -1,8 +1,10 @@
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { StatCard } from "@/components/dashboard/StatCard";
 import { QuickAction } from "@/components/dashboard/QuickAction";
 import { Building2, Users, GraduationCap, UserCog, Plus, Settings, BarChart3, Shield } from "lucide-react";
+import { schoolsApi } from "@/lib/api";
 import {
   AreaChart,
   Area,
@@ -15,28 +17,76 @@ import {
   Bar,
 } from "recharts";
 
-const growthData = [
-  { month: "Jul", schools: 12 },
-  { month: "Aug", schools: 15 },
-  { month: "Sep", schools: 18 },
-  { month: "Oct", schools: 22 },
-  { month: "Nov", schools: 28 },
-  { month: "Dec", schools: 35 },
-];
-
-const schoolTypeData = [
-  { type: "Primary", count: 18 },
-  { type: "Secondary", count: 12 },
-  { type: "High School", count: 8 },
-  { type: "K-12", count: 5 },
-];
-
 export default function SuperAdminDashboard() {
   const navigate = useNavigate();
+  const [stats, setStats] = useState({
+    totalSchools: 0,
+    totalStudents: 0,
+    totalTeachers: 0,
+    totalAdmins: 0,
+  });
+  const [schools, setSchools] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const loadData = async () => {
+    try {
+      setIsLoading(true);
+      const schoolsData = await schoolsApi.getAll();
+      setSchools(schoolsData);
+
+      // Calculate stats from real data
+      const totalSchools = schoolsData.length;
+      const totalStudents = schoolsData.reduce((sum, s) => sum + (s.students || 0), 0);
+      const totalTeachers = schoolsData.reduce((sum, s) => sum + (s.teachers || 0), 0);
+      const totalAdmins = schoolsData.reduce((sum, s) => sum + (s.admins || 0), 0);
+
+      setStats({
+        totalSchools,
+        totalStudents,
+        totalTeachers,
+        totalAdmins,
+      });
+    } catch (error) {
+      console.error('Failed to load dashboard data:', error);
+      // Keep stats at 0 if API fails
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleLogout = () => {
     navigate("/");
   };
+
+  // Generate chart data from real data
+  const growthData = schools.length > 0 
+    ? schools
+        .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
+        .reduce((acc, school, index) => {
+          const month = new Date(school.createdAt).toLocaleDateString('en-US', { month: 'short' });
+          acc.push({ month, schools: index + 1 });
+          return acc;
+        }, [])
+    : [{ month: "No data", schools: 0 }];
+
+  const schoolTypeData = schools.reduce((acc, school) => {
+    const type = school.type || 'Unknown';
+    const existing = acc.find(item => item.type === type);
+    if (existing) {
+      existing.count++;
+    } else {
+      acc.push({ type, count: 1 });
+    }
+    return acc;
+  }, [] as { type: string; count: number }[]);
+
+  const recentSchools = schools
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+    .slice(0, 4);
 
   return (
     <DashboardLayout role="superadmin" userName="Platform Admin" onLogout={handleLogout}>
@@ -53,34 +103,34 @@ export default function SuperAdminDashboard() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <StatCard
             title="Total Schools"
-            value={35}
+            value={stats.totalSchools}
             icon={Building2}
-            trend="+25% growth"
-            trendUp={true}
+            trend={schools.length > 0 ? undefined : "No data"}
+            trendUp={schools.length > 0}
             iconColor="text-primary"
             iconBg="bg-primary/10"
           />
           <StatCard
             title="Total Students"
-            value="12,450"
+            value={stats.totalStudents.toLocaleString()}
             icon={GraduationCap}
-            trend="+12% growth"
-            trendUp={true}
+            trend={stats.totalStudents > 0 ? undefined : "No data"}
+            trendUp={stats.totalStudents > 0}
             iconColor="text-secondary"
             iconBg="bg-secondary/10"
           />
           <StatCard
             title="Total Teachers"
-            value="856"
+            value={stats.totalTeachers.toLocaleString()}
             icon={Users}
-            trend="+8% growth"
-            trendUp={true}
+            trend={stats.totalTeachers > 0 ? undefined : "No data"}
+            trendUp={stats.totalTeachers > 0}
             iconColor="text-accent"
             iconBg="bg-accent/10"
           />
           <StatCard
             title="School Admins"
-            value={42}
+            value={stats.totalAdmins}
             icon={UserCog}
             iconColor="text-primary"
             iconBg="bg-primary/10"
@@ -121,21 +171,27 @@ export default function SuperAdminDashboard() {
           <div className="bg-card rounded-xl border border-border p-6 shadow-card">
             <h3 className="section-title">Schools by Type</h3>
             <div className="h-64 mt-4">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={schoolTypeData} layout="vertical">
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                  <XAxis type="number" stroke="hsl(var(--muted-foreground))" fontSize={12} />
-                  <YAxis dataKey="type" type="category" stroke="hsl(var(--muted-foreground))" fontSize={12} width={80} />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: "hsl(var(--card))",
-                      border: "1px solid hsl(var(--border))",
-                      borderRadius: "8px",
-                    }}
-                  />
-                  <Bar dataKey="count" fill="hsl(var(--secondary))" radius={[0, 4, 4, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+              {schoolTypeData.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={schoolTypeData} layout="vertical">
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <XAxis type="number" stroke="hsl(var(--muted-foreground))" fontSize={12} />
+                    <YAxis dataKey="type" type="category" stroke="hsl(var(--muted-foreground))" fontSize={12} width={80} />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: "hsl(var(--card))",
+                        border: "1px solid hsl(var(--border))",
+                        borderRadius: "8px",
+                      }}
+                    />
+                    <Bar dataKey="count" fill="hsl(var(--secondary))" radius={[0, 4, 4, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="flex items-center justify-center h-full text-muted-foreground">
+                  No data available
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -171,36 +227,37 @@ export default function SuperAdminDashboard() {
         <div className="bg-card rounded-xl border border-border p-6 shadow-card">
           <h3 className="section-title">Recently Added Schools</h3>
           <div className="mt-4 space-y-3">
-            {[
-              { name: "Springfield Elementary", location: "New York", students: 450, status: "active" },
-              { name: "Riverside High School", location: "California", students: 1200, status: "active" },
-              { name: "Greenwood Academy", location: "Texas", students: 680, status: "pending" },
-              { name: "Lakeside K-12", location: "Florida", students: 890, status: "active" },
-            ].map((school, index) => (
-              <div
-                key={index}
-                className="flex items-center justify-between p-4 border border-border rounded-lg hover:bg-muted/30 transition-colors"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-                    <Building2 className="w-5 h-5 text-primary" />
+            {recentSchools.length > 0 ? (
+              recentSchools.map((school) => (
+                <div
+                  key={school.id}
+                  className="flex items-center justify-between p-4 border border-border rounded-lg hover:bg-muted/30 transition-colors"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                      <Building2 className="w-5 h-5 text-primary" />
+                    </div>
+                    <div>
+                      <h4 className="font-medium text-foreground">{school.name}</h4>
+                      <p className="text-sm text-muted-foreground">{school.location || 'No location'}</p>
+                    </div>
                   </div>
-                  <div>
-                    <h4 className="font-medium text-foreground">{school.name}</h4>
-                    <p className="text-sm text-muted-foreground">{school.location}</p>
+                  <div className="flex items-center gap-4">
+                    <div className="text-right">
+                      <p className="font-medium text-foreground">{school.students || 0}</p>
+                      <p className="text-xs text-muted-foreground">students</p>
+                    </div>
+                    <span className={`badge ${school.status === "active" ? "badge-success" : school.status === "pending" ? "badge-warning" : "badge-danger"}`}>
+                      {school.status}
+                    </span>
                   </div>
                 </div>
-                <div className="flex items-center gap-4">
-                  <div className="text-right">
-                    <p className="font-medium text-foreground">{school.students}</p>
-                    <p className="text-xs text-muted-foreground">students</p>
-                  </div>
-                  <span className={`badge ${school.status === "active" ? "badge-success" : "badge-warning"}`}>
-                    {school.status}
-                  </span>
-                </div>
+              ))
+            ) : (
+              <div className="text-center py-8 text-muted-foreground">
+                No schools added yet. Click "Add School" to get started.
               </div>
-            ))}
+            )}
           </div>
         </div>
       </div>

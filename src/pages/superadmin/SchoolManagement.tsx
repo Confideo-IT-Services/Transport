@@ -46,80 +46,6 @@ import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
 import { schoolsApi, School } from "@/lib/api";
 
-// Mock data for demo mode
-const mockSchools: School[] = [
-  {
-    id: "1",
-    name: "Springfield Elementary",
-    code: "SPE001",
-    type: "Primary",
-    location: "New York, NY",
-    phone: "+1 234-567-8901",
-    email: "admin@springfield.edu",
-    students: 450,
-    teachers: 32,
-    admins: 2,
-    status: "active",
-    createdAt: "2024-01-15",
-  },
-  {
-    id: "2",
-    name: "Riverside High School",
-    code: "RHS002",
-    type: "High School",
-    location: "Los Angeles, CA",
-    phone: "+1 234-567-8902",
-    email: "admin@riverside.edu",
-    students: 1200,
-    teachers: 85,
-    admins: 3,
-    status: "active",
-    createdAt: "2024-02-20",
-  },
-  {
-    id: "3",
-    name: "Greenwood Academy",
-    code: "GWA003",
-    type: "K-12",
-    location: "Houston, TX",
-    phone: "+1 234-567-8903",
-    email: "admin@greenwood.edu",
-    students: 680,
-    teachers: 48,
-    admins: 2,
-    status: "pending",
-    createdAt: "2024-03-10",
-  },
-  {
-    id: "4",
-    name: "Lakeside Secondary",
-    code: "LKS004",
-    type: "Secondary",
-    location: "Miami, FL",
-    phone: "+1 234-567-8904",
-    email: "admin@lakeside.edu",
-    students: 890,
-    teachers: 62,
-    admins: 2,
-    status: "active",
-    createdAt: "2024-03-25",
-  },
-  {
-    id: "5",
-    name: "Mountain View School",
-    code: "MVS005",
-    type: "Primary",
-    location: "Denver, CO",
-    phone: "+1 234-567-8905",
-    email: "admin@mountainview.edu",
-    students: 320,
-    teachers: 24,
-    admins: 1,
-    status: "inactive",
-    createdAt: "2024-04-05",
-  },
-];
-
 export default function SchoolManagement() {
   const navigate = useNavigate();
   const { logout, user } = useAuth();
@@ -128,7 +54,7 @@ export default function SchoolManagement() {
   const [filterStatus, setFilterStatus] = useState("all");
   const [isAddSchoolOpen, setIsAddSchoolOpen] = useState(false);
   const [selectedSchool, setSelectedSchool] = useState<School | null>(null);
-  const [schools, setSchools] = useState<School[]>(mockSchools);
+  const [schools, setSchools] = useState<School[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -154,8 +80,8 @@ export default function SchoolManagement() {
       const data = await schoolsApi.getAll();
       setSchools(data);
     } catch (error) {
-      console.log("Using demo data - API not available");
-      setSchools(mockSchools);
+      console.error("Failed to load schools:", error);
+      setSchools([]);
     } finally {
       setIsLoading(false);
     }

@@ -1,10 +1,13 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
+import { useSearchParams } from "react-router-dom";
 import { UnifiedLayout } from "@/components/layout/UnifiedLayout";
 import { useAuth } from "@/contexts/AuthContext";
+import { classesApi, studentsApi, attendanceApi, timetableApi } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Calendar } from "@/components/ui/calendar";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -15,6 +18,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import {
   Table,
   TableBody,
@@ -35,9 +52,11 @@ import {
   Users,
   LogIn,
   LogOut,
-  Info
+  Info,
+  TrendingUp
 } from "lucide-react";
-import { format, isSameDay } from "date-fns";
+import { cn } from "@/lib/utils";
+import { format, isSameDay, startOfMonth } from "date-fns";
 import { toast } from "@/hooks/use-toast";
 
 interface Student {
@@ -54,115 +73,638 @@ interface AttendanceRecord {
   markedAt: Date;
 }
 
-const allStudents: Student[] = [
-  { id: 1, name: "Aarav Sharma", rollNo: 1, status: "not-marked" },
-  { id: 2, name: "Ananya Patel", rollNo: 2, status: "not-marked" },
-  { id: 3, name: "Arjun Kumar", rollNo: 3, status: "not-marked" },
-  { id: 4, name: "Diya Singh", rollNo: 4, status: "not-marked" },
-  { id: 5, name: "Ishaan Gupta", rollNo: 5, status: "not-marked" },
-  { id: 6, name: "Kavya Reddy", rollNo: 6, status: "not-marked" },
-  { id: 7, name: "Lakshmi Nair", rollNo: 7, status: "not-marked" },
-  { id: 8, name: "Manav Joshi", rollNo: 8, status: "not-marked" },
-  { id: 9, name: "Neha Verma", rollNo: 9, status: "not-marked" },
-  { id: 10, name: "Omkar Desai", rollNo: 10, status: "not-marked" },
-  { id: 11, name: "Priya Menon", rollNo: 11, status: "not-marked" },
-  { id: 12, name: "Rahul Iyer", rollNo: 12, status: "not-marked" },
-];
-
-const teacherAttendance = [
-  { id: 1, name: "Mrs. Sharma", checkIn: "07:45", checkOut: "14:30", status: "present" },
-  { id: 2, name: "Mr. Singh", checkIn: "07:50", checkOut: "14:25", status: "present" },
-  { id: 3, name: "Mrs. Gupta", checkIn: "-", checkOut: "-", status: "leave" },
-  { id: 4, name: "Mr. Kumar", checkIn: "08:15", checkOut: "-", status: "late" },
-  { id: 5, name: "Mrs. Patel", checkIn: "07:55", checkOut: "14:30", status: "present" },
-];
-
-const monthlyStats = [
-  { month: "Jan", present: 22, absent: 2, leave: 1 },
-  { month: "Feb", present: 20, absent: 1, leave: 2 },
-  { month: "Mar", present: 21, absent: 2, leave: 2 },
-  { month: "Apr", present: 18, absent: 3, leave: 1 },
-];
-
-// Simulated saved attendance records
-const savedAttendanceRecords: AttendanceRecord[] = [
-  {
-    date: new Date(new Date().setDate(new Date().getDate() - 1)),
-    classId: "5A",
-    students: [
-      { id: 1, status: "present" },
-      { id: 2, status: "present" },
-      { id: 3, status: "absent" },
-      { id: 4, status: "present" },
-      { id: 5, status: "leave" },
-      { id: 6, status: "present" },
-      { id: 7, status: "present" },
-      { id: 8, status: "absent" },
-      { id: 9, status: "present" },
-      { id: 10, status: "present" },
-      { id: 11, status: "present" },
-      { id: 12, status: "leave" },
-    ],
-    markedAt: new Date(new Date().setDate(new Date().getDate() - 1)),
-  },
-  {
-    date: new Date(new Date().setDate(new Date().getDate() - 2)),
-    classId: "5A",
-    students: [
-      { id: 1, status: "present" },
-      { id: 2, status: "absent" },
-      { id: 3, status: "present" },
-      { id: 4, status: "present" },
-      { id: 5, status: "present" },
-      { id: 6, status: "present" },
-      { id: 7, status: "leave" },
-      { id: 8, status: "present" },
-      { id: 9, status: "present" },
-      { id: 10, status: "absent" },
-      { id: 11, status: "present" },
-      { id: 12, status: "present" },
-    ],
-    markedAt: new Date(new Date().setDate(new Date().getDate() - 2)),
-  },
-];
+// Removed all hardcoded data - will be fetched from API
 
 export default function AttendanceModule() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
   const [date, setDate] = useState<Date | undefined>(new Date());
   const [historyDate, setHistoryDate] = useState<Date | undefined>(undefined);
-  const [selectedClass, setSelectedClass] = useState("5A");
-  const [studentAttendance, setStudentAttendance] = useState<Student[]>(allStudents);
+  const [selectedClass, setSelectedClass] = useState("");
+  const [selectedClassId, setSelectedClassId] = useState("");
+  const [classes, setClasses] = useState<any[]>([]);
+  const [studentAttendance, setStudentAttendance] = useState<Student[]>([]);
   const [isSelfCheckedIn, setIsSelfCheckedIn] = useState(false);
+  const [checkInTime, setCheckInTime] = useState<string | null>(null);
+  const [checkOutTime, setCheckOutTime] = useState<string | null>(null);
+  const [leaveFromDate, setLeaveFromDate] = useState("");
+  const [leaveToDate, setLeaveToDate] = useState("");
+  const [leaveType, setLeaveType] = useState("");
   const [leaveReason, setLeaveReason] = useState("");
-  const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>(savedAttendanceRecords);
+  const [myLeaves, setMyLeaves] = useState<any[]>([]);
+  const [isLoadingLeaves, setIsLoadingLeaves] = useState(false);
+  const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
   const [todayAttendanceTaken, setTodayAttendanceTaken] = useState(false);
+  const [teacherAttendance, setTeacherAttendance] = useState<any[]>([]);
+  const [monthlyStats, setMonthlyStats] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingTeachers, setIsLoadingTeachers] = useState(false);
+  // Student attendance percentage state
+  const [attendanceStartDate, setAttendanceStartDate] = useState<Date>(() => startOfMonth(new Date()));
+  const [attendanceEndDate, setAttendanceEndDate] = useState<Date>(() => new Date());
+  const [studentAttendancePercentages, setStudentAttendancePercentages] = useState<any[]>([]);
+  const [isLoadingPercentages, setIsLoadingPercentages] = useState(false);
+  const [markingTeacherId, setMarkingTeacherId] = useState<string | null>(null);
+  const [teacherStatus, setTeacherStatus] = useState<'present' | 'absent' | 'late' | 'leave'>('present');
+  const [teacherRemarks, setTeacherRemarks] = useState('');
+  const [isViewHistoryOpen, setIsViewHistoryOpen] = useState(false);
+  const [selectedTeacherForHistory, setSelectedTeacherForHistory] = useState<{ id: string; name: string } | null>(null);
+  const [teacherHistory, setTeacherHistory] = useState<any[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [historyStartDate, setHistoryStartDate] = useState<Date | undefined>(() => {
+    const date = new Date();
+    date.setDate(date.getDate() - 30); // Default to 30 days ago
+    return date;
+  });
+  const [historyEndDate, setHistoryEndDate] = useState<Date | undefined>(new Date());
+  const [selectedHistoryRecord, setSelectedHistoryRecord] = useState<any | null>(null);
+  const [isLoadingHistoryDate, setIsLoadingHistoryDate] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
 
-  const today = new Date();
+  // Memoize today's date string to prevent infinite loops
+  const today = useMemo(() => new Date(), []);
+  const todayStr = useMemo(() => format(new Date(), "yyyy-MM-dd"), []);
 
-  // Check if today's attendance is already taken
-  useEffect(() => {
-    const todayRecord = attendanceRecords.find(
-      r => isSameDay(r.date, today) && r.classId === selectedClass
-    );
-    
-    if (todayRecord) {
-      setTodayAttendanceTaken(true);
-      // Load saved attendance
-      const loadedStudents = allStudents.map(student => {
-        const savedStatus = todayRecord.students.find(s => s.id === student.id);
-        return {
-          ...student,
-          status: (savedStatus?.status as Student["status"]) || "not-marked"
-        };
+  // Mark teacher attendance
+  const markTeacherAttendance = async (teacherId: string) => {
+    try {
+      await attendanceApi.markTeacherAttendance({
+        teacherId,
+        date: todayStr,
+        status: teacherStatus,
+        remarks: teacherRemarks || undefined
       });
-      setStudentAttendance(loadedStudents);
-    } else {
-      setTodayAttendanceTaken(false);
-      // Reset to not-marked for new day
-      setStudentAttendance(allStudents.map(s => ({ ...s, status: "not-marked" })));
+
+      // Refresh teacher attendance list
+      const data = await attendanceApi.getTeacherAttendance(todayStr);
+      setTeacherAttendance(data || []);
+
+      toast({
+        title: "Success",
+        description: "Teacher attendance marked successfully",
+      });
+
+      setMarkingTeacherId(null);
+      setTeacherRemarks('');
+    } catch (error: any) {
+      console.error('Error marking teacher attendance:', error);
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to mark teacher attendance",
+        variant: "destructive"
+      });
     }
-  }, [selectedClass]);
+  };
+
+  // Load classes on mount
+  useEffect(() => {
+    const loadClasses = async () => {
+      if (!isAdmin) return;
+      try {
+        const classesData = await classesApi.getAll();
+        setClasses(classesData || []);
+        
+        // Check URL params for class first
+        const classIdFromUrl = searchParams.get('classId');
+        if (classIdFromUrl && classesData) {
+          const urlClass = classesData.find((c: any) => c.id === classIdFromUrl);
+          if (urlClass) {
+            setSelectedClass(`${urlClass.name}${urlClass.section ? ` - Section ${urlClass.section}` : ''}`);
+            setSelectedClassId(urlClass.id);
+            return;
+          }
+        }
+        
+        if (classesData && classesData.length > 0) {
+          const firstClass = classesData[0];
+          setSelectedClass(`${firstClass.name}${firstClass.section ? ` - Section ${firstClass.section}` : ''}`);
+          setSelectedClassId(firstClass.id);
+        }
+      } catch (error) {
+        console.error('Error loading classes:', error);
+        toast({
+          title: "Error",
+          description: "Failed to load classes",
+          variant: "destructive"
+        });
+      }
+    };
+    loadClasses();
+  }, [isAdmin, searchParams]);
+
+  // Load teacher's assigned class (for non-admin teachers)
+  useEffect(() => {
+    const loadTeacherClass = async () => {
+      if (isAdmin) return; // Skip for admins
+      
+      try {
+        // Load teacher's assigned class
+        const classesData = await classesApi.getAll();
+        console.log('Teacher classes loaded:', classesData);
+        if (classesData && classesData.length > 0) {
+          // Teacher's assigned class should be in the list (filtered by backend)
+          const assignedClass = classesData[0];
+          console.log('Selected class:', assignedClass);
+          setClasses(classesData);
+          setSelectedClass(`${assignedClass.name}${assignedClass.section ? ` - Section ${assignedClass.section}` : ''}`);
+          setSelectedClassId(assignedClass.id);
+        } else {
+          // Try fallback: check user.className
+          if (user?.className) {
+            // Try to find class by name from all classes
+            try {
+              const allClasses = await classesApi.getAll();
+              const matchedClass = allClasses.find((c: any) => {
+                const classStr = `${c.name}${c.section ? ` - Section ${c.section}` : ''}`.trim();
+                return classStr === user.className?.trim() || 
+                       classStr.replace(/Section\s*/i, '').trim() === user.className?.replace(/Section\s*/i, '').trim();
+              });
+              
+              if (matchedClass) {
+                setSelectedClass(`${matchedClass.name}${matchedClass.section ? ` - Section ${matchedClass.section}` : ''}`);
+                setSelectedClassId(matchedClass.id);
+                setClasses([matchedClass]);
+              }
+            } catch (error) {
+              console.error('Error in fallback class loading:', error);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error loading teacher class:', error);
+        toast({
+          title: "Error",
+          description: "Failed to load your assigned class. Please contact admin.",
+          variant: "destructive"
+        });
+      }
+    };
+    loadTeacherClass();
+  }, [isAdmin, user]);
+
+  // Load teacher attendance
+  useEffect(() => {
+    const loadTeacherAttendance = async () => {
+      if (!isAdmin) return;
+      setIsLoadingTeachers(true);
+      try {
+        const data = await attendanceApi.getTeacherAttendance(todayStr);
+        setTeacherAttendance(data || []);
+      } catch (error) {
+        console.error('Error loading teacher attendance:', error);
+        setTeacherAttendance([]);
+      } finally {
+        setIsLoadingTeachers(false);
+      }
+    };
+    loadTeacherAttendance();
+  }, [isAdmin, todayStr]);
+
+  // Load teacher's own attendance for check-in/check-out
+  useEffect(() => {
+    const loadSelfAttendance = async () => {
+      if (isAdmin) return;
+      if (!user?.id) return;
+      
+      try {
+        // Use getTeacherAttendanceHistory instead of getTeacherAttendance
+        // Pass today's date to get only today's record
+        const historyData = await attendanceApi.getTeacherAttendanceHistory(
+          user.id, // teacherId - will be filtered by backend for teachers
+          todayStr, // startDate
+          todayStr  // endDate - same as startDate to get only today
+        );
+        
+        // Find today's record (should be the first one or filter by date)
+        const todayRecord = Array.isArray(historyData) 
+          ? historyData.find((record: any) => {
+              const recordDate = record.date || record.attendanceDate;
+              return recordDate === todayStr || recordDate?.startsWith(todayStr);
+            }) || historyData[0] // Fallback to first record if exact match not found
+          : null;
+        
+        if (todayRecord) {
+          setIsSelfCheckedIn(!!(todayRecord.checkInTime || todayRecord.checkIn));
+          setCheckInTime(todayRecord.checkIn || todayRecord.checkInTime || null);
+          setCheckOutTime(todayRecord.checkOut || todayRecord.checkOutTime || null);
+        } else {
+          // No attendance record for today
+          setIsSelfCheckedIn(false);
+          setCheckInTime(null);
+          setCheckOutTime(null);
+        }
+      } catch (error) {
+        // Silently fail - it's okay if there's no attendance record yet
+        console.error('Error loading self attendance:', error);
+        setIsSelfCheckedIn(false);
+        setCheckInTime(null);
+        setCheckOutTime(null);
+      }
+    };
+    loadSelfAttendance();
+  }, [isAdmin, todayStr, user?.id]);
+
+  // Load monthly stats (for both admin and teacher)
+  useEffect(() => {
+    const loadMonthlyStats = async () => {
+      try {
+        const currentDate = new Date();
+        const year = currentDate.getFullYear().toString();
+        // For teachers, don't pass classId - backend will filter by teacher's classes automatically
+        // For admins, pass selectedClassId if available
+        const data = await attendanceApi.getMonthlyStats(
+          isAdmin ? (selectedClassId || undefined) : undefined, 
+          undefined, 
+          year
+        );
+        setMonthlyStats(data || []);
+      } catch (error) {
+        console.error('Error loading monthly stats:', error);
+        setMonthlyStats([]);
+      }
+    };
+    loadMonthlyStats();
+  }, [isAdmin, selectedClassId]);
+
+  // Load teacher's leave requests
+  useEffect(() => {
+    const loadMyLeaves = async () => {
+      if (isAdmin) return; // Only for teachers
+      if (!user?.id) return;
+
+      setIsLoadingLeaves(true);
+      try {
+        const leaves = await timetableApi.getLeaves();
+        // Filter leaves for current teacher only
+        const myLeavesList = (leaves || []).filter((leave: any) => 
+          String(leave.teacherId) === String(user.id)
+        );
+        // Sort by created date (newest first)
+        myLeavesList.sort((a: any, b: any) => {
+          const dateA = new Date(a.startDate || a.createdAt || 0).getTime();
+          const dateB = new Date(b.startDate || b.createdAt || 0).getTime();
+          return dateB - dateA;
+        });
+        setMyLeaves(myLeavesList);
+      } catch (error) {
+        console.error('Error loading my leaves:', error);
+        setMyLeaves([]);
+      } finally {
+        setIsLoadingLeaves(false);
+      }
+    };
+    loadMyLeaves();
+  }, [isAdmin, user?.id]);
+
+  // Load student attendance percentages for date range
+  useEffect(() => {
+    const loadStudentAttendancePercentages = async () => {
+      if (!selectedClassId) {
+        setStudentAttendancePercentages([]);
+        return;
+      }
+
+      setIsLoadingPercentages(true);
+      try {
+        console.log('Loading attendance percentages for class:', selectedClassId);
+        console.log('Date range:', format(attendanceStartDate, "yyyy-MM-dd"), 'to', format(attendanceEndDate, "yyyy-MM-dd"));
+        
+        // Get all students in the class
+        const studentsData = await studentsApi.getByClass(selectedClassId);
+        console.log('Students data:', studentsData);
+        
+        if (!studentsData || studentsData.length === 0) {
+          console.warn('No students found for class:', selectedClassId);
+          setStudentAttendancePercentages([]);
+          return;
+        }
+        
+        // Format dates for API
+        const startDateStr = format(attendanceStartDate, "yyyy-MM-dd");
+        const endDateStr = format(attendanceEndDate, "yyyy-MM-dd");
+
+        // Get attendance history for the date range
+        const attendanceHistory = await attendanceApi.getStudentAttendanceHistory(
+          selectedClassId,
+          startDateStr,
+          endDateStr
+        );
+        console.log('Attendance history received:', attendanceHistory);
+        console.log('Attendance history type:', Array.isArray(attendanceHistory) ? 'array' : typeof attendanceHistory);
+        console.log('Attendance history length:', Array.isArray(attendanceHistory) ? attendanceHistory.length : 'not an array');
+
+        // Flatten the attendance history - convert from date-grouped to flat student records
+        const flattenedAttendance: any[] = [];
+        if (Array.isArray(attendanceHistory)) {
+          attendanceHistory.forEach((record: any) => {
+            if (record.students && Array.isArray(record.students)) {
+              record.students.forEach((student: any) => {
+                flattenedAttendance.push({
+                  studentId: student.id,
+                  status: student.status,
+                  date: record.date
+                });
+              });
+            }
+          });
+        }
+        console.log('Flattened attendance:', flattenedAttendance);
+        console.log('Flattened attendance count:', flattenedAttendance.length);
+
+        // Calculate percentage for each student
+        const studentsWithPercentages = studentsData.map((student: any) => {
+          const studentId = String(student.id);
+          
+          // Filter attendance records for this student from flattened data
+          const studentAttendance = flattenedAttendance.filter((a: any) => 
+            String(a.studentId) === studentId || String(a.studentId) === String(student.id)
+          );
+
+          // Count present and total
+          const presentCount = studentAttendance.filter((a: any) => a.status === 'present').length;
+          const totalCount = studentAttendance.length;
+          const percentage = totalCount > 0 ? Math.round((presentCount / totalCount) * 100) : 0;
+
+          return {
+            id: student.id,
+            name: student.name,
+            rollNo: student.rollNo || '',
+            percentage: percentage,
+            presentCount: presentCount,
+            totalCount: totalCount
+          };
+        });
+
+        console.log('Students with percentages:', studentsWithPercentages);
+        console.log('Students with percentages count:', studentsWithPercentages.length);
+
+        // Sort by roll number or name
+        studentsWithPercentages.sort((a, b) => {
+          if (a.rollNo && b.rollNo) {
+            return String(a.rollNo).localeCompare(String(b.rollNo), undefined, { numeric: true });
+          }
+          return a.name.localeCompare(b.name);
+        });
+
+        setStudentAttendancePercentages(studentsWithPercentages);
+      } catch (error: any) {
+        console.error('Error loading student attendance percentages:', error);
+        console.error('Error details:', error?.response?.data || error?.message || error);
+        toast({
+          title: "Error",
+          description: error?.message || "Failed to load attendance percentages",
+          variant: "destructive"
+        });
+        setStudentAttendancePercentages([]);
+      } finally {
+        setIsLoadingPercentages(false);
+      }
+    };
+
+    loadStudentAttendancePercentages();
+  }, [selectedClassId, attendanceStartDate, attendanceEndDate]);
+
+  // Load students when class is selected
+  useEffect(() => {
+    const loadStudents = async () => {
+      if (!selectedClassId) {
+        setStudentAttendance([]);
+        setAttendanceRecords([]);
+        return;
+      }
+      setIsLoading(true);
+      try {
+        // Load students for the class - use getByClass for both admins and teachers
+        let classStudents: any[] = [];
+        try {
+          // This endpoint works for both admins and teachers
+          console.log('Loading students for class ID:', selectedClassId);
+          classStudents = await studentsApi.getByClass(selectedClassId);
+          console.log('Students loaded:', classStudents);
+        } catch (error) {
+          // Fallback: if getByClass fails, try getAll and filter (admin only)
+          if (isAdmin) {
+            const studentsData = await studentsApi.getAll();
+            classStudents = (studentsData || []).filter((s: any) => s.classId === selectedClassId);
+          } else {
+            console.error('Error loading students:', error);
+            toast({
+              title: "Error",
+              description: "Failed to load students for this class",
+              variant: "destructive"
+            });
+          }
+        }
+        
+        if (classStudents.length === 0) {
+          console.log('No students found for class:', selectedClassId);
+          setStudentAttendance([]);
+        } else {
+          console.log(`Found ${classStudents.length} students for class ${selectedClassId}`);
+          setStudentAttendance(classStudents.map((s: any, index: number) => ({
+            id: s.id, // Keep original UUID string, don't convert to number
+            name: s.name,
+            rollNo: s.rollNo || index + 1,
+            status: "not-marked" as const
+          })));
+        }
+
+        // Load today's attendance if exists
+        try {
+          const attendanceData = await attendanceApi.getStudentAttendance(selectedClassId, todayStr);
+          if (attendanceData && attendanceData.students && attendanceData.students.length > 0) {
+            // Check if any student has attendance marked (status is not null/undefined/not-marked)
+            const hasAttendanceMarked = attendanceData.students.some((s: any) => 
+              s.status !== null && s.status !== undefined && s.status !== 'not-marked'
+            );
+            
+            if (hasAttendanceMarked) {
+              setTodayAttendanceTaken(true);
+              setStudentAttendance(prev => prev.map(student => {
+                const savedStatus = attendanceData.students.find((s: any) => 
+                  String(s.id) === String(student.id) || s.id === student.id
+                );
+                return {
+                  ...student,
+                  status: (savedStatus?.status as Student["status"]) || "not-marked"
+                };
+              }));
+            } else {
+              setTodayAttendanceTaken(false);
+            }
+          } else {
+            setTodayAttendanceTaken(false);
+          }
+        } catch (error) {
+          // No attendance for today, that's okay
+          setTodayAttendanceTaken(false);
+        }
+
+        // Load attendance history
+        try {
+          const historyData = await attendanceApi.getStudentAttendanceHistory(selectedClassId);
+          console.log('Attendance history data received:', historyData);
+          if (historyData && Array.isArray(historyData)) {
+            const mappedRecords = historyData.map((record: any) => {
+              // Fix: Parse date string properly to avoid timezone issues
+              const dateStr = record.date;
+              let date: Date;
+              if (typeof dateStr === 'string') {
+                // Handle both DATE (YYYY-MM-DD) and DATETIME formats
+                const dateOnly = dateStr.split('T')[0];
+                const dateParts = dateOnly.split('-');
+                if (dateParts.length === 3) {
+                  // Create date in local timezone to avoid UTC conversion issues
+                  date = new Date(parseInt(dateParts[0]), parseInt(dateParts[1]) - 1, parseInt(dateParts[2]));
+                } else {
+                  date = new Date(dateStr);
+                }
+              } else {
+                date = new Date(dateStr);
+              }
+
+              // Parse markedAt similarly
+              let markedAt: Date;
+              const markedAtStr = record.markedAt || record.date;
+              if (markedAtStr) {
+                if (typeof markedAtStr === 'string') {
+                  const markedAtOnly = markedAtStr.split('T')[0];
+                  const markedAtParts = markedAtOnly.split('-');
+                  if (markedAtParts.length === 3 && markedAtParts[0].length === 4) {
+                    markedAt = new Date(parseInt(markedAtParts[0]), parseInt(markedAtParts[1]) - 1, parseInt(markedAtParts[2]));
+                  } else {
+                    markedAt = new Date(markedAtStr);
+                  }
+                } else {
+                  markedAt = new Date(markedAtStr);
+                }
+              } else {
+                markedAt = date;
+              }
+
+              return {
+                date: date,
+                classId: record.classId || selectedClassId,
+                students: record.students || [],
+                markedAt: markedAt
+              };
+            });
+            console.log(`Loaded ${mappedRecords.length} attendance history records`);
+            setAttendanceRecords(mappedRecords);
+          } else {
+            console.warn('Attendance history data is not an array:', historyData);
+            setAttendanceRecords([]);
+          }
+        } catch (error: any) {
+          console.error('Error loading attendance history:', error);
+          setAttendanceRecords([]);
+          // Only show error if it's not a 404 (class not found) or if it's a real error
+          // Don't show error for 404 as it might just mean no records exist
+          if (error?.response?.status && error.response.status !== 404) {
+            toast({
+              title: "Warning",
+              description: error?.message || "Failed to load attendance history. Please try refreshing the page.",
+              variant: "destructive"
+            });
+          }
+        }
+      } catch (error) {
+        console.error('Error loading students:', error);
+        setStudentAttendance([]);
+        toast({
+          title: "Error",
+          description: "Failed to load students",
+          variant: "destructive"
+        });
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    loadStudents();
+  }, [selectedClassId, todayStr]);
+
+  // Load attendance for selected date when date is clicked in history tab
+  useEffect(() => {
+    const loadAttendanceForDate = async () => {
+      if (!historyDate || !selectedClassId) {
+        setSelectedHistoryRecord(null);
+        return;
+      }
+
+      setIsLoadingHistoryDate(true);
+      try {
+        const dateStr = format(historyDate, "yyyy-MM-dd");
+        const attendanceData = await attendanceApi.getStudentAttendance(selectedClassId, dateStr);
+        
+        if (attendanceData && attendanceData.students && attendanceData.students.length > 0) {
+          // Parse date properly
+          const dateParts = dateStr.split('-');
+          const recordDate = new Date(parseInt(dateParts[0]), parseInt(dateParts[1]) - 1, parseInt(dateParts[2]));
+          
+          setSelectedHistoryRecord({
+            date: recordDate,
+            classId: attendanceData.classId || selectedClassId,
+            students: attendanceData.students || [],
+            markedAt: new Date()
+          });
+        } else {
+          setSelectedHistoryRecord(null);
+        }
+      } catch (error: any) {
+        console.error('Error loading attendance for selected date:', error);
+        setSelectedHistoryRecord(null);
+        // Only show error if it's not a 404 (no record exists)
+        if (error?.response?.status && error.response.status !== 404) {
+          toast({
+            title: "Error",
+            description: error?.message || "Failed to load attendance for selected date",
+            variant: "destructive"
+          });
+        }
+      } finally {
+        setIsLoadingHistoryDate(false);
+      }
+    };
+
+    loadAttendanceForDate();
+  }, [historyDate, selectedClassId]);
+
+  // Restore history date from URL params on mount
+  useEffect(() => {
+    const historyDateParam = searchParams.get('historyDate');
+    if (historyDateParam) {
+      try {
+        const date = new Date(historyDateParam);
+        if (!isNaN(date.getTime())) {
+          setHistoryDate(date);
+        }
+      } catch (error) {
+        console.error('Error parsing historyDate from URL:', error);
+      }
+    }
+  }, []); // Only run on mount
+
+  // Update URL params when historyDate or selectedClassId changes
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (historyDate) {
+      params.set('historyDate', format(historyDate, 'yyyy-MM-dd'));
+    }
+    if (selectedClassId && isAdmin) {
+      params.set('classId', selectedClassId);
+    }
+    // Only update if params changed to avoid infinite loops
+    const currentParams = new URLSearchParams(searchParams);
+    const paramsChanged = 
+      params.get('historyDate') !== currentParams.get('historyDate') ||
+      params.get('classId') !== currentParams.get('classId');
+    
+    if (paramsChanged) {
+      setSearchParams(params, { replace: true });
+    }
+  }, [historyDate, selectedClassId, isAdmin]);
+
+  // This is now handled in the loadStudents useEffect above
 
   const updateStudentStatus = (id: number, status: Student["status"]) => {
     setStudentAttendance(prev => 
@@ -174,7 +716,16 @@ export default function AttendanceModule() {
     setStudentAttendance(prev => prev.map(s => ({ ...s, status: "present" })));
   };
 
-  const saveAttendance = () => {
+  const saveAttendance = async () => {
+    if (!selectedClassId) {
+      toast({
+        title: "Error",
+        description: "Please select a class",
+        variant: "destructive"
+      });
+      return;
+    }
+
     const unmarked = studentAttendance.filter(s => s.status === "not-marked");
     if (unmarked.length > 0) {
       toast({
@@ -185,39 +736,54 @@ export default function AttendanceModule() {
       return;
     }
 
-    const newRecord: AttendanceRecord = {
-      date: today,
-      classId: selectedClass,
-      students: studentAttendance.map(s => ({ id: s.id, status: s.status })),
-      markedAt: new Date(),
-    };
+    try {
+      await attendanceApi.saveStudentAttendance({
+        classId: selectedClassId,
+        date: todayStr,
+        students: studentAttendance.map(s => ({ id: String(s.id), status: s.status }))
+      });
 
-    // Update or add record
-    const existingIndex = attendanceRecords.findIndex(
-      r => isSameDay(r.date, today) && r.classId === selectedClass
-    );
+      // Update local state
+      const newRecord: AttendanceRecord = {
+        date: today,
+        classId: selectedClassId,
+        students: studentAttendance.map(s => ({ id: s.id, status: s.status })),
+        markedAt: new Date(),
+      };
 
-    if (existingIndex >= 0) {
-      const updated = [...attendanceRecords];
-      updated[existingIndex] = newRecord;
-      setAttendanceRecords(updated);
-      toast({ title: "Attendance Updated", description: `Attendance for Class ${selectedClass} has been updated.` });
-    } else {
-      setAttendanceRecords([...attendanceRecords, newRecord]);
-      toast({ title: "Attendance Saved", description: `Attendance for Class ${selectedClass} has been saved.` });
+      const existingIndex = attendanceRecords.findIndex(
+        r => isSameDay(r.date, today) && r.classId === selectedClassId
+      );
+
+      if (existingIndex >= 0) {
+        const updated = [...attendanceRecords];
+        updated[existingIndex] = newRecord;
+        setAttendanceRecords(updated);
+        toast({ title: "Attendance Updated", description: `Attendance for ${selectedClass} has been updated.` });
+      } else {
+        setAttendanceRecords([...attendanceRecords, newRecord]);
+        toast({ title: "Attendance Saved", description: `Attendance for ${selectedClass} has been saved.` });
+      }
+      
+      setTodayAttendanceTaken(true);
+    } catch (error: any) {
+      console.error('Error saving attendance:', error);
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to save attendance",
+        variant: "destructive"
+      });
     }
-    
-    setTodayAttendanceTaken(true);
   };
 
   // Get history for selected date
   const getHistoryForDate = (d: Date) => {
-    return attendanceRecords.find(r => isSameDay(r.date, d) && r.classId === selectedClass);
+    return attendanceRecords.find(r => isSameDay(r.date, d) && r.classId === selectedClassId);
   };
 
   // Dates with attendance records (for calendar highlighting)
   const attendanceDates = attendanceRecords
-    .filter(r => r.classId === selectedClass)
+    .filter(r => r.classId === selectedClassId)
     .map(r => r.date);
 
   const presentCount = studentAttendance.filter(s => s.status === "present").length;
@@ -264,7 +830,7 @@ export default function AttendanceModule() {
                         <CheckCircle2 className="w-6 h-6 text-secondary" />
                       </div>
                       <div>
-                        <p className="text-2xl font-bold">24</p>
+                        <p className="text-2xl font-bold">{teacherAttendance.filter(t => t.status === "present").length}</p>
                         <p className="text-sm text-muted-foreground">Present</p>
                       </div>
                     </div>
@@ -277,7 +843,7 @@ export default function AttendanceModule() {
                         <XCircle className="w-6 h-6 text-destructive" />
                       </div>
                       <div>
-                        <p className="text-2xl font-bold">1</p>
+                        <p className="text-2xl font-bold">{teacherAttendance.filter(t => t.status === "absent").length}</p>
                         <p className="text-sm text-muted-foreground">Absent</p>
                       </div>
                     </div>
@@ -290,7 +856,7 @@ export default function AttendanceModule() {
                         <AlertCircle className="w-6 h-6 text-accent" />
                       </div>
                       <div>
-                        <p className="text-2xl font-bold">2</p>
+                        <p className="text-2xl font-bold">{teacherAttendance.filter(t => t.status === "leave").length}</p>
                         <p className="text-sm text-muted-foreground">On Leave</p>
                       </div>
                     </div>
@@ -303,7 +869,7 @@ export default function AttendanceModule() {
                         <Clock className="w-6 h-6 text-primary" />
                       </div>
                       <div>
-                        <p className="text-2xl font-bold">1</p>
+                        <p className="text-2xl font-bold">{teacherAttendance.filter(t => t.status === "late").length}</p>
                         <p className="text-sm text-muted-foreground">Late</p>
                       </div>
                     </div>
@@ -327,31 +893,61 @@ export default function AttendanceModule() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {teacherAttendance.map((teacher) => (
-                        <TableRow key={teacher.id}>
-                          <TableCell className="font-medium">{teacher.name}</TableCell>
-                          <TableCell>{teacher.checkIn}</TableCell>
-                          <TableCell>{teacher.checkOut}</TableCell>
-                          <TableCell>
-                            <Badge 
-                              variant={
-                                teacher.status === "present" ? "default" :
-                                teacher.status === "late" ? "secondary" :
-                                teacher.status === "leave" ? "outline" : "destructive"
-                              }
-                              className={
-                                teacher.status === "present" ? "bg-secondary" : 
-                                teacher.status === "late" ? "bg-accent text-accent-foreground" : ""
-                              }
-                            >
-                              {teacher.status}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <Button variant="ghost" size="sm">View History</Button>
+                      {isLoadingTeachers ? (
+                        <TableRow>
+                          <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                            Loading teacher attendance...
                           </TableCell>
                         </TableRow>
-                      ))}
+                      ) : teacherAttendance.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                            No teacher attendance data available
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        teacherAttendance.map((teacher) => (
+                          <TableRow key={teacher.id}>
+                            <TableCell className="font-medium">{teacher.name || teacher.teacherName}</TableCell>
+                            <TableCell>{teacher.checkIn || teacher.checkInTime || "-"}</TableCell>
+                            <TableCell>{teacher.checkOut || teacher.checkOutTime || "-"}</TableCell>
+                            <TableCell>
+                              <Badge 
+                                variant={
+                                  teacher.status === "present" ? "default" :
+                                  teacher.status === "late" ? "secondary" :
+                                  teacher.status === "leave" ? "outline" : "destructive"
+                                }
+                                className={
+                                  teacher.status === "present" ? "bg-secondary" : 
+                                  teacher.status === "late" ? "bg-accent text-accent-foreground" : ""
+                                }
+                              >
+                                {teacher.status === "not-marked" ? "Not Marked" : teacher.status}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <Button 
+                                variant="ghost" 
+                                size="sm"
+                                onClick={() => {
+                                  setSelectedTeacherForHistory({ id: teacher.id, name: teacher.name });
+                                  setIsViewHistoryOpen(true);
+                                  // Reset dates to default (last 30 days)
+                                  const date = new Date();
+                                  date.setDate(date.getDate() - 30);
+                                  setHistoryStartDate(date);
+                                  setHistoryEndDate(new Date());
+                                  // Don't fetch immediately - wait for user to select date range
+                                  setTeacherHistory([]);
+                                }}
+                              >
+                                View History
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      )}
                     </TableBody>
                   </Table>
                 </CardContent>
@@ -361,8 +957,8 @@ export default function AttendanceModule() {
 
           {/* Student Attendance */}
           <TabsContent value="students" className="space-y-4">
-            {/* Today's Attendance Notification */}
-            {todayAttendanceTaken && (
+            {/* Today's Attendance Notification (Teachers only) */}
+            {!isAdmin && todayAttendanceTaken && (
               <Alert className="border-secondary bg-secondary/10">
                 <CheckCircle2 className="h-4 w-4 text-secondary" />
                 <AlertTitle className="text-secondary">Attendance Already Taken</AlertTitle>
@@ -386,26 +982,28 @@ export default function AttendanceModule() {
                   </CardContent>
                 </Card>
 
-                {/* Quick Actions */}
-                <Card>
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-sm font-medium">Quick Actions</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-2">
-                    <Button variant="outline" className="w-full justify-start" onClick={markAllPresent}>
-                      <CheckCircle2 className="w-4 h-4 mr-2 text-secondary" />
-                      Mark All Present
-                    </Button>
-                    <Button 
-                      variant="outline" 
-                      className="w-full justify-start"
-                      onClick={() => setStudentAttendance(allStudents.map(s => ({ ...s, status: "not-marked" })))}
-                    >
-                      <XCircle className="w-4 h-4 mr-2 text-muted-foreground" />
-                      Reset All
-                    </Button>
-                  </CardContent>
-                </Card>
+                {/* Quick Actions (Teachers only) */}
+                {!isAdmin && (
+                  <Card>
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-sm font-medium">Quick Actions</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-2">
+                      <Button variant="outline" className="w-full justify-start" onClick={markAllPresent}>
+                        <CheckCircle2 className="w-4 h-4 mr-2 text-secondary" />
+                        Mark All Present
+                      </Button>
+                      <Button 
+                        variant="outline" 
+                        className="w-full justify-start"
+                        onClick={() => setStudentAttendance(prev => prev.map(s => ({ ...s, status: "not-marked" })))}
+                      >
+                        <XCircle className="w-4 h-4 mr-2 text-muted-foreground" />
+                        Reset All
+                      </Button>
+                    </CardContent>
+                  </Card>
+                )}
                 
                 {/* Stats Card */}
                 <Card>
@@ -461,14 +1059,23 @@ export default function AttendanceModule() {
                     </CardTitle>
                     <div className="flex items-center gap-2">
                       {isAdmin && (
-                        <Select value={selectedClass} onValueChange={setSelectedClass}>
+                        <Select 
+                          value={selectedClassId} 
+                          onValueChange={(value) => {
+                            setSelectedClassId(value);
+                            const selected = classes.find(c => c.id === value);
+                            setSelectedClass(selected ? `${selected.name}${selected.section ? ` - Section ${selected.section}` : ''}` : "");
+                          }}
+                        >
                           <SelectTrigger className="w-32">
-                            <SelectValue />
+                            <SelectValue placeholder="Select class" />
                           </SelectTrigger>
                           <SelectContent className="bg-card">
-                            <SelectItem value="5A">Class 5A</SelectItem>
-                            <SelectItem value="5B">Class 5B</SelectItem>
-                            <SelectItem value="4A">Class 4A</SelectItem>
+                            {classes.map((cls) => (
+                              <SelectItem key={cls.id} value={cls.id}>
+                                {cls.name}{cls.section ? ` - Section ${cls.section}` : ''}
+                              </SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                       )}
@@ -476,17 +1083,26 @@ export default function AttendanceModule() {
                   </div>
                 </CardHeader>
                 <CardContent>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="w-16">Roll</TableHead>
-                        <TableHead>Student Name</TableHead>
-                        <TableHead className="text-center">Status</TableHead>
-                        <TableHead className="text-right">Mark Attendance</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {studentAttendance.map((student) => (
+                  {isLoading ? (
+                    <div className="text-center py-12 text-muted-foreground">
+                      <p>Loading students...</p>
+                    </div>
+                  ) : studentAttendance.length === 0 ? (
+                    <div className="text-center py-12 text-muted-foreground">
+                      <p>{selectedClassId ? "No students found for this class" : "Please select a class"}</p>
+                    </div>
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-16">Roll</TableHead>
+                          <TableHead>Student Name</TableHead>
+                          <TableHead className="text-center">Status</TableHead>
+                          {!isAdmin && <TableHead className="text-right">Mark Attendance</TableHead>}
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {studentAttendance.map((student) => (
                         <TableRow key={student.id} className={student.status === "not-marked" ? "bg-muted/30" : ""}>
                           <TableCell className="font-medium">{student.rollNo}</TableCell>
                           <TableCell>{student.name}</TableCell>
@@ -503,53 +1119,165 @@ export default function AttendanceModule() {
                               {student.status === "not-marked" ? "Not Marked" : student.status}
                             </Badge>
                           </TableCell>
-                          <TableCell className="text-right">
-                            <div className="flex justify-end gap-1">
-                              <Button 
-                                size="sm" 
-                                variant={student.status === "present" ? "default" : "outline"}
-                                className={student.status === "present" ? "bg-secondary hover:bg-secondary/90" : ""}
-                                onClick={() => updateStudentStatus(student.id, "present")}
-                              >
-                                P
-                              </Button>
-                              <Button 
-                                size="sm" 
-                                variant={student.status === "absent" ? "default" : "outline"}
-                                className={student.status === "absent" ? "bg-destructive hover:bg-destructive/90" : ""}
-                                onClick={() => updateStudentStatus(student.id, "absent")}
-                              >
-                                A
-                              </Button>
-                              <Button 
-                                size="sm" 
-                                variant={student.status === "leave" ? "default" : "outline"}
-                                className={student.status === "leave" ? "bg-accent hover:bg-accent/90" : ""}
-                                onClick={() => updateStudentStatus(student.id, "leave")}
-                              >
-                                L
-                              </Button>
-                            </div>
-                          </TableCell>
+                          {!isAdmin && (
+                            <TableCell className="text-right">
+                              <div className="flex justify-end gap-1">
+                                <Button 
+                                  size="sm" 
+                                  variant={student.status === "present" ? "default" : "outline"}
+                                  className={student.status === "present" ? "bg-secondary hover:bg-secondary/90" : ""}
+                                  onClick={() => updateStudentStatus(student.id, "present")}
+                                >
+                                  P
+                                </Button>
+                                <Button 
+                                  size="sm" 
+                                  variant={student.status === "absent" ? "default" : "outline"}
+                                  className={student.status === "absent" ? "bg-destructive hover:bg-destructive/90" : ""}
+                                  onClick={() => updateStudentStatus(student.id, "absent")}
+                                >
+                                  A
+                                </Button>
+                                <Button 
+                                  size="sm" 
+                                  variant={student.status === "leave" ? "default" : "outline"}
+                                  className={student.status === "leave" ? "bg-accent hover:bg-accent/90" : ""}
+                                  onClick={() => updateStudentStatus(student.id, "leave")}
+                                >
+                                  L
+                                </Button>
+                              </div>
+                            </TableCell>
+                          )}
                         </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                  <div className="mt-4 flex justify-between items-center">
-                    <p className="text-sm text-muted-foreground">
-                      {studentAttendance.filter(s => s.status === "not-marked").length > 0 
-                        ? `${studentAttendance.filter(s => s.status === "not-marked").length} students not marked`
-                        : "All students marked ✓"
-                      }
-                    </p>
-                    <Button onClick={saveAttendance}>
-                      <ClipboardCheck className="w-4 h-4 mr-2" />
-                      {todayAttendanceTaken ? "Update Attendance" : "Save Attendance"}
-                    </Button>
-                  </div>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                  {!isAdmin && (
+                    <div className="mt-4 flex justify-between items-center">
+                      <p className="text-sm text-muted-foreground">
+                        {studentAttendance.filter(s => s.status === "not-marked").length > 0 
+                          ? `${studentAttendance.filter(s => s.status === "not-marked").length} students not marked`
+                          : "All students marked ✓"
+                        }
+                      </p>
+                      <Button onClick={saveAttendance}>
+                        <ClipboardCheck className="w-4 h-4 mr-2" />
+                        {todayAttendanceTaken ? "Update Attendance" : "Save Attendance"}
+                      </Button>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </div>
+
+            {/* Student Attendance Percentage Section */}
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between flex-wrap gap-4">
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <TrendingUp className="w-5 h-5 text-primary" />
+                    Student Attendance Percentage
+                  </CardTitle>
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2">
+                      <Label htmlFor="attendance-start-date" className="text-sm whitespace-nowrap">From:</Label>
+                      <Input
+                        id="attendance-start-date"
+                        type="date"
+                        value={format(attendanceStartDate, "yyyy-MM-dd")}
+                        onChange={(e) => {
+                          const newDate = e.target.value ? new Date(e.target.value) : startOfMonth(new Date());
+                          setAttendanceStartDate(newDate);
+                          // Validate: start date should not be after end date
+                          if (newDate > attendanceEndDate) {
+                            setAttendanceEndDate(newDate);
+                          }
+                        }}
+                        max={format(attendanceEndDate, "yyyy-MM-dd")}
+                        className="w-40"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Label htmlFor="attendance-end-date" className="text-sm whitespace-nowrap">To:</Label>
+                      <Input
+                        id="attendance-end-date"
+                        type="date"
+                        value={format(attendanceEndDate, "yyyy-MM-dd")}
+                        onChange={(e) => {
+                          const newDate = e.target.value ? new Date(e.target.value) : new Date();
+                          setAttendanceEndDate(newDate);
+                          // Validate: end date should not be before start date
+                          if (newDate < attendanceStartDate) {
+                            setAttendanceStartDate(newDate);
+                          }
+                        }}
+                        max={format(new Date(), "yyyy-MM-dd")}
+                        className="w-40"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {isLoadingPercentages ? (
+                  <div className="text-center py-12 text-muted-foreground">
+                    <Clock className="w-8 h-8 mx-auto mb-2 animate-spin opacity-50" />
+                    <p>Loading attendance percentages...</p>
+                  </div>
+                ) : studentAttendancePercentages.length === 0 ? (
+                  <div className="text-center py-12 text-muted-foreground">
+                    <Info className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                    <p>No students found for this class</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-20">Roll No</TableHead>
+                          <TableHead>Student Name</TableHead>
+                          <TableHead className="text-center w-32">Attendance %</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {studentAttendancePercentages.map((student) => {
+                          const getBadgeVariant = (percentage: number) => {
+                            if (percentage === 0) return "outline";
+                            if (percentage >= 90) return "default";
+                            if (percentage >= 75) return "default";
+                            return "default";
+                          };
+
+                          const getBadgeClassName = (percentage: number) => {
+                            if (percentage === 0) return "bg-muted text-muted-foreground";
+                            if (percentage >= 90) return "bg-green-500 hover:bg-green-600 text-white";
+                            if (percentage >= 75) return "bg-yellow-500 hover:bg-yellow-600 text-white";
+                            return "bg-red-500 hover:bg-red-600 text-white";
+                          };
+
+                          return (
+                            <TableRow key={student.id}>
+                              <TableCell className="font-medium">{student.rollNo || '-'}</TableCell>
+                              <TableCell>{student.name}</TableCell>
+                              <TableCell className="text-center">
+                                <Badge
+                                  variant={getBadgeVariant(student.percentage)}
+                                  className={getBadgeClassName(student.percentage)}
+                                >
+                                  {student.percentage}%
+                                </Badge>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </TabsContent>
 
           {/* Self Attendance (Teacher Only) */}
@@ -574,15 +1302,53 @@ export default function AttendanceModule() {
                       <p className="mt-4 text-lg font-semibold">
                         {isSelfCheckedIn ? "Checked In" : "Not Checked In"}
                       </p>
-                      {isSelfCheckedIn && (
-                        <p className="text-sm text-muted-foreground">Check-in time: 07:55 AM</p>
+                      {checkInTime && (
+                        <p className="text-sm text-muted-foreground">Check-in time: {checkInTime}</p>
+                      )}
+                      {checkOutTime && (
+                        <p className="text-sm text-muted-foreground">Check-out time: {checkOutTime}</p>
                       )}
                     </div>
                     <div className="flex gap-3">
                       <Button 
                         className="flex-1" 
                         disabled={isSelfCheckedIn}
-                        onClick={() => setIsSelfCheckedIn(true)}
+                        onClick={async () => {
+                          try {
+                            const result = await attendanceApi.markTeacherCheckIn();
+                            setIsSelfCheckedIn(true);
+                            // Handle both time formats from backend
+                            let timeStr: string;
+                            if (result.time) {
+                              // Backend returns "HH:MM" format, convert to 12-hour format
+                              const [hours, minutes] = result.time.split(':');
+                              const hour24 = parseInt(hours);
+                              const hour12 = hour24 === 0 ? 12 : hour24 > 12 ? hour24 - 12 : hour24;
+                              const ampm = hour24 >= 12 ? 'PM' : 'AM';
+                              timeStr = `${hour12}:${minutes} ${ampm}`;
+                            } else if (result.checkInTime) {
+                              // Format ISO string to 12-hour format
+                              const date = new Date(result.checkInTime);
+                              timeStr = date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+                            } else {
+                              timeStr = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+                            }
+                            setCheckInTime(timeStr);
+                            toast({
+                              title: "Success",
+                              description: "Checked in successfully",
+                            });
+                          } catch (error: any) {
+                            console.error('Check-in error details:', error);
+                            // Extract error message details if available
+                            const errorMessage = error?.message || error?.details || "Failed to check in. Please check backend console for details.";
+                            toast({
+                              title: "Error",
+                              description: errorMessage,
+                              variant: "destructive"
+                            });
+                          }
+                        }}
                       >
                         <LogIn className="w-4 h-4 mr-2" />
                         Check In
@@ -590,7 +1356,40 @@ export default function AttendanceModule() {
                       <Button 
                         variant="outline" 
                         className="flex-1"
-                        disabled={!isSelfCheckedIn}
+                        disabled={!isSelfCheckedIn || !!checkOutTime}
+                        onClick={async () => {
+                          try {
+                            const result = await attendanceApi.markTeacherCheckOut();
+                            // Handle both time formats from backend
+                            let timeStr: string;
+                            if (result.time) {
+                              // Backend returns "HH:MM" format, convert to 12-hour format
+                              const [hours, minutes] = result.time.split(':');
+                              const hour24 = parseInt(hours);
+                              const hour12 = hour24 === 0 ? 12 : hour24 > 12 ? hour24 - 12 : hour24;
+                              const ampm = hour24 >= 12 ? 'PM' : 'AM';
+                              timeStr = `${hour12}:${minutes} ${ampm}`;
+                            } else if (result.checkOutTime) {
+                              // Format ISO string to 12-hour format
+                              const date = new Date(result.checkOutTime);
+                              timeStr = date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+                            } else {
+                              timeStr = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+                            }
+                            setCheckOutTime(timeStr);
+                            toast({
+                              title: "Success",
+                              description: "Checked out successfully",
+                            });
+                          } catch (error: any) {
+                            console.error('Check-out error details:', error);
+                            toast({
+                              title: "Error",
+                              description: error?.message || "Failed to check out. Please check console for details.",
+                              variant: "destructive"
+                            });
+                          }
+                        }}
                       >
                         <LogOut className="w-4 h-4 mr-2" />
                         Check Out
@@ -607,23 +1406,34 @@ export default function AttendanceModule() {
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <label className="text-sm font-medium">From Date</label>
-                        <Input type="date" />
+                        <Input 
+                          type="date" 
+                          value={leaveFromDate}
+                          onChange={(e) => setLeaveFromDate(e.target.value)}
+                          min={format(new Date(), "yyyy-MM-dd")}
+                        />
                       </div>
                       <div className="space-y-2">
                         <label className="text-sm font-medium">To Date</label>
-                        <Input type="date" />
+                        <Input 
+                          type="date" 
+                          value={leaveToDate}
+                          onChange={(e) => setLeaveToDate(e.target.value)}
+                          min={leaveFromDate || format(new Date(), "yyyy-MM-dd")}
+                        />
                       </div>
                     </div>
                     <div className="space-y-2">
                       <label className="text-sm font-medium">Leave Type</label>
-                      <Select>
+                      <Select value={leaveType} onValueChange={setLeaveType}>
                         <SelectTrigger>
                           <SelectValue placeholder="Select leave type" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="casual">Casual Leave</SelectItem>
                           <SelectItem value="sick">Sick Leave</SelectItem>
+                          <SelectItem value="casual">Casual Leave</SelectItem>
                           <SelectItem value="earned">Earned Leave</SelectItem>
+                          <SelectItem value="other">Other</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -635,10 +1445,147 @@ export default function AttendanceModule() {
                         onChange={(e) => setLeaveReason(e.target.value)}
                       />
                     </div>
-                    <Button className="w-full">Submit Leave Request</Button>
+                    <Button 
+                      className="w-full"
+                      onClick={async () => {
+                        if (!leaveFromDate || !leaveToDate || !leaveType || !leaveReason.trim()) {
+                          toast({
+                            title: "Validation Error",
+                            description: "Please fill in all fields",
+                            variant: "destructive"
+                          });
+                          return;
+                        }
+                        
+                        if (new Date(leaveFromDate) > new Date(leaveToDate)) {
+                          toast({
+                            title: "Validation Error",
+                            description: "From date cannot be after To date",
+                            variant: "destructive"
+                          });
+                          return;
+                        }
+                        
+                        try {
+                          // Use timetable API to create leave (teacher can apply for their own leave)
+                          const result = await timetableApi.createLeave({
+                            teacherId: user?.id || "",
+                            teacherName: user?.name || "",
+                            startDate: leaveFromDate,
+                            endDate: leaveToDate,
+                            reason: `${leaveType.charAt(0).toUpperCase() + leaveType.slice(1)} Leave: ${leaveReason}`
+                          });
+                          
+                          toast({
+                            title: "Success",
+                            description: "Leave request submitted successfully",
+                          });
+                          
+                          // Reset form
+                          setLeaveFromDate("");
+                          setLeaveToDate("");
+                          setLeaveType("");
+                          setLeaveReason("");
+                          
+                          // Reload leave requests
+                          const leaves = await timetableApi.getLeaves();
+                          const myLeavesList = (leaves || []).filter((leave: any) => 
+                            String(leave.teacherId) === String(user?.id)
+                          );
+                          myLeavesList.sort((a: any, b: any) => {
+                            const dateA = new Date(a.startDate || a.createdAt || 0).getTime();
+                            const dateB = new Date(b.startDate || b.createdAt || 0).getTime();
+                            return dateB - dateA;
+                          });
+                          setMyLeaves(myLeavesList);
+                        } catch (error: any) {
+                          console.error('Leave application error:', error);
+                          toast({
+                            title: "Error",
+                            description: error?.message || "Failed to submit leave request",
+                            variant: "destructive"
+                          });
+                        }
+                      }}
+                    >
+                      Submit Leave Request
+                    </Button>
                   </CardContent>
                 </Card>
               </div>
+
+              {/* My Leave Requests */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg">My Leave Requests</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {isLoadingLeaves ? (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <Clock className="w-8 h-8 mx-auto mb-2 animate-spin opacity-50" />
+                      <p>Loading leave requests...</p>
+                    </div>
+                  ) : myLeaves.length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <CalendarIcon className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                      <p>No leave requests submitted yet</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Date Range</TableHead>
+                            <TableHead>Reason</TableHead>
+                            <TableHead className="text-right">Status</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {myLeaves.map((leave: any) => {
+                            const startDate = leave.startDate ? format(new Date(leave.startDate), "dd MMM yyyy") : "";
+                            const endDate = leave.endDate ? format(new Date(leave.endDate), "dd MMM yyyy") : "";
+                            const status = leave.status || 'pending';
+                            
+                            return (
+                              <TableRow key={leave.id}>
+                                <TableCell>
+                                  <div className="flex flex-col">
+                                    <span className="font-medium">{startDate}</span>
+                                    {startDate !== endDate && (
+                                      <span className="text-sm text-muted-foreground">to {endDate}</span>
+                                    )}
+                                  </div>
+                                </TableCell>
+                                <TableCell>
+                                  <div className="max-w-md truncate" title={leave.reason || ''}>
+                                    {leave.reason || '—'}
+                                  </div>
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  <Badge
+                                    className={
+                                      status === 'approved'
+                                        ? 'bg-green-500 hover:bg-green-600'
+                                        : status === 'rejected'
+                                        ? 'bg-destructive hover:bg-destructive/90'
+                                        : 'bg-yellow-500 hover:bg-yellow-600'
+                                    }
+                                  >
+                                    {status === 'approved' && <CheckCircle2 className="w-3 h-3 mr-1" />}
+                                    {status === 'rejected' && <XCircle className="w-3 h-3 mr-1" />}
+                                    {status === 'pending' && <Clock className="w-3 h-3 mr-1" />}
+                                    {status.charAt(0).toUpperCase() + status.slice(1)}
+                                  </Badge>
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
 
               {/* Personal Attendance History */}
               <Card>
@@ -646,18 +1593,24 @@ export default function AttendanceModule() {
                   <CardTitle className="text-lg">My Attendance History</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="grid grid-cols-4 gap-4">
-                    {monthlyStats.map((stat) => (
-                      <div key={stat.month} className="text-center p-4 rounded-lg bg-muted/50">
-                        <p className="font-semibold text-lg">{stat.month}</p>
-                        <div className="mt-2 space-y-1 text-sm">
-                          <p className="text-secondary">Present: {stat.present}</p>
-                          <p className="text-destructive">Absent: {stat.absent}</p>
-                          <p className="text-accent">Leave: {stat.leave}</p>
+                  {monthlyStats.length === 0 ? (
+                    <div className="text-center py-12 text-muted-foreground">
+                      <p>No monthly statistics available</p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-4 gap-4">
+                      {monthlyStats.map((stat) => (
+                        <div key={stat.month} className="text-center p-4 rounded-lg bg-muted/50">
+                          <p className="font-semibold text-lg">{stat.month}</p>
+                          <div className="mt-2 space-y-1 text-sm">
+                            <p className="text-secondary">Present: {stat.present || 0}</p>
+                            <p className="text-destructive">Absent: {stat.absent || 0}</p>
+                            <p className="text-accent">Leave: {stat.leave || 0}</p>
+                          </div>
                         </div>
-                      </div>
-                    ))}
-                  </div>
+                      ))}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </TabsContent>
@@ -665,6 +1618,38 @@ export default function AttendanceModule() {
 
           {/* History */}
           <TabsContent value="history" className="space-y-4">
+            {/* Class Selector for Admin */}
+            {isAdmin && (
+              <Card>
+                <CardContent className="pt-6">
+                  <div className="flex items-center gap-4">
+                    <label className="text-sm font-medium">Select Class:</label>
+                    <Select 
+                      value={selectedClassId} 
+                      onValueChange={(value) => {
+                        setSelectedClassId(value);
+                        const selected = classes.find(c => c.id === value);
+                        setSelectedClass(selected ? `${selected.name}${selected.section ? ` - Section ${selected.section}` : ''}` : "");
+                        setHistoryDate(undefined); // Reset date when class changes
+                        setSelectedHistoryRecord(null); // Reset record
+                      }}
+                    >
+                      <SelectTrigger className="w-64">
+                        <SelectValue placeholder="Select a class" />
+                      </SelectTrigger>
+                      <SelectContent className="bg-card">
+                        {classes.map((cls) => (
+                          <SelectItem key={cls.id} value={cls.id}>
+                            {cls.name}{cls.section ? ` - Section ${cls.section}` : ''}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
             <div className="grid gap-6 md:grid-cols-2">
               {/* Calendar for History */}
               <Card>
@@ -710,21 +1695,27 @@ export default function AttendanceModule() {
                       <CalendarIcon className="w-12 h-12 mx-auto mb-4 opacity-50" />
                       <p>Select a date from the calendar to view attendance records</p>
                     </div>
+                  ) : !selectedClassId ? (
+                    <div className="text-center py-12 text-muted-foreground">
+                      <Info className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                      <p>Please select a class first</p>
+                    </div>
+                  ) : isLoadingHistoryDate ? (
+                    <div className="text-center py-12 text-muted-foreground">
+                      <Clock className="w-12 h-12 mx-auto mb-4 opacity-50 animate-spin" />
+                      <p>Loading attendance data...</p>
+                    </div>
+                  ) : !selectedHistoryRecord ? (
+                    <div className="text-center py-12 text-muted-foreground">
+                      <Info className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                      <p>No attendance record for this date</p>
+                      <p className="text-sm mt-2">{selectedClass || "No class selected"}</p>
+                    </div>
                   ) : (() => {
-                    const record = getHistoryForDate(historyDate);
-                    if (!record) {
-                      return (
-                        <div className="text-center py-12 text-muted-foreground">
-                          <Info className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                          <p>No attendance record for this date</p>
-                          <p className="text-sm mt-2">Class {selectedClass}</p>
-                        </div>
-                      );
-                    }
-
-                    const historyPresent = record.students.filter(s => s.status === "present").length;
-                    const historyAbsent = record.students.filter(s => s.status === "absent").length;
-                    const historyLeave = record.students.filter(s => s.status === "leave").length;
+                    const record = selectedHistoryRecord;
+                    const historyPresent = record.students.filter((s: any) => s.status === "present").length;
+                    const historyAbsent = record.students.filter((s: any) => s.status === "absent").length;
+                    const historyLeave = record.students.filter((s: any) => s.status === "leave").length;
 
                     return (
                       <div className="space-y-4">
@@ -755,12 +1746,14 @@ export default function AttendanceModule() {
                               </TableRow>
                             </TableHeader>
                             <TableBody>
-                              {record.students.map((s) => {
-                                const student = allStudents.find(st => st.id === s.id);
+                              {record.students.map((s: any) => {
+                                const student = studentAttendance.find(st => 
+                                  String(st.id) === String(s.id) || st.id === s.id
+                                );
                                 return (
                                   <TableRow key={s.id}>
-                                    <TableCell>{student?.rollNo}</TableCell>
-                                    <TableCell>{student?.name}</TableCell>
+                                    <TableCell>{s.rollNo || student?.rollNo || s.id}</TableCell>
+                                    <TableCell>{s.name || student?.name || `Student ${s.id}`}</TableCell>
                                     <TableCell className="text-right">
                                       <Badge 
                                         className={
@@ -790,6 +1783,315 @@ export default function AttendanceModule() {
           </TabsContent>
         </Tabs>
       </div>
+
+      {/* View History Dialog */}
+      <Dialog open={isViewHistoryOpen} onOpenChange={(open) => {
+        setIsViewHistoryOpen(open);
+        if (!open) {
+          setSelectedTeacherForHistory(null);
+          setTeacherHistory([]);
+          // Reset dates to default
+          const date = new Date();
+          date.setDate(date.getDate() - 30);
+          setHistoryStartDate(date);
+          setHistoryEndDate(new Date());
+        }
+      }}>
+        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              Attendance History - {selectedTeacherForHistory?.name}
+            </DialogTitle>
+            <DialogDescription>
+              Select a date range to view attendance records
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            {/* Date Range Picker */}
+            <div className="grid grid-cols-2 gap-4 pb-4 border-b">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Start Date</label>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      className={cn(
+                        "w-full justify-start text-left font-normal",
+                        !historyStartDate && "text-muted-foreground"
+                      )}
+                    >
+                      <CalendarIcon className="mr-2 h-4 w-4" />
+                      {historyStartDate ? format(historyStartDate, "PPP") : "Pick a date"}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0">
+                    <Calendar
+                      mode="single"
+                      selected={historyStartDate}
+                      onSelect={setHistoryStartDate}
+                      initialFocus
+                    />
+                  </PopoverContent>
+                </Popover>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">End Date</label>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      className={cn(
+                        "w-full justify-start text-left font-normal",
+                        !historyEndDate && "text-muted-foreground"
+                      )}
+                    >
+                      <CalendarIcon className="mr-2 h-4 w-4" />
+                      {historyEndDate ? format(historyEndDate, "PPP") : "Pick a date"}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0">
+                    <Calendar
+                      mode="single"
+                      selected={historyEndDate}
+                      onSelect={setHistoryEndDate}
+                      initialFocus
+                    />
+                  </PopoverContent>
+                </Popover>
+              </div>
+            </div>
+
+            {/* Fetch Button */}
+            <div className="flex justify-end">
+              <Button
+                onClick={async () => {
+                  if (!historyStartDate || !historyEndDate) {
+                    toast({
+                      title: "Error",
+                      description: "Please select both start and end dates",
+                      variant: "destructive"
+                    });
+                    return;
+                  }
+                  if (historyStartDate > historyEndDate) {
+                    toast({
+                      title: "Error",
+                      description: "Start date must be before end date",
+                      variant: "destructive"
+                    });
+                    return;
+                  }
+                  
+                  setIsLoadingHistory(true);
+                  try {
+                    const history = await attendanceApi.getTeacherAttendanceHistory(
+                      selectedTeacherForHistory?.id,
+                      format(historyStartDate, 'yyyy-MM-dd'),
+                      format(historyEndDate, 'yyyy-MM-dd')
+                    );
+                    setTeacherHistory(history || []);
+                  } catch (error: any) {
+                    console.error('Error loading teacher history:', error);
+                    toast({
+                      title: "Error",
+                      description: error?.message || "Failed to load attendance history",
+                      variant: "destructive"
+                    });
+                    setTeacherHistory([]);
+                  } finally {
+                    setIsLoadingHistory(false);
+                  }
+                }}
+                disabled={isLoadingHistory || !historyStartDate || !historyEndDate}
+              >
+                {isLoadingHistory ? "Loading..." : "Fetch History"}
+              </Button>
+            </div>
+
+            {isLoadingHistory ? (
+              <div className="text-center py-8">
+                <Clock className="w-8 h-8 mx-auto text-muted-foreground animate-spin mb-2" />
+                <p className="text-muted-foreground">Loading history...</p>
+              </div>
+            ) : teacherHistory.length === 0 ? (
+              <div className="text-center py-8">
+                <CalendarIcon className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
+                <p className="text-muted-foreground">No attendance history found for the selected date range</p>
+              </div>
+            ) : (
+              <>
+                {/* Summary Stats */}
+                <div className="grid grid-cols-4 gap-4 mb-4">
+                  <Card>
+                    <CardContent className="pt-4">
+                      <div className="text-2xl font-bold text-secondary">
+                        {teacherHistory.filter((h: any) => h.status === 'present' || h.status === 'Present').length}
+                      </div>
+                      <p className="text-xs text-muted-foreground">Present</p>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="pt-4">
+                      <div className="text-2xl font-bold text-destructive">
+                        {teacherHistory.filter((h: any) => h.status === 'absent' || h.status === 'Absent').length}
+                      </div>
+                      <p className="text-xs text-muted-foreground">Absent</p>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="pt-4">
+                      <div className="text-2xl font-bold text-accent">
+                        {teacherHistory.filter((h: any) => h.status === 'leave' || h.status === 'Leave').length}
+                      </div>
+                      <p className="text-xs text-muted-foreground">On Leave</p>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="pt-4">
+                      <div className="text-2xl font-bold text-blue-600">
+                        {teacherHistory.filter((h: any) => h.status === 'late' || h.status === 'Late').length}
+                      </div>
+                      <p className="text-xs text-muted-foreground">Late</p>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                {/* History Table */}
+                <div className="border rounded-lg overflow-hidden">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Date</TableHead>
+                        <TableHead>Check In</TableHead>
+                        <TableHead>Check Out</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Remarks</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {teacherHistory
+                        .sort((a: any, b: any) => {
+                          try {
+                            const dateA = new Date(a.date || a.attendanceDate || 0);
+                            const dateB = new Date(b.date || b.attendanceDate || 0);
+                            if (isNaN(dateA.getTime()) || isNaN(dateB.getTime())) return 0;
+                            return dateB.getTime() - dateA.getTime();
+                          } catch {
+                            return 0;
+                          }
+                        })
+                        .map((record: any, index: number) => {
+                          const recordDate = record.date || record.attendanceDate;
+                          const checkIn = record.checkInTime || record.checkIn || record.check_in_time;
+                          const checkOut = record.checkOutTime || record.checkOut || record.check_out_time;
+                          const status = record.status || 'not-marked';
+                          const remarks = record.remarks || record.notes || '';
+
+                          // Helper function to format time strings (handles TIME fields from MySQL)
+                          const formatTime = (timeValue: any): string => {
+                            if (!timeValue) return '-';
+                            
+                            // If it's a time-only string (HH:MM or HH:MM:SS format from MySQL TIME field)
+                            if (typeof timeValue === 'string' && /^\d{1,2}:\d{2}(:\d{2})?$/.test(timeValue)) {
+                              try {
+                                const [hours, minutes] = timeValue.split(':');
+                                const hour = parseInt(hours, 10);
+                                if (isNaN(hour)) return timeValue;
+                                
+                                const ampm = hour >= 12 ? 'PM' : 'AM';
+                                const displayHour = hour % 12 || 12;
+                                return `${displayHour.toString().padStart(2, '0')}:${minutes} ${ampm}`;
+                              } catch {
+                                return timeValue;
+                              }
+                            }
+                            
+                            // If it's a full datetime string, try to parse it
+                            try {
+                              const date = new Date(timeValue);
+                              if (!isNaN(date.getTime())) {
+                                return format(date, 'hh:mm a');
+                              }
+                            } catch {
+                              // Invalid date, return as-is
+                            }
+                            
+                            return '-';
+                          };
+
+                          // Helper function to format date safely
+                          const formatDate = (dateValue: any): string => {
+                            if (!dateValue) return '-';
+                            try {
+                              const date = new Date(dateValue);
+                              if (!isNaN(date.getTime())) {
+                                return format(date, 'dd MMM yyyy (EEE)');
+                              }
+                            } catch {
+                              // Invalid date
+                            }
+                            return String(dateValue);
+                          };
+
+                          return (
+                            <TableRow key={record.id || index}>
+                              <TableCell className="font-medium">
+                                {formatDate(recordDate)}
+                              </TableCell>
+                              <TableCell>
+                                <span className={checkIn ? '' : 'text-muted-foreground'}>
+                                  {formatTime(checkIn)}
+                                </span>
+                              </TableCell>
+                              <TableCell>
+                                <span className={checkOut ? '' : 'text-muted-foreground'}>
+                                  {formatTime(checkOut)}
+                                </span>
+                              </TableCell>
+                              <TableCell>
+                                <Badge
+                                  className={
+                                    status === 'present' || status === 'Present'
+                                      ? 'bg-secondary'
+                                      : status === 'absent' || status === 'Absent'
+                                      ? 'bg-destructive'
+                                      : status === 'leave' || status === 'Leave'
+                                      ? 'bg-accent'
+                                      : status === 'late' || status === 'Late'
+                                      ? 'bg-blue-600'
+                                      : 'bg-muted'
+                                  }
+                                >
+                                  {status.charAt(0).toUpperCase() + status.slice(1).toLowerCase()}
+                                </Badge>
+                              </TableCell>
+                              <TableCell className="max-w-xs truncate" title={remarks}>
+                                {remarks || <span className="text-muted-foreground">-</span>}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                    </TableBody>
+                  </Table>
+                </div>
+              </>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => {
+              setIsViewHistoryOpen(false);
+              setTeacherHistory([]);
+              // Reset dates to default
+              const date = new Date();
+              date.setDate(date.getDate() - 30);
+              setHistoryStartDate(date);
+              setHistoryEndDate(new Date());
+            }}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </UnifiedLayout>
   );
 }

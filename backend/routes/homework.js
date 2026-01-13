@@ -126,4 +126,218 @@ router.post('/:id/complete', authenticateToken, requireTeacher, async (req, res)
   }
 });
 
+// Get student completions for a homework
+router.get('/:id/completions', authenticateToken, requireTeacher, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Verify access
+    let accessQuery = 'SELECT id FROM homework WHERE id = ?';
+    const accessParams = [id];
+
+    if (req.user.role === 'teacher') {
+      accessQuery += ' AND teacher_id = ?';
+      accessParams.push(req.user.id);
+    } else if (req.user.role === 'admin') {
+      accessQuery += ' AND school_id = ?';
+      accessParams.push(req.user.schoolId);
+    }
+
+    const [homework] = await db.query(accessQuery, accessParams);
+    if (homework.length === 0) {
+      return res.status(404).json({ error: 'Homework not found or access denied' });
+    }
+
+    const [completions] = await db.query(
+      `SELECT student_id, is_completed 
+       FROM homework_submissions 
+       WHERE homework_id = ?`,
+      [id]
+    );
+
+    res.json(completions.map(c => ({
+      studentId: c.student_id,
+      completed: c.is_completed === 1 || c.is_completed === true
+    })));
+  } catch (error) {
+    console.error('Get homework completions error:', error);
+    res.status(500).json({ error: 'Failed to fetch completions' });
+  }
+});
+
+// Update student completion status
+router.post('/:id/completions', authenticateToken, requireTeacher, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { studentId, completed } = req.body;
+
+    if (!studentId || typeof completed !== 'boolean') {
+      return res.status(400).json({ error: 'studentId and completed are required' });
+    }
+
+    console.log('Update completion request:', { 
+      homeworkId: id, 
+      studentId, 
+      completed, 
+      userId: req.user.id, 
+      userRole: req.user.role,
+      schoolId: req.user.schoolId 
+    });
+
+    // Verify homework exists and user has access
+    let accessQuery = 'SELECT h.id, h.teacher_id, h.school_id FROM homework h WHERE h.id = ?';
+    const accessParams = [id];
+
+    if (req.user.role === 'teacher') {
+      // For teachers, check if they have access to the homework's class or school
+      accessQuery += ' AND (h.teacher_id = ? OR h.school_id = ?)';
+      accessParams.push(req.user.id, req.user.schoolId);
+    } else if (req.user.role === 'admin') {
+      accessQuery += ' AND h.school_id = ?';
+      accessParams.push(req.user.schoolId);
+    }
+
+    const [homework] = await db.query(accessQuery, accessParams);
+    
+    console.log('Homework access check:', { 
+      query: accessQuery, 
+      params: accessParams, 
+      found: homework.length > 0,
+      homework: homework[0] || null
+    });
+    
+    if (homework.length === 0) {
+      // Try to find the homework without access restriction to see if it exists
+      const [anyHomework] = await db.query('SELECT id, teacher_id, school_id FROM homework WHERE id = ?', [id]);
+      if (anyHomework.length === 0) {
+        console.log('Homework does not exist in database:', id);
+        return res.status(404).json({ error: 'Homework not found' });
+      } else {
+        console.log('Homework exists but access denied:', { 
+          homework: anyHomework[0], 
+          user: { id: req.user.id, role: req.user.role, schoolId: req.user.schoolId }
+        });
+        return res.status(403).json({ error: 'Access denied to this homework' });
+      }
+    }
+
+    // Insert or update completion status
+    try {
+      await db.query(
+        `INSERT INTO homework_submissions (id, homework_id, student_id, is_completed, completed_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE 
+           is_completed = VALUES(is_completed),
+           completed_at = VALUES(completed_at),
+           updated_at = NOW()`,
+        [uuidv4(), id, studentId, completed, completed ? new Date() : null]
+      );
+
+      res.json({ success: true });
+    } catch (dbError) {
+      console.error('Database error updating completion:', dbError);
+      // Check if it's a foreign key constraint error
+      if (dbError.code === 'ER_NO_REFERENCED_ROW_2' || dbError.code === 'ER_NO_REFERENCED_ROW') {
+        return res.status(400).json({ error: 'Invalid student ID or homework ID' });
+      }
+      throw dbError;
+    }
+  } catch (error) {
+    console.error('Update homework completion error:', error);
+    const errorMessage = error.message || 'Failed to update completion';
+    res.status(500).json({ error: errorMessage });
+  }
+});
+
+// Update multiple student completions
+router.post('/:id/completions/bulk', authenticateToken, requireTeacher, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { completions } = req.body; // Array of { studentId, completed }
+
+    if (!Array.isArray(completions)) {
+      return res.status(400).json({ error: 'completions must be an array' });
+    }
+
+    console.log('Bulk update completion request:', { 
+      homeworkId: id, 
+      completionsCount: completions.length,
+      userId: req.user.id, 
+      userRole: req.user.role,
+      schoolId: req.user.schoolId 
+    });
+
+    // Verify homework exists and user has access
+    let accessQuery = 'SELECT h.id, h.teacher_id, h.school_id FROM homework h WHERE h.id = ?';
+    const accessParams = [id];
+
+    if (req.user.role === 'teacher') {
+      // For teachers, check if they have access to the homework's class or school
+      accessQuery += ' AND (h.teacher_id = ? OR h.school_id = ?)';
+      accessParams.push(req.user.id, req.user.schoolId);
+    } else if (req.user.role === 'admin') {
+      accessQuery += ' AND h.school_id = ?';
+      accessParams.push(req.user.schoolId);
+    }
+
+    const [homework] = await db.query(accessQuery, accessParams);
+    
+    if (homework.length === 0) {
+      // Try to find the homework without access restriction
+      const [anyHomework] = await db.query('SELECT id, teacher_id, school_id FROM homework WHERE id = ?', [id]);
+      if (anyHomework.length === 0) {
+        console.log('Homework does not exist in database:', id);
+        return res.status(404).json({ error: 'Homework not found' });
+      } else {
+        console.log('Homework exists but access denied:', { 
+          homework: anyHomework[0], 
+          user: { id: req.user.id, role: req.user.role, schoolId: req.user.schoolId }
+        });
+        return res.status(403).json({ error: 'Access denied to this homework' });
+      }
+    }
+
+    // Start transaction
+    await db.query('START TRANSACTION');
+
+    try {
+      for (const comp of completions) {
+        if (!comp.studentId || typeof comp.completed !== 'boolean') {
+          continue; // Skip invalid entries
+        }
+        try {
+          await db.query(
+            `INSERT INTO homework_submissions (id, homework_id, student_id, is_completed, completed_at)
+             VALUES (?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE 
+               is_completed = VALUES(is_completed),
+               completed_at = VALUES(completed_at),
+               updated_at = NOW()`,
+            [uuidv4(), id, comp.studentId, comp.completed, comp.completed ? new Date() : null]
+          );
+        } catch (dbError) {
+          console.error('Database error for student:', comp.studentId, dbError);
+          // Check if it's a foreign key constraint error
+          if (dbError.code === 'ER_NO_REFERENCED_ROW_2' || dbError.code === 'ER_NO_REFERENCED_ROW') {
+            console.error(`Invalid student ID: ${comp.studentId} for homework: ${id}`);
+            // Continue with other students instead of failing completely
+            continue;
+          }
+          throw dbError;
+        }
+      }
+
+      await db.query('COMMIT');
+      res.json({ success: true });
+    } catch (error) {
+      await db.query('ROLLBACK');
+      throw error;
+    }
+  } catch (error) {
+    console.error('Bulk update homework completion error:', error);
+    const errorMessage = error.message || 'Failed to update completions';
+    res.status(500).json({ error: errorMessage });
+  }
+});
+
 module.exports = router;

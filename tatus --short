@@ -1,0 +1,44 @@
+warning: in the working copy of 'backend/middleware/auth.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/routes/fees.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/routes/students.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/routes/upload.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/server.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/sql/schema.sql', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/components/layout/UnifiedSidebar.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/lib/api.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/pages/dashboard/FeesModule.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/pages/dashboard/MyStudents.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/pages/dashboard/StudentManagement.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/pages/superadmin/IDCardGeneration.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/pages/superadmin/IDCardTemplate.tsx', LF will be replaced by CRLF the next time Git touches it
+ backend/config/s3.js                        |    1 [32m+[m
+ backend/create-missing-table.js             |    1 [32m+[m
+ backend/fix-superadmin-password.js          |    1 [32m+[m
+ backend/package-lock.json                   |  164 [32m++++[m
+ backend/package.json                        |    1 [32m+[m
+ backend/routes/academicYears.js             |    1 [32m+[m
+ backend/routes/students.js                  |   56 [32m+[m[31m-[m
+ backend/routes/tests.js                     |    1 [32m+[m
+ backend/routes/upload.js                    |  198 [32m+++[m[31m-[m
+ backend/server.js                           |    4 [32m+[m
+ backend/setup-database.js                   |    1 [32m+[m
+ backend/setup-subjects-table.js             |    1 [32m+[m
+ backend/sql/README_TIMETABLE.md             |    1 [32m+[m
+ backend/sql/academic_years_schema.sql       |    1 [32m+[m
+ backend/sql/add_admission_number_column.sql |    1 [32m+[m
+ backend/sql/add_component_to_payments.sql   |    1 [32m+[m
+ backend/sql/create_teacher_attendance.sql   |    1 [32m+[m
+ backend/sql/fees_schema.sql                 |    1 [32m+[m
+ backend/sql/homework_submissions_schema.sql |    1 [32m+[m
+ backend/sql/schema.sql                      |   11 [32m+[m
+ backend/sql/subjects_schema.sql             |    1 [32m+[m
+ backend/sql/tests_schema.sql                |    1 [32m+[m
+ backend/sql/timetable_schema.sql            |    1 [32m+[m
+ backend/test-subjects-table.js              |    1 [32m+[m
+ package-lock.json                           |  408 [32m++++++++[m[31m-[m
+ package.json                                |    7 [32m+[m
+ src/lib/api.ts                              |  185 [32m++++[m
+ src/pages/dashboard/StudentManagement.tsx   |  227 [32m++++[m[31m-[m
+ src/pages/superadmin/IDCardGeneration.tsx   |  914 [32m++++++++++++[m[31m-------[m
+ src/pages/superadmin/IDCardTemplate.tsx     | 1315 [32m+++++++++++++++++++[m[31m--------[m
+ 30 files changed, 2813 insertions(+), 695 deletions(-)

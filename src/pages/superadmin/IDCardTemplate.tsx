@@ -1,10 +1,10 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Select,
   SelectContent,
@@ -20,85 +20,173 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Slider } from "@/components/ui/slider";
-import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import { 
   Save, 
   Eye, 
   Palette, 
   Type, 
-  Image, 
+  Image as ImageIcon,
+  Upload,
   Move, 
   School,
   GraduationCap,
-  User
+  User,
+  X,
+  Plus,
+  Trash2
 } from "lucide-react";
+import { schoolsApi, idCardTemplatesApi, uploadApi, IDCardTemplate } from "@/lib/api";
+import { DndContext, DragEndEvent } from "@dnd-kit/core";
+import { IDCardRenderer } from "@/components/idcards/IDCardRenderer";
+import { IDCardLayout, normalizeLayout, PX_PER_MM } from "@/lib/idCardLayout";
 
 interface TemplateElement {
   id: string;
-  type: "photo" | "text" | "logo" | "qr";
+  type: "photo" | "text" | "logo" | "qr" | "textbox";
   label: string;
   x: number;
   y: number;
   width: number;
   height: number;
   fontSize?: number;
-  fontWeight?: "normal" | "bold";
+  fontFamily?: string;
+  fontWeight?: string;
+  fontStyle?: string;
   textAlign?: "left" | "center" | "right";
+  color?: string;
   field?: string;
+  templateField?: string; // NEW: canonical key used for mappings
+  photoShape?: "circle" | "square" | "rounded" | "rectangle";
+  text?: string;
 }
 
-interface Template {
-  id: string;
-  name: string;
-  schoolId: string;
-  schoolName: string;
-  backgroundColor: string;
-  primaryColor: string;
-  textColor: string;
-  elements: TemplateElement[];
+const STUDENT_FIELDS = [
+  // Prefer backend canonical keys (snake_case + extra_fields.*)
+  { value: "name", label: "Student Name" },
+  { value: "admission_number", label: "Admission Number" },
+  { value: "roll_no", label: "Roll Number" },
+  { value: "class", label: "Class-Section" },
+  { value: "photo_url", label: "Student Photo URL" },
+  { value: "date_of_birth", label: "Date of Birth" },
+  { value: "gender", label: "Gender" },
+  { value: "blood_group", label: "Blood Group" },
+  { value: "school_name", label: "School Name" },
+  { value: "parent_name", label: "Parent Name" },
+  { value: "parent_phone", label: "Parent Phone" },
+  { value: "address", label: "Address" },
+  { value: "extra_fields.blood_group", label: "Extra: Blood Group" },
+  { value: "extra_fields.house", label: "Extra: House" },
+  { value: "extra_fields.id_valid_upto", label: "Extra: ID Valid Until" },
+];
+
+const SHEET_SIZES = [
+  { value: "A4", label: "A4 (210mm × 297mm)" },
+  { value: "13x19", label: "13×19 (330mm × 483mm)" },
+  { value: "custom", label: "Custom Size" },
+];
+
+const FONT_FAMILIES = [
+  "Arial", "Helvetica", "Times New Roman", "Courier New", "Georgia", "Verdana", "Comic Sans MS"
+];
+
+const PHOTO_SHAPES = [
+  { value: "circle", label: "Circle" },
+  { value: "square", label: "Square" },
+  { value: "rounded", label: "Rounded" },
+  { value: "rectangle", label: "Rectangle" },
+];
+
+function calculateCardsPerSheet(cardWidth: number, cardHeight: number, sheetSize: string, orientation: string) {
+  let sheetWidth = 210; // A4 width in mm
+  let sheetHeight = 297; // A4 height in mm
+  
+  if (sheetSize === "13x19") {
+    sheetWidth = 330;
+    sheetHeight = 483;
+  }
+  
+  if (orientation === "landscape") {
+    [sheetWidth, sheetHeight] = [sheetHeight, sheetWidth];
+  }
+  
+  // Account for margins (10mm each side)
+  const margin = 10;
+  const availableWidth = sheetWidth - (margin * 2);
+  const availableHeight = sheetHeight - (margin * 2);
+  const gap = 3; // Gap between cards in mm
+  
+  const cardsPerRow = Math.floor((availableWidth + gap) / (cardWidth + gap));
+  const cardsPerColumn = Math.floor((availableHeight + gap) / (cardHeight + gap));
+  
+  return { cardsPerRow, cardsPerColumn, total: cardsPerRow * cardsPerColumn };
 }
-
-const defaultElements: TemplateElement[] = [
-  { id: "logo", type: "logo", label: "School Logo", x: 10, y: 5, width: 15, height: 20 },
-  { id: "schoolName", type: "text", label: "School Name", x: 30, y: 8, width: 60, height: 10, fontSize: 12, fontWeight: "bold", textAlign: "center", field: "schoolName" },
-  { id: "photo", type: "photo", label: "Student Photo", x: 32, y: 22, width: 36, height: 40 },
-  { id: "name", type: "text", label: "Student Name", x: 10, y: 65, width: 80, height: 8, fontSize: 11, fontWeight: "bold", textAlign: "center", field: "name" },
-  { id: "class", type: "text", label: "Class", x: 10, y: 74, width: 80, height: 6, fontSize: 9, fontWeight: "normal", textAlign: "center", field: "class" },
-  { id: "admNo", type: "text", label: "Admission No", x: 10, y: 81, width: 80, height: 6, fontSize: 9, fontWeight: "normal", textAlign: "center", field: "admissionNo" },
-  { id: "dob", type: "text", label: "Date of Birth", x: 10, y: 88, width: 80, height: 6, fontSize: 8, fontWeight: "normal", textAlign: "center", field: "dob" },
-];
-
-const mockSchools = [
-  { id: "1", name: "Delhi Public School" },
-  { id: "2", name: "St. Mary's Convent" },
-  { id: "3", name: "Modern Public School" },
-];
-
-const mockTemplates: Template[] = [
-  {
-    id: "1",
-    name: "Standard Template",
-    schoolId: "1",
-    schoolName: "Delhi Public School",
-    backgroundColor: "#ffffff",
-    primaryColor: "#1e40af",
-    textColor: "#1f2937",
-    elements: defaultElements,
-  },
-];
 
 export default function IDCardTemplate() {
   const navigate = useNavigate();
-  const [templates, setTemplates] = useState<Template[]>(mockTemplates);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  const [templates, setTemplates] = useState<IDCardTemplate[]>([]);
+  const [schools, setSchools] = useState<any[]>([]);
   const [selectedSchool, setSelectedSchool] = useState("");
-  const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
+  const [selectedTemplate, setSelectedTemplate] = useState<IDCardTemplate | null>(null);
   const [showPreview, setShowPreview] = useState(false);
   const [showEditor, setShowEditor] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingSchools, setIsLoadingSchools] = useState(true);
   
   // Editor state
-  const [editingTemplate, setEditingTemplate] = useState<Template | null>(null);
+  const [editingTemplate, setEditingTemplate] = useState<Partial<IDCardTemplate> | null>(null);
   const [selectedElement, setSelectedElement] = useState<TemplateElement | null>(null);
+  const [draggedField, setDraggedField] = useState<string | null>(null);
+  const [backgroundFile, setBackgroundFile] = useState<File | null>(null);
+  const [layoutFile, setLayoutFile] = useState<File | null>(null);
+  const [s3LayoutUrl, setS3LayoutUrl] = useState<string>("");
+  const [fieldMappings, setFieldMappings] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    loadSchools();
+  }, []);
+
+  useEffect(() => {
+    if (selectedSchool) {
+      loadTemplates();
+    }
+  }, [selectedSchool]);
+
+  const loadSchools = async () => {
+    try {
+      setIsLoadingSchools(true);
+      console.log("Loading schools...");
+      const data = await schoolsApi.getAll();
+      console.log("Schools loaded:", data);
+      setSchools(data || []);
+      if (data && data.length === 0) {
+        toast.info("No schools found. Please create a school first.");
+      }
+    } catch (error: any) {
+      console.error("Failed to load schools:", error);
+      const errorMessage = error?.message || error?.error || "Failed to load schools";
+      toast.error(errorMessage);
+      setSchools([]);
+    } finally {
+      setIsLoadingSchools(false);
+    }
+  };
+
+  const loadTemplates = async () => {
+    if (!selectedSchool) return;
+    try {
+      setIsLoading(true);
+      const data = await idCardTemplatesApi.getBySchool(selectedSchool);
+      setTemplates(data);
+    } catch (error) {
+      console.error("Failed to load templates:", error);
+      toast.error("Failed to load templates");
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleCreateTemplate = () => {
     if (!selectedSchool) {
@@ -106,50 +194,223 @@ export default function IDCardTemplate() {
       return;
     }
     
-    const school = mockSchools.find(s => s.id === selectedSchool);
-    const newTemplate: Template = {
-      id: Date.now().toString(),
+    const school = schools.find(s => s.id === selectedSchool);
+    const newTemplate: Partial<IDCardTemplate> = {
+      id: "",
       name: "New Template",
       schoolId: selectedSchool,
-      schoolName: school?.name || "",
-      backgroundColor: "#ffffff",
-      primaryColor: "#1e40af",
-      textColor: "#1f2937",
-      elements: [...defaultElements],
+      templateData: { elements: [] },
+      cardWidth: 54,
+      cardHeight: 86,
+      orientation: "portrait",
+      sheetSize: "A4",
+      isDefault: false,
     };
     
     setEditingTemplate(newTemplate);
     setShowEditor(true);
   };
 
-  const handleEditTemplate = (template: Template) => {
-    setEditingTemplate({ ...template });
-    setShowEditor(true);
+  const handleEditTemplate = async (template: IDCardTemplate) => {
+    try {
+      const fullTemplate = await idCardTemplatesApi.getById(template.id);
+      // If layout JSON exists in S3, prefer that for editing; else fall back to DB JSON
+      let layoutFromS3: any = null;
+      if ((fullTemplate as any).layoutJsonUrl) {
+        try {
+          const resp = await fetch((fullTemplate as any).layoutJsonUrl);
+          if (resp.ok) layoutFromS3 = await resp.json();
+        } catch {}
+      }
+
+      const normalized = normalizeLayout(layoutFromS3 || fullTemplate.templateData, {
+        id: fullTemplate.id,
+        name: fullTemplate.name,
+        width_mm: fullTemplate.cardWidth,
+        height_mm: fullTemplate.cardHeight,
+        orientation: fullTemplate.orientation,
+        backgroundImageUrl: fullTemplate.backgroundImageUrl,
+      });
+
+      // Hydrate editor (legacy element format) from normalized layout
+      const elements: TemplateElement[] = normalized.elements.map((el) => ({
+        id: el.id,
+        type: el.type === "text" ? "text" : el.type,
+        label: el.label,
+        x: el.x_percent,
+        y: el.y_percent,
+        width: el.width_percent,
+        height: el.height_percent,
+        fontSize: el.fontSize,
+        fontFamily: el.fontFamily,
+        fontWeight: el.fontWeight,
+        textAlign: el.align,
+        color: el.color,
+        templateField: el.templateField,
+        field: el.templateField, // keep legacy
+        photoShape: "rectangle",
+      }));
+
+      setEditingTemplate({
+        ...fullTemplate,
+        templateData: { elements },
+        cardWidth: normalized.width_mm,
+        cardHeight: normalized.height_mm,
+        orientation: normalized.orientation,
+        backgroundImageUrl: normalized.backgroundImageUrl,
+      });
+
+      const mappings = normalized.fieldMappings || {};
+      
+      // Log field mappings for debugging
+      console.log('[IDCardTemplate] Loaded template field mappings:', mappings);
+      
+      // If photo mapping exists but uses old "photoUrl", warn in console
+      if (mappings.photo === 'photoUrl') {
+        console.warn('[IDCardTemplate] Template uses old photo mapping "photoUrl". Consider updating to "photo_url" in the template editor.');
+      }
+      
+      setFieldMappings(mappings);
+      
+      setShowEditor(true);
+    } catch (error) {
+      toast.error("Failed to load template");
+    }
   };
 
-  const handleSaveTemplate = () => {
+  const handleBackgroundUpload = async (file: File) => {
+    try {
+      setIsLoading(true);
+      const result = await uploadApi.uploadIdTemplate(file);
+      if (editingTemplate) {
+        setEditingTemplate({
+          ...editingTemplate,
+          backgroundImageUrl: result.templateUrl,
+        });
+      }
+      toast.success("Background uploaded successfully!");
+      setBackgroundFile(null);
+    } catch (error: any) {
+      toast.error(error.message || "Failed to upload background");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleLayoutUpload = async (file: File) => {
+    try {
+      setIsLoading(true);
+      const result = await uploadApi.uploadIdLayout(file);
+      setS3LayoutUrl(result.layoutUrl);
+      toast.success("Layout JSON uploaded successfully!");
+      setLayoutFile(null);
+    } catch (error: any) {
+      toast.error(error.message || "Failed to upload layout");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleAddField = (fieldType: "text" | "photo" | "logo" | "textbox") => {
     if (!editingTemplate) return;
     
-    const exists = templates.find(t => t.id === editingTemplate.id);
-    if (exists) {
-      setTemplates(prev => prev.map(t => t.id === editingTemplate.id ? editingTemplate : t));
-    } else {
-      setTemplates(prev => [...prev, editingTemplate]);
+    const newElement: TemplateElement = {
+      id: `element-${Date.now()}`,
+      type: fieldType,
+      label: fieldType === "photo" ? "Student Photo" : fieldType === "logo" ? "School Logo" : "Text Field",
+      templateField: fieldType === "photo" ? "photo" : fieldType === "logo" ? "logo" : "",
+      x: 10,
+      y: 10,
+      width: 30,
+      height: 10,
+      fontSize: 12,
+      fontFamily: "Arial",
+      fontWeight: "normal",
+      fontStyle: "normal",
+      textAlign: "center",
+      color: "#000000",
+      photoShape: "rectangle",
+    };
+
+    setEditingTemplate({
+      ...editingTemplate,
+      templateData: {
+        ...editingTemplate.templateData,  // Preserve existing templateData properties
+        elements: [...(editingTemplate.templateData?.elements || []), newElement],
+      },
+    });
+    
+    // Set default field mapping for photo/logo - use "photo_url" to match STUDENT_FIELDS dropdown
+    if (fieldType === "photo") {
+      setFieldMappings({ ...fieldMappings, photo: "photo_url" });
+    } else if (fieldType === "logo") {
+      setFieldMappings({ ...fieldMappings, logo: "schoolLogo" });
     }
     
-    toast.success("Template saved successfully!");
-    setShowEditor(false);
-    setEditingTemplate(null);
+    setSelectedElement(newElement);
+  };
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    
+    if (!over || !editingTemplate) return;
+    
+    const fieldType = active.id as string;
+    const rect = over.rect;
+    
+    // Calculate position based on drop location
+    const canvasWidth = rect.width;
+    const canvasHeight = rect.height;
+    const x = ((active.rect.current.translated?.left || 0) / canvasWidth) * 100;
+    const y = ((active.rect.current.translated?.top || 0) / canvasHeight) * 100;
+    
+    const elementType = fieldType.includes("photo") ? "photo" : fieldType.includes("logo") ? "logo" : "text";
+    const newElement: TemplateElement = {
+      id: `element-${Date.now()}`,
+      type: elementType,
+      label: fieldType,
+      templateField: elementType === "photo" ? "photo" : elementType === "logo" ? "logo" : fieldType,
+      x: Math.max(0, Math.min(90, x)),
+      y: Math.max(0, Math.min(90, y)),
+      width: 30,
+      height: 10,
+      fontSize: 12,
+      fontFamily: "Arial",
+      fontWeight: "normal",
+      textAlign: "center",
+      color: "#000000",
+      field: fieldType !== "photo" && fieldType !== "logo" ? fieldType : undefined,
+      photoShape: "rectangle",
+    };
+
+    setEditingTemplate({
+      ...editingTemplate,
+      templateData: {
+        elements: [...(editingTemplate.templateData?.elements || []), newElement],
+      },
+    });
+    
+    // Set default field mapping for photo/logo - use "photo_url" to match STUDENT_FIELDS dropdown
+    if (elementType === "photo") {
+      setFieldMappings({ ...fieldMappings, photo: "photo_url" });
+    } else if (elementType === "logo") {
+      setFieldMappings({ ...fieldMappings, logo: "schoolLogo" });
+    }
+    
+    setSelectedElement(newElement);
   };
 
   const handleElementChange = (elementId: string, changes: Partial<TemplateElement>) => {
-    if (!editingTemplate) return;
+    if (!editingTemplate || !editingTemplate.templateData) return;
     
     setEditingTemplate({
       ...editingTemplate,
-      elements: editingTemplate.elements.map(el => 
-        el.id === elementId ? { ...el, ...changes } : el
-      ),
+      templateData: {
+        ...editingTemplate.templateData,  // Preserve existing templateData properties
+        elements: editingTemplate.templateData.elements.map(el => 
+          el.id === elementId ? { ...el, ...changes } : el
+        ),
+      },
     });
     
     if (selectedElement?.id === elementId) {
@@ -157,9 +418,126 @@ export default function IDCardTemplate() {
     }
   };
 
+  const handleRemoveElement = (elementId: string) => {
+    if (!editingTemplate || !editingTemplate.templateData) return;
+    
+    setEditingTemplate({
+      ...editingTemplate,
+      templateData: {
+        ...editingTemplate.templateData,  // Preserve existing templateData properties
+        elements: editingTemplate.templateData.elements.filter(el => el.id !== elementId),
+      },
+    });
+    
+    if (selectedElement?.id === elementId) {
+      setSelectedElement(null);
+    }
+  };
+
+  const handleSaveTemplate = async () => {
+    if (!editingTemplate || !selectedSchool) {
+      toast.error("Missing required fields");
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+
+      const layout: IDCardLayout = {
+        id: editingTemplate.id || undefined,
+        name: editingTemplate.name || "New Template",
+        width_mm: editingTemplate.cardWidth || 54,
+        height_mm: editingTemplate.cardHeight || 86,
+        orientation: (editingTemplate.orientation || "portrait") as any,
+        backgroundImageUrl: editingTemplate.backgroundImageUrl,
+        elements: (editingTemplate.templateData?.elements || []).map((el) => ({
+          id: el.id,
+          type: (el.type === "textbox" ? "text" : (el.type as any)),
+          label: el.label,
+          templateField: el.templateField || el.field,
+          x_percent: el.x,
+          y_percent: el.y,
+          width_percent: el.width,
+          height_percent: el.height,
+          fontSize: el.fontSize,
+          fontFamily: el.fontFamily,
+          fontWeight: el.fontWeight,
+          color: el.color,
+          align: el.textAlign,
+        })),
+        fieldMappings,
+      };
+      
+      console.log('Saving template:', {
+        backgroundImageUrl: layout.backgroundImageUrl,
+        elements: layout.elements.length,
+        fieldMappings: layout.fieldMappings,
+        cardSize: `${layout.width_mm}x${layout.height_mm}mm`,
+      });
+
+      // Upload layout JSON to S3 (for generation). Keep URL in DB if supported.
+      let layoutJsonUrl: string | undefined = undefined;
+      try {
+        const json = JSON.stringify(layout);
+        const file = new File([json], `id-layout-${Date.now()}.json`, { type: "application/json" });
+        const uploaded = await uploadApi.uploadIdLayout(file);
+        layoutJsonUrl = uploaded.layoutUrl;
+        setS3LayoutUrl(uploaded.layoutUrl);
+      } catch (e) {
+        // Non-fatal: DB layout JSON will still exist
+      }
+      
+      if (editingTemplate.id) {
+        await idCardTemplatesApi.update(editingTemplate.id, {
+          name: editingTemplate.name,
+          templateData: layout as any,
+          layoutJsonUrl,
+          backgroundImageUrl: editingTemplate.backgroundImageUrl,
+          cardWidth: editingTemplate.cardWidth,
+          cardHeight: editingTemplate.cardHeight,
+          orientation: editingTemplate.orientation,
+          sheetSize: editingTemplate.sheetSize,
+        });
+        toast.success("Template updated successfully!");
+      } else {
+        await idCardTemplatesApi.create({
+          schoolId: selectedSchool,
+          name: editingTemplate.name || "New Template",
+          templateData: layout as any,
+          layoutJsonUrl,
+          backgroundImageUrl: editingTemplate.backgroundImageUrl,
+          cardWidth: editingTemplate.cardWidth || 54,
+          cardHeight: editingTemplate.cardHeight || 86,
+          orientation: editingTemplate.orientation || "portrait",
+          sheetSize: editingTemplate.sheetSize || "A4",
+        });
+        toast.success("Template created successfully!");
+      }
+      
+      await loadTemplates();
+      setShowEditor(false);
+      setEditingTemplate(null);
+      setS3LayoutUrl("");
+      setFieldMappings({});
+    } catch (error: any) {
+      toast.error(error.message || "Failed to save template");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const filteredTemplates = selectedSchool 
     ? templates.filter(t => t.schoolId === selectedSchool)
     : templates;
+
+  const layoutInfo = editingTemplate
+    ? calculateCardsPerSheet(
+        editingTemplate.cardWidth || 54,
+        editingTemplate.cardHeight || 86,
+        editingTemplate.sheetSize || "A4",
+        editingTemplate.orientation || "portrait"
+      )
+    : null;
 
   const handleLogout = () => navigate("/");
 
@@ -180,13 +558,22 @@ export default function IDCardTemplate() {
             <div className="flex flex-col sm:flex-row gap-4">
               <div className="flex-1 max-w-xs">
                 <Label className="mb-2 block">Select School</Label>
-                <Select value={selectedSchool} onValueChange={setSelectedSchool}>
+                <Select 
+                  value={selectedSchool} 
+                  onValueChange={setSelectedSchool}
+                  disabled={isLoadingSchools || schools.length === 0}
+                >
                   <SelectTrigger>
-                    <SelectValue placeholder="All Schools" />
+                    <SelectValue placeholder={
+                      isLoadingSchools 
+                        ? "Loading schools..." 
+                        : schools.length === 0 
+                          ? "No schools found" 
+                          : "Select School"
+                    } />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All Schools</SelectItem>
-                    {mockSchools.map(school => (
+                    {schools.map(school => (
                       <SelectItem key={school.id} value={school.id}>{school.name}</SelectItem>
                     ))}
                   </SelectContent>
@@ -203,304 +590,632 @@ export default function IDCardTemplate() {
         </Card>
 
         {/* Templates Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredTemplates.map(template => (
-            <Card key={template.id} className="overflow-hidden">
-              <div 
-                className="h-48 relative border-b border-border"
-                style={{ backgroundColor: template.backgroundColor }}
-              >
-                {/* Mini Preview */}
-                <div className="absolute inset-4 flex flex-col items-center justify-center">
-                  <div 
-                    className="w-12 h-12 rounded-full mb-2"
-                    style={{ backgroundColor: template.primaryColor }}
-                  >
-                    <GraduationCap className="w-6 h-6 text-white m-3" />
-                  </div>
-                  <div className="w-16 h-20 bg-muted rounded-lg mb-2 flex items-center justify-center">
-                    <User className="w-8 h-8 text-muted-foreground" />
-                  </div>
-                  <div className="text-xs font-medium" style={{ color: template.textColor }}>
-                    Student Name
-                  </div>
-                  <div className="text-[10px]" style={{ color: template.textColor }}>
-                    Class X-A
+        {isLoading && !templates.length ? (
+          <div className="text-center py-12">Loading templates...</div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {filteredTemplates.map(template => (
+              <Card key={template.id} className="overflow-hidden">
+                <div 
+                  className="h-48 relative border-b border-border"
+                  style={{ 
+                    backgroundColor: "#ffffff",
+                    backgroundImage: template.backgroundImageUrl ? `url(${template.backgroundImageUrl})` : undefined,
+                    backgroundSize: "cover",
+                    backgroundPosition: "center",
+                  }}
+                >
+                  {/* Mini Preview */}
+                  <div className="absolute inset-4 flex flex-col items-center justify-center">
+                    <div className="w-16 h-20 bg-muted rounded-lg mb-2 flex items-center justify-center border-2 border-dashed">
+                      <User className="w-8 h-8 text-muted-foreground" />
+                    </div>
+                    <div className="text-xs font-medium text-foreground bg-background/80 px-2 py-1 rounded">
+                      Student Name
+                    </div>
                   </div>
                 </div>
+                <CardContent className="pt-4">
+                  <h3 className="font-semibold text-foreground">{template.name}</h3>
+                  <p className="text-sm text-muted-foreground">
+                    {template.cardWidth}mm × {template.cardHeight}mm ({template.orientation})
+                  </p>
+                  <div className="flex gap-2 mt-4">
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      className="flex-1"
+                      onClick={() => {
+                        setSelectedTemplate(template);
+                        setShowPreview(true);
+                      }}
+                    >
+                      <Eye className="w-4 h-4 mr-1" />
+                      Preview
+                    </Button>
+                    <Button 
+                      size="sm" 
+                      className="flex-1"
+                      onClick={() => handleEditTemplate(template)}
+                    >
+                      <Palette className="w-4 h-4 mr-1" />
+                      Edit
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+            
+            {filteredTemplates.length === 0 && !isLoading && (
+              <div className="col-span-full text-center py-12 text-muted-foreground">
+                {selectedSchool 
+                  ? "No templates found for this school. Create one to get started."
+                  : "Select a school to view or create templates."}
               </div>
-              <CardContent className="pt-4">
-                <h3 className="font-semibold text-foreground">{template.name}</h3>
-                <p className="text-sm text-muted-foreground">{template.schoolName}</p>
-                <div className="flex gap-2 mt-4">
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    className="flex-1"
-                    onClick={() => {
-                      setSelectedTemplate(template);
-                      setShowPreview(true);
-                    }}
-                  >
-                    <Eye className="w-4 h-4 mr-1" />
-                    Preview
-                  </Button>
-                  <Button 
-                    size="sm" 
-                    className="flex-1"
-                    onClick={() => handleEditTemplate(template)}
-                  >
-                    <Palette className="w-4 h-4 mr-1" />
-                    Edit
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-          
-          {filteredTemplates.length === 0 && (
-            <div className="col-span-full text-center py-12 text-muted-foreground">
-              {selectedSchool 
-                ? "No templates found for this school. Create one to get started."
-                : "Select a school to view or create templates."}
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        )}
 
         {/* Template Editor Dialog */}
         <Dialog open={showEditor} onOpenChange={setShowEditor}>
-          <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
+          <DialogContent className="max-w-7xl max-h-[95vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Edit ID Card Template</DialogTitle>
             </DialogHeader>
             
             {editingTemplate && (
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* Preview Panel */}
-                <div className="lg:col-span-2">
-                  <Label className="mb-2 block">ID Card Preview (54mm × 86mm)</Label>
-                  <div 
-                    className="relative border-2 border-dashed border-border rounded-lg mx-auto"
-                    style={{ 
-                      width: "324px", // 54mm * 6 for display
-                      height: "516px", // 86mm * 6 for display
-                      backgroundColor: editingTemplate.backgroundColor,
-                    }}
-                  >
-                    {editingTemplate.elements.map(element => (
-                      <div
-                        key={element.id}
-                        className={`absolute cursor-pointer border transition-all ${
-                          selectedElement?.id === element.id 
-                            ? "border-primary border-2" 
-                            : "border-transparent hover:border-muted-foreground/30"
-                        }`}
-                        style={{
-                          left: `${element.x}%`,
-                          top: `${element.y}%`,
-                          width: `${element.width}%`,
-                          height: `${element.height}%`,
-                        }}
-                        onClick={() => setSelectedElement(element)}
-                      >
-                        {element.type === "photo" && (
-                          <div className="w-full h-full bg-muted rounded flex items-center justify-center">
-                            <User className="w-8 h-8 text-muted-foreground" />
-                          </div>
-                        )}
-                        {element.type === "logo" && (
-                          <div 
-                            className="w-full h-full rounded-full flex items-center justify-center"
-                            style={{ backgroundColor: editingTemplate.primaryColor }}
+              <DndContext onDragEnd={handleDragEnd}>
+                <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+                  {/* Fields Palette */}
+                  <div className="lg:col-span-1 space-y-4">
+                    <div>
+                      <Label className="mb-2 block">Add Fields</Label>
+                      <div className="space-y-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="w-full"
+                          onClick={() => handleAddField("text")}
+                        >
+                          <Type className="w-4 h-4 mr-2" />
+                          Text Field
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="w-full"
+                          onClick={() => handleAddField("photo")}
+                        >
+                          <ImageIcon className="w-4 h-4 mr-2" />
+                          Photo
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="w-full"
+                          onClick={() => handleAddField("logo")}
+                        >
+                          <School className="w-4 h-4 mr-2" />
+                          Logo
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="w-full"
+                          onClick={() => handleAddField("textbox")}
+                        >
+                          <Type className="w-4 h-4 mr-2" />
+                          Text Box
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div>
+                      <Label className="mb-2 block">Student Data Fields</Label>
+                      <div className="space-y-1 max-h-60 overflow-y-auto">
+                        {STUDENT_FIELDS.map(field => (
+                          <div
+                            key={field.value}
+                            className="p-2 border rounded cursor-move hover:bg-muted text-sm"
+                            draggable
+                            onDragStart={() => setDraggedField(field.value)}
                           >
-                            <GraduationCap className="w-6 h-6 text-white" />
+                            {field.label}
                           </div>
-                        )}
-                        {element.type === "text" && (
-                          <div 
-                            className="w-full h-full flex items-center overflow-hidden"
-                            style={{ 
-                              color: editingTemplate.textColor,
-                              fontSize: `${element.fontSize || 10}px`,
-                              fontWeight: element.fontWeight || "normal",
-                              textAlign: element.textAlign || "center",
-                              justifyContent: element.textAlign === "left" ? "flex-start" : element.textAlign === "right" ? "flex-end" : "center",
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Canvas Preview */}
+                  <div className="lg:col-span-2">
+                    <div className="space-y-4">
+                      {/* Template Settings */}
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <Label>Template Name</Label>
+                          <Input 
+                            value={editingTemplate.name || ""}
+                            onChange={(e) => setEditingTemplate({ ...editingTemplate, name: e.target.value })}
+                          />
+                        </div>
+                        <div>
+                          <Label>Background Image</Label>
+                          <div className="flex gap-2">
+                            <Input
+                              ref={fileInputRef}
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) {
+                                  setBackgroundFile(file);
+                                  handleBackgroundUpload(file);
+                                }
+                              }}
+                            />
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => fileInputRef.current?.click()}
+                            >
+                              <Upload className="w-4 h-4 mr-2" />
+                              Upload
+                            </Button>
+                          </div>
+                        </div>
+                        <div>
+                          <Label>Template Layout JSON</Label>
+                          <div className="flex gap-2">
+                            <Input
+                              type="file"
+                              accept=".json"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) {
+                                  setLayoutFile(file);
+                                  handleLayoutUpload(file);
+                                }
+                              }}
+                              className="max-w-xs"
+                            />
+                            {s3LayoutUrl && (
+                              <span className="text-sm text-green-600 flex items-center">✓ Layout uploaded</span>
+                            )}
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Upload a JSON file containing the layout structure
+                          </p>
+                        </div>
+                        <div>
+                          <Label>Card Width (mm)</Label>
+                          <Input 
+                            type="number"
+                            value={editingTemplate.cardWidth || 54}
+                            onChange={(e) => setEditingTemplate({ ...editingTemplate, cardWidth: Number(e.target.value) })}
+                          />
+                        </div>
+                        <div>
+                          <Label>Card Height (mm)</Label>
+                          <Input 
+                            type="number"
+                            value={editingTemplate.cardHeight || 86}
+                            onChange={(e) => setEditingTemplate({ ...editingTemplate, cardHeight: Number(e.target.value) })}
+                          />
+                        </div>
+                        <div>
+                          <Label>Orientation</Label>
+                          <Select 
+                            value={editingTemplate.orientation || "portrait"}
+                            onValueChange={(v: "portrait" | "landscape") => setEditingTemplate({ ...editingTemplate, orientation: v })}
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="portrait">Portrait</SelectItem>
+                              <SelectItem value="landscape">Landscape</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div>
+                          <Label>Sheet Size</Label>
+                          <Select 
+                            value={editingTemplate.sheetSize || "A4"}
+                            onValueChange={(v) => setEditingTemplate({ ...editingTemplate, sheetSize: v })}
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {SHEET_SIZES.map(size => (
+                                <SelectItem key={size.value} value={size.value}>{size.label}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+
+                      {layoutInfo && (
+                        <div className="p-3 bg-muted rounded-lg text-sm">
+                          <p className="font-medium">Layout: {layoutInfo.cardsPerRow} × {layoutInfo.cardsPerColumn} = {layoutInfo.total} cards per sheet</p>
+                        </div>
+                      )}
+
+                      {/* Field mappings are now edited per-element in the right panel to keep a single source of truth */}
+
+                      <Label>ID Card Preview</Label>
+                      {editingTemplate && (
+                        <div className="relative border-2 border-dashed border-border rounded-lg mx-auto bg-white p-2">
+                          <IDCardRenderer
+                            layout={normalizeLayout(
+                              {
+                                id: editingTemplate.id,
+                                name: editingTemplate.name || "Template",
+                                width_mm: editingTemplate.cardWidth || 54,
+                                height_mm: editingTemplate.cardHeight || 86,
+                                orientation: editingTemplate.orientation || "portrait",
+                                backgroundImageUrl: editingTemplate.backgroundImageUrl,
+                                elements: (editingTemplate.templateData?.elements || []).map((el) => ({
+                                  id: el.id,
+                                  type: (el.type === "textbox" ? "text" : (el.type as any)),
+                                  label: el.label,
+                                  templateField: el.templateField || el.field,
+                                  x_percent: el.x,
+                                  y_percent: el.y,
+                                  width_percent: el.width,
+                                  height_percent: el.height,
+                                  fontSize: el.fontSize,
+                                  fontFamily: el.fontFamily,
+                                  fontWeight: el.fontWeight,
+                                  color: el.color,
+                                  align: el.textAlign,
+                                })),
+                                fieldMappings,
+                              },
+                              undefined
+                            )}
+                            renderHeightPx={400}
+                          />
+
+                          {/* Click overlay to select + delete (keeps renderer purely presentational) */}
+                          <div
+                            className="absolute inset-2"
+                            style={{
+                              width: `${((editingTemplate.cardWidth || 54) / (editingTemplate.cardHeight || 86)) * 400}px`,
+                              height: "400px",
                             }}
                           >
-                            {element.label}
+                            {(editingTemplate.templateData?.elements || []).map((element) => (
+                              <div
+                                key={element.id}
+                                className={`absolute cursor-pointer border-2 transition-all ${
+                                  selectedElement?.id === element.id
+                                    ? "border-primary"
+                                    : "border-transparent hover:border-muted-foreground/50"
+                                }`}
+                                style={{
+                                  left: `${element.x}%`,
+                                  top: `${element.y}%`,
+                                  width: `${element.width}%`,
+                                  height: `${element.height}%`,
+                                }}
+                                onClick={() => setSelectedElement(element)}
+                              >
+                                <Button
+                                  type="button"
+                                  variant="destructive"
+                                  size="icon"
+                                  className="absolute -top-2 -right-2 h-5 w-5"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleRemoveElement(element.id);
+                                  }}
+                                >
+                                  <X className="h-3 w-3" />
+                                </Button>
+                              </div>
+                            ))}
                           </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Settings Panel */}
-                <div className="space-y-6">
-                  {/* Template Settings */}
-                  <div className="space-y-4">
-                    <h3 className="font-medium flex items-center gap-2">
-                      <Palette className="w-4 h-4" />
-                      Template Settings
-                    </h3>
-                    <div className="space-y-3">
-                      <div>
-                        <Label>Template Name</Label>
-                        <Input 
-                          value={editingTemplate.name}
-                          onChange={(e) => setEditingTemplate({ ...editingTemplate, name: e.target.value })}
-                        />
-                      </div>
-                      <div>
-                        <Label>Background Color</Label>
-                        <div className="flex gap-2">
-                          <Input 
-                            type="color" 
-                            value={editingTemplate.backgroundColor}
-                            onChange={(e) => setEditingTemplate({ ...editingTemplate, backgroundColor: e.target.value })}
-                            className="w-12 h-10 p-1"
-                          />
-                          <Input 
-                            value={editingTemplate.backgroundColor}
-                            onChange={(e) => setEditingTemplate({ ...editingTemplate, backgroundColor: e.target.value })}
-                          />
                         </div>
-                      </div>
-                      <div>
-                        <Label>Primary Color (Logo/Accents)</Label>
-                        <div className="flex gap-2">
-                          <Input 
-                            type="color" 
-                            value={editingTemplate.primaryColor}
-                            onChange={(e) => setEditingTemplate({ ...editingTemplate, primaryColor: e.target.value })}
-                            className="w-12 h-10 p-1"
-                          />
-                          <Input 
-                            value={editingTemplate.primaryColor}
-                            onChange={(e) => setEditingTemplate({ ...editingTemplate, primaryColor: e.target.value })}
-                          />
-                        </div>
-                      </div>
-                      <div>
-                        <Label>Text Color</Label>
-                        <div className="flex gap-2">
-                          <Input 
-                            type="color" 
-                            value={editingTemplate.textColor}
-                            onChange={(e) => setEditingTemplate({ ...editingTemplate, textColor: e.target.value })}
-                            className="w-12 h-10 p-1"
-                          />
-                          <Input 
-                            value={editingTemplate.textColor}
-                            onChange={(e) => setEditingTemplate({ ...editingTemplate, textColor: e.target.value })}
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Element Settings */}
-                  {selectedElement && (
-                    <div className="space-y-4 pt-4 border-t border-border">
-                      <h3 className="font-medium flex items-center gap-2">
-                        <Move className="w-4 h-4" />
-                        {selectedElement.label} Settings
-                      </h3>
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <Label>X Position (%)</Label>
-                          <Input 
-                            type="number"
-                            value={selectedElement.x}
-                            onChange={(e) => handleElementChange(selectedElement.id, { x: Number(e.target.value) })}
-                          />
-                        </div>
-                        <div>
-                          <Label>Y Position (%)</Label>
-                          <Input 
-                            type="number"
-                            value={selectedElement.y}
-                            onChange={(e) => handleElementChange(selectedElement.id, { y: Number(e.target.value) })}
-                          />
-                        </div>
-                        <div>
-                          <Label>Width (%)</Label>
-                          <Input 
-                            type="number"
-                            value={selectedElement.width}
-                            onChange={(e) => handleElementChange(selectedElement.id, { width: Number(e.target.value) })}
-                          />
-                        </div>
-                        <div>
-                          <Label>Height (%)</Label>
-                          <Input 
-                            type="number"
-                            value={selectedElement.height}
-                            onChange={(e) => handleElementChange(selectedElement.id, { height: Number(e.target.value) })}
-                          />
-                        </div>
-                      </div>
-                      
-                      {selectedElement.type === "text" && (
-                        <>
-                          <div>
-                            <Label>Font Size (px)</Label>
-                            <Input 
-                              type="number"
-                              value={selectedElement.fontSize || 10}
-                              onChange={(e) => handleElementChange(selectedElement.id, { fontSize: Number(e.target.value) })}
-                            />
-                          </div>
-                          <div>
-                            <Label>Font Weight</Label>
-                            <Select 
-                              value={selectedElement.fontWeight || "normal"}
-                              onValueChange={(v) => handleElementChange(selectedElement.id, { fontWeight: v as "normal" | "bold" })}
-                            >
-                              <SelectTrigger>
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="normal">Normal</SelectItem>
-                                <SelectItem value="bold">Bold</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          <div>
-                            <Label>Text Align</Label>
-                            <Select 
-                              value={selectedElement.textAlign || "center"}
-                              onValueChange={(v) => handleElementChange(selectedElement.id, { textAlign: v as "left" | "center" | "right" })}
-                            >
-                              <SelectTrigger>
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="left">Left</SelectItem>
-                                <SelectItem value="center">Center</SelectItem>
-                                <SelectItem value="right">Right</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                        </>
                       )}
                     </div>
-                  )}
+                  </div>
 
-                  {!selectedElement && (
-                    <p className="text-sm text-muted-foreground text-center py-4">
-                      Click on an element in the preview to edit its properties
-                    </p>
-                  )}
+                  {/* Field Editor Panel */}
+                  <div className="lg:col-span-1 space-y-4">
+                    {selectedElement ? (
+                      <>
+                        <div className="flex items-center justify-between">
+                          <h3 className="font-medium">Edit Field</h3>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => setSelectedElement(null)}
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </div>
+
+                        <div className="space-y-4">
+                          <div>
+                            <Label>Label</Label>
+                            <Input 
+                              value={selectedElement.label}
+                              onChange={(e) => handleElementChange(selectedElement.id, { label: e.target.value })}
+                            />
+                          </div>
+
+                          {selectedElement.type === "text" || selectedElement.type === "textbox" ? (
+                            <>
+                              <div>
+                                <Label>Template Field Key</Label>
+                                <Input
+                                  value={selectedElement.templateField || selectedElement.field || ""}
+                                  placeholder="e.g., name, blood_group"
+                                  onChange={(e) => {
+                                    const newKey = e.target.value;
+                                    const oldKey = selectedElement.templateField || selectedElement.field || "";
+                                    // Update element key
+                                    handleElementChange(selectedElement.id, { templateField: newKey, field: newKey });
+                                    // Move mapping key if needed
+                                    if (oldKey && oldKey !== newKey && fieldMappings[oldKey]) {
+                                      const next = { ...fieldMappings };
+                                      next[newKey] = next[oldKey];
+                                      delete next[oldKey];
+                                      setFieldMappings(next);
+                                    }
+                                  }}
+                                />
+                              </div>
+
+                              <div>
+                                <Label>Map To Student Field</Label>
+                                <Select
+                                  value={
+                                    (() => {
+                                      const key = selectedElement.templateField || selectedElement.field || "";
+                                      return key ? (fieldMappings[key] || "") : "";
+                                    })()
+                                  }
+                                  onValueChange={(v) => {
+                                    const key = selectedElement.templateField || selectedElement.field || "";
+                                    if (!key) {
+                                      toast.error("Please set Template Field Key first");
+                                      return;
+                                    }
+                                    setFieldMappings({ ...fieldMappings, [key]: v });
+                                  }}
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Select student field" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {STUDENT_FIELDS.map((field) => (
+                                      <SelectItem key={field.value} value={field.value}>
+                                        {field.label}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+
+                              <div>
+                                <Label>Font Size: {selectedElement.fontSize || 12}px</Label>
+                                <Slider
+                                  value={[selectedElement.fontSize || 12]}
+                                  onValueChange={([value]) => handleElementChange(selectedElement.id, { fontSize: value })}
+                                  min={8}
+                                  max={48}
+                                  step={1}
+                                />
+                              </div>
+
+                              <div>
+                                <Label>Font Family</Label>
+                                <Select 
+                                  value={selectedElement.fontFamily || "Arial"}
+                                  onValueChange={(v) => handleElementChange(selectedElement.id, { fontFamily: v })}
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {FONT_FAMILIES.map(font => (
+                                      <SelectItem key={font} value={font}>{font}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+
+                              <div>
+                                <Label>Font Weight</Label>
+                                <Select 
+                                  value={selectedElement.fontWeight || "normal"}
+                                  onValueChange={(v) => handleElementChange(selectedElement.id, { fontWeight: v })}
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="normal">Normal</SelectItem>
+                                    <SelectItem value="bold">Bold</SelectItem>
+                                    <SelectItem value="300">Light</SelectItem>
+                                    <SelectItem value="600">Semi-Bold</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+
+                              <div>
+                                <Label>Text Color</Label>
+                                <div className="flex gap-2">
+                                  <Input 
+                                    type="color"
+                                    value={selectedElement.color || "#000000"}
+                                    onChange={(e) => handleElementChange(selectedElement.id, { color: e.target.value })}
+                                    className="w-12 h-10 p-1"
+                                  />
+                                  <Input 
+                                    value={selectedElement.color || "#000000"}
+                                    onChange={(e) => handleElementChange(selectedElement.id, { color: e.target.value })}
+                                  />
+                                </div>
+                              </div>
+
+                              <div>
+                                <Label>Text Align</Label>
+                                <Select 
+                                  value={selectedElement.textAlign || "center"}
+                                  onValueChange={(v: "left" | "center" | "right") => handleElementChange(selectedElement.id, { textAlign: v })}
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="left">Left</SelectItem>
+                                    <SelectItem value="center">Center</SelectItem>
+                                    <SelectItem value="right">Right</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            </>
+                          ) : selectedElement.type === "photo" || selectedElement.type === "logo" ? (
+                            <>
+                              <div>
+                                <Label>Template Field Key</Label>
+                                <Input
+                                  value={selectedElement.templateField || selectedElement.field || ""}
+                                  placeholder={selectedElement.type === "photo" ? "e.g., photo, photoUrl" : "e.g., logo, schoolLogo"}
+                                  onChange={(e) => {
+                                    const newKey = e.target.value;
+                                    const oldKey = selectedElement.templateField || selectedElement.field || "";
+                                    // Update element key
+                                    handleElementChange(selectedElement.id, { templateField: newKey, field: newKey });
+                                    // Move mapping key if needed
+                                    if (oldKey && oldKey !== newKey && fieldMappings[oldKey]) {
+                                      const next = { ...fieldMappings };
+                                      next[newKey] = next[oldKey];
+                                      delete next[oldKey];
+                                      setFieldMappings(next);
+                                    }
+                                  }}
+                                />
+                              </div>
+
+                              <div>
+                                <Label>Map To Student Field</Label>
+                                <Select
+                                  value={
+                                    (() => {
+                                      const key = selectedElement.templateField || selectedElement.field || "";
+                                      return key ? (fieldMappings[key] || "") : "";
+                                    })()
+                                  }
+                                  onValueChange={(v) => {
+                                    const key = selectedElement.templateField || selectedElement.field || "";
+                                    if (!key) {
+                                      toast.error("Please set Template Field Key first");
+                                      return;
+                                    }
+                                    setFieldMappings({ ...fieldMappings, [key]: v });
+                                  }}
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Select student field" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {STUDENT_FIELDS.map((field) => (
+                                      <SelectItem key={field.value} value={field.value}>
+                                        {field.label}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+
+                              {selectedElement.type === "photo" && (
+                                <div>
+                                  <Label>Photo Shape</Label>
+                                  <Select 
+                                    value={selectedElement.photoShape || "rectangle"}
+                                    onValueChange={(v: "circle" | "square" | "rounded" | "rectangle") => handleElementChange(selectedElement.id, { photoShape: v })}
+                                  >
+                                    <SelectTrigger>
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {PHOTO_SHAPES.map(shape => (
+                                        <SelectItem key={shape.value} value={shape.value}>{shape.label}</SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                              )}
+                            </>
+                          ) : null}
+
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <Label>X (%)</Label>
+                              <Input 
+                                type="number"
+                                value={selectedElement.x}
+                                onChange={(e) => handleElementChange(selectedElement.id, { x: Number(e.target.value) })}
+                              />
+                            </div>
+                            <div>
+                              <Label>Y (%)</Label>
+                              <Input 
+                                type="number"
+                                value={selectedElement.y}
+                                onChange={(e) => handleElementChange(selectedElement.id, { y: Number(e.target.value) })}
+                              />
+                            </div>
+                            <div>
+                              <Label>Width (%)</Label>
+                              <Input 
+                                type="number"
+                                value={selectedElement.width}
+                                onChange={(e) => handleElementChange(selectedElement.id, { width: Number(e.target.value) })}
+                              />
+                            </div>
+                            <div>
+                              <Label>Height (%)</Label>
+                              <Input 
+                                type="number"
+                                value={selectedElement.height}
+                                onChange={(e) => handleElementChange(selectedElement.id, { height: Number(e.target.value) })}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </>
+                    ) : (
+                      <p className="text-sm text-muted-foreground text-center py-8">
+                        Click on a field in the preview to edit its properties
+                      </p>
+                    )}
+                  </div>
                 </div>
-              </div>
+              </DndContext>
             )}
             
             <DialogFooter>
-              <Button variant="outline" onClick={() => setShowEditor(false)}>
+              <Button variant="outline" onClick={() => {
+                setShowEditor(false);
+                setEditingTemplate(null);
+                setSelectedElement(null);
+              }}>
                 Cancel
               </Button>
-              <Button onClick={handleSaveTemplate}>
+              <Button onClick={handleSaveTemplate} disabled={isLoading}>
                 <Save className="w-4 h-4 mr-2" />
                 Save Template
               </Button>
@@ -516,58 +1231,15 @@ export default function IDCardTemplate() {
             </DialogHeader>
             {selectedTemplate && (
               <div 
-                className="relative border border-border rounded-lg mx-auto"
+                className="relative border border-border rounded-lg mx-auto bg-white"
                 style={{ 
-                  width: "270px", // 54mm * 5
-                  height: "430px", // 86mm * 5
-                  backgroundColor: selectedTemplate.backgroundColor,
+                  width: `${(selectedTemplate.cardWidth / selectedTemplate.cardHeight) * 300}px`,
+                  height: "300px",
+                  backgroundImage: selectedTemplate.backgroundImageUrl ? `url(${selectedTemplate.backgroundImageUrl})` : undefined,
+                  backgroundSize: "cover",
                 }}
               >
-                {selectedTemplate.elements.map(element => (
-                  <div
-                    key={element.id}
-                    className="absolute"
-                    style={{
-                      left: `${element.x}%`,
-                      top: `${element.y}%`,
-                      width: `${element.width}%`,
-                      height: `${element.height}%`,
-                    }}
-                  >
-                    {element.type === "photo" && (
-                      <div className="w-full h-full bg-muted rounded flex items-center justify-center">
-                        <User className="w-8 h-8 text-muted-foreground" />
-                      </div>
-                    )}
-                    {element.type === "logo" && (
-                      <div 
-                        className="w-full h-full rounded-full flex items-center justify-center"
-                        style={{ backgroundColor: selectedTemplate.primaryColor }}
-                      >
-                        <GraduationCap className="w-5 h-5 text-white" />
-                      </div>
-                    )}
-                    {element.type === "text" && (
-                      <div 
-                        className="w-full h-full flex items-center"
-                        style={{ 
-                          color: selectedTemplate.textColor,
-                          fontSize: `${(element.fontSize || 10) * 0.8}px`,
-                          fontWeight: element.fontWeight || "normal",
-                          textAlign: element.textAlign || "center",
-                          justifyContent: element.textAlign === "left" ? "flex-start" : element.textAlign === "right" ? "flex-end" : "center",
-                        }}
-                      >
-                        {element.field === "schoolName" ? selectedTemplate.schoolName :
-                         element.field === "name" ? "John Doe" :
-                         element.field === "class" ? "Class 5-A" :
-                         element.field === "admissionNo" ? "ADM2024001" :
-                         element.field === "dob" ? "15-Mar-2015" :
-                         element.label}
-                      </div>
-                    )}
-                  </div>
-                ))}
+                {/* Preview content would render template elements here */}
               </div>
             )}
             <DialogFooter>

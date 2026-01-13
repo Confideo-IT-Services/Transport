@@ -97,11 +97,16 @@ CREATE TABLE IF NOT EXISTS students (
     photo_url VARCHAR(500),
     status ENUM('pending', 'approved', 'rejected') DEFAULT 'pending',
     rejection_reason TEXT,
+    extra_fields JSON DEFAULT '{}' COMMENT 'Additional fields for ID cards (blood_group, house, id_valid_upto, etc.)',
+    admission_number VARCHAR(50) COMMENT 'Auto-generated on approval',
+    registration_code VARCHAR(50) COMMENT 'Link code used for registration',
+    submitted_data JSON COMMENT 'Raw form data from registration',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_class_id (class_id),
     INDEX idx_school_id (school_id),
     INDEX idx_status (status),
+    INDEX idx_admission_number (admission_number),
     FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE,
     FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE
 );
@@ -146,12 +151,40 @@ CREATE TABLE IF NOT EXISTS attendance (
     FOREIGN KEY (marked_by) REFERENCES teachers(id) ON DELETE CASCADE
 );
 
+-- ============ TEACHER ATTENDANCE TABLE ============
+CREATE TABLE IF NOT EXISTS teacher_attendance (
+    id VARCHAR(36) PRIMARY KEY,
+    teacher_id VARCHAR(36) NOT NULL,
+    school_id VARCHAR(36) NOT NULL,
+    date DATE NOT NULL,
+    status ENUM('present', 'absent', 'late', 'leave', 'not-marked') DEFAULT 'not-marked',
+    check_in_time TIME,
+    check_out_time TIME,
+    remarks TEXT,
+    marked_by VARCHAR(36),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY unique_teacher_attendance (teacher_id, date),
+    INDEX idx_date (date),
+    INDEX idx_teacher_date (teacher_id, date),
+    INDEX idx_school_date (school_id, date),
+    FOREIGN KEY (teacher_id) REFERENCES teachers(id) ON DELETE CASCADE,
+    FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE,
+    FOREIGN KEY (marked_by) REFERENCES users(id) ON DELETE SET NULL
+);
+
 -- ============ ID CARD TEMPLATES TABLE ============
 CREATE TABLE IF NOT EXISTS id_card_templates (
     id VARCHAR(36) PRIMARY KEY,
     school_id VARCHAR(36),
     name VARCHAR(100) NOT NULL,
     template_data JSON NOT NULL,
+    layout_json_url VARCHAR(500) COMMENT 'Optional S3 URL to the layout JSON (source of truth for generation)',
+    background_image_url VARCHAR(500),
+    card_width INT DEFAULT 54 COMMENT 'Card width in mm',
+    card_height INT DEFAULT 86 COMMENT 'Card height in mm',
+    orientation ENUM('portrait', 'landscape') DEFAULT 'portrait',
+    sheet_size VARCHAR(50) DEFAULT 'A4' COMMENT 'Sheet size for printing (A4, 13x19, custom)',
     is_default BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -175,7 +208,7 @@ CREATE TABLE IF NOT EXISTS registration_links (
 -- ============ INSERT SUPER ADMIN ============
 -- Password: SuperAdmin@123 (hashed with bcrypt)
 INSERT INTO users (id, email, password, name, role, is_active, created_at) VALUES
-(UUID(), 'superadmin@allpulse.com', '$2a$10$rQvVJrPEODuGF.OHxqnlhO6Xs.Y8B1G6jqK7Xv/bYs5P0QbZXWrHi', 'Platform Admin', 'superadmin', TRUE, NOW())
+(UUID(), 'saianushayerrajennugari@gmail.com', 'Super1@user', 'Platform Admin', 'superadmin', TRUE, NOW())
 ON DUPLICATE KEY UPDATE name = 'Platform Admin';
 
 -- ============ SAMPLE DATA (OPTIONAL) ============

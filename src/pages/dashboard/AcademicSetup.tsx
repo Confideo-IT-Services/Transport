@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { UnifiedLayout } from "@/components/layout/UnifiedLayout";
 import { useAuth } from "@/contexts/AuthContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -6,9 +6,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { teachersApi, classesApi, timetableApi, academicYearsApi } from "@/lib/api";
+import { useToast } from "@/hooks/use-toast";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -29,117 +32,438 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Edit, Users, BookOpen, Calendar, ChevronRight, GraduationCap, UserCheck } from "lucide-react";
-
-const academicYears = [
-  { id: 1, name: "2024-25", status: "active", startDate: "Apr 2024", endDate: "Mar 2025" },
-  { id: 2, name: "2023-24", status: "completed", startDate: "Apr 2023", endDate: "Mar 2024" },
-];
-
-const initialClassesData = [
-  { 
-    id: 1, 
-    name: "Class 1", 
-    sections: [
-      { name: "A", students: 42, classTeacher: "Mrs. Sharma" },
-      { name: "B", students: 43, classTeacher: "Mrs. Verma" },
-    ]
-  },
-  { 
-    id: 2, 
-    name: "Class 2", 
-    sections: [
-      { name: "A", students: 40, classTeacher: "Mr. Singh" },
-      { name: "B", students: 44, classTeacher: "Mrs. Rao" },
-      { name: "C", students: 42, classTeacher: "Mr. Das" },
-    ]
-  },
-  { 
-    id: 3, 
-    name: "Class 3", 
-    sections: [
-      { name: "A", students: 45, classTeacher: "Mrs. Gupta" },
-      { name: "B", students: 45, classTeacher: "Mr. Joshi" },
-    ]
-  },
-  { 
-    id: 4, 
-    name: "Class 4", 
-    sections: [
-      { name: "A", students: 44, classTeacher: "Mr. Kumar" },
-      { name: "B", students: 44, classTeacher: "Mrs. Nair" },
-    ]
-  },
-  { 
-    id: 5, 
-    name: "Class 5", 
-    sections: [
-      { name: "A", students: 46, classTeacher: "Mrs. Patel" },
-      { name: "B", students: 46, classTeacher: "Mr. Reddy" },
-    ]
-  },
-];
-
-const initialSubjects = [
-  "Mathematics", "English", "Hindi", "Science", "Social Studies", "Computer", "Art", "Physical Education", "Music"
-];
-
-const initialTeachers = [
-  { id: 1, name: "Mrs. Sharma", subjects: ["Mathematics"] },
-  { id: 2, name: "Mr. Singh", subjects: ["English", "Hindi"] },
-  { id: 3, name: "Mrs. Gupta", subjects: ["Science"] },
-  { id: 4, name: "Mr. Kumar", subjects: ["Social Studies"] },
-  { id: 5, name: "Mrs. Patel", subjects: ["Computer", "Art"] },
-  { id: 6, name: "Mrs. Verma", subjects: ["Mathematics"] },
-  { id: 7, name: "Mrs. Rao", subjects: ["English"] },
-  { id: 8, name: "Mr. Das", subjects: ["Hindi"] },
-  { id: 9, name: "Mr. Joshi", subjects: ["Science"] },
-  { id: 10, name: "Mrs. Nair", subjects: ["Social Studies"] },
-  { id: 11, name: "Mr. Reddy", subjects: ["Computer"] },
-];
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import { Plus, Edit, Users, BookOpen, Calendar, ChevronRight, GraduationCap, UserCheck, Check, ChevronsUpDown } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 export default function AcademicSetup() {
   const { user } = useAuth();
+  const { toast } = useToast();
   const isAdmin = user?.role === "admin";
   const [isAddClassOpen, setIsAddClassOpen] = useState(false);
   const [isAddTeacherOpen, setIsAddTeacherOpen] = useState(false);
+  const [isAddAcademicYearOpen, setIsAddAcademicYearOpen] = useState(false);
+  const [isEditTeacherOpen, setIsEditTeacherOpen] = useState(false);
+  const [editingTeacher, setEditingTeacher] = useState<any>(null);
+  const [editTeacherSubjects, setEditTeacherSubjects] = useState<string[]>([]);
   const [selectedClass, setSelectedClass] = useState<string>("");
-  const [teachers, setTeachers] = useState(initialTeachers);
-  const [subjects, setSubjects] = useState(initialSubjects);
-  const [classesData, setClassesData] = useState(initialClassesData);
+  const [teachers, setTeachers] = useState<any[]>([]);
+  const [subjects, setSubjects] = useState<string[]>([]);
+  const [classesData, setClassesData] = useState<any[]>([]);
+  const [academicYears, setAcademicYears] = useState<any[]>([]);
+  
+  // New class form state
+  const [newClass, setNewClass] = useState({
+    name: "",
+    section: "",
+    classTeacherId: "",
+  });
   
   // New teacher form state
   const [newTeacher, setNewTeacher] = useState({
-    name: "",
+    teacherId: "",
     subjects: [] as string[],
   });
 
+  // Teacher search state
+  const [teacherSearchOpen, setTeacherSearchOpen] = useState(false);
+  const [teacherSearchQuery, setTeacherSearchQuery] = useState("");
+
   // New subject state
   const [newSubject, setNewSubject] = useState("");
+
+  // New academic year form state
+  const [newAcademicYear, setNewAcademicYear] = useState({
+    name: "",
+    startDate: "",
+    endDate: "",
+  });
 
   // Class teacher assignment state
   const [selectedSectionForAssign, setSelectedSectionForAssign] = useState<{className: string, sectionName: string} | null>(null);
   const [selectedTeacherForAssign, setSelectedTeacherForAssign] = useState<string>("");
 
-  const handleAddTeacher = () => {
-    if (!newTeacher.name.trim() || newTeacher.subjects.length === 0) {
-      return;
+  // Function to calculate current academic year
+  const getCurrentAcademicYear = () => {
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth() + 1; // 1-12
+    
+    // Academic year runs from April to March
+    // If Jan-Mar, current AY is (year-1)-(year)
+    // If Apr-Dec, current AY is (year)-(year+1)
+    let startYear, endYear;
+    if (currentMonth >= 4) {
+      startYear = currentYear;
+      endYear = currentYear + 1;
+    } else {
+      startYear = currentYear - 1;
+      endYear = currentYear;
     }
-    const teacher = {
-      id: teachers.length + 1,
-      name: newTeacher.name.trim(),
-      subjects: newTeacher.subjects,
+    
+    return {
+      name: `${startYear}-${String(endYear).slice(-2)}`,
+      startYear,
+      endYear,
+      startDate: `Apr ${startYear}`,
+      endDate: `Mar ${endYear}`,
     };
-    setTeachers([...teachers, teacher]);
-    setNewTeacher({ name: "", subjects: [] });
-    setIsAddTeacherOpen(false);
   };
 
-  const handleAddSubject = () => {
+  // Function to load classes from API and transform to nested structure
+  const loadClasses = async () => {
+    try {
+      const classesDataRaw = await classesApi.getAll();
+      
+      // Transform flat API response to nested structure
+      // API returns: [{ id, name, section, classTeacherId, studentCount, ... }, ...]
+      // Component expects: [{ name, sections: [{ name, students, classTeacher }, ...] }, ...]
+      const classesMap = new Map<string, any>();
+      
+      if (Array.isArray(classesDataRaw)) {
+        classesDataRaw.forEach((cls: any) => {
+          if (!cls || !cls.name) return; // Skip invalid entries
+          
+          const key = cls.name;
+          if (!classesMap.has(key)) {
+            classesMap.set(key, {
+              id: cls.id || `temp-${key}`,
+              name: cls.name,
+              sections: []
+            });
+          }
+          
+          const classData = classesMap.get(key);
+          if (classData) {
+            classData.sections.push({
+              name: cls.section || '',
+              students: cls.studentCount || 0,
+              classTeacher: cls.classTeacherName || cls.classTeacherId || 'Not Assigned'
+            });
+          }
+        });
+      }
+      
+      setClassesData(Array.from(classesMap.values()));
+    } catch (error) {
+      console.error('Error loading classes:', error);
+      // Keep classesData as empty array on error
+    }
+  };
+
+  // Load academic years from API
+  const loadAcademicYears = async () => {
+    try {
+      const yearsData = await academicYearsApi.getAll();
+      // Format dates for display
+      const formattedYears = yearsData.map((y: any) => {
+        const startDate = new Date(y.startDate);
+        const endDate = new Date(y.endDate);
+        const formatDate = (date: Date) => {
+          const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+          return `${months[date.getMonth()]} ${date.getFullYear()}`;
+        };
+        return {
+          id: y.id,
+          name: y.name,
+          status: y.status,
+          startDate: formatDate(startDate),
+          endDate: formatDate(endDate),
+          startYear: startDate.getFullYear(),
+          endYear: endDate.getFullYear(),
+        };
+      });
+      setAcademicYears(formattedYears);
+    } catch (error) {
+      console.error('Error loading academic years:', error);
+      // If no academic years exist, initialize with current year
+      const currentAY = getCurrentAcademicYear();
+      const initialYears = [
+        {
+          id: 'temp-1',
+          name: currentAY.name,
+          status: "active",
+          startDate: currentAY.startDate,
+          endDate: currentAY.endDate,
+          startYear: currentAY.startYear,
+          endYear: currentAY.endYear,
+        },
+      ];
+      setAcademicYears(initialYears);
+    }
+  };
+
+  // Initialize academic years on mount
+  useEffect(() => {
+    if (isAdmin) {
+      loadAcademicYears();
+    }
+  }, [isAdmin]);
+
+  // Load subjects from API
+  const loadSubjects = async () => {
+    try {
+      const subjectsData = await timetableApi.getSubjects();
+      const subjectNames = subjectsData.map((s: any) => s.name || s.code);
+      setSubjects(subjectNames);
+    } catch (error) {
+      console.error('Error loading subjects:', error);
+      // Keep subjects as empty array on error
+    }
+  };
+
+  // Fetch teachers, classes, and subjects from API on component mount
+  useEffect(() => {
+    const loadTeachers = async () => {
+      try {
+        const teachersData = await teachersApi.getAll();
+        setTeachers(teachersData || []);
+      } catch (error) {
+        console.error('Error loading teachers:', error);
+        // Keep teachers as empty array on error
+      }
+    };
+    
+    if (isAdmin) {
+      loadTeachers();
+      loadClasses(); // Load classes on mount
+      loadSubjects(); // Load subjects from API
+    }
+  }, [isAdmin]);
+
+  // Handle create class with proper error handling
+  const handleCreateClass = async () => {
+    try {
+      // Validate inputs
+      if (!newClass.name || !newClass.name.trim()) {
+        toast({
+          title: "Validation Error",
+          description: "Please enter a class name",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      if (!newClass.section || !newClass.section.trim()) {
+        toast({
+          title: "Validation Error",
+          description: "Please enter a section",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      // Call API to create class
+      await classesApi.create({
+        name: newClass.name.trim(),
+        section: newClass.section.trim(),
+        classTeacherId: newClass.classTeacherId && newClass.classTeacherId.trim() ? newClass.classTeacherId : undefined,
+      });
+      
+      // Show success message
+      toast({
+        title: "Success",
+        description: "Class created successfully",
+      });
+      
+      // Reset form and close dialog
+      setNewClass({ name: "", section: "", classTeacherId: "" });
+      setIsAddClassOpen(false);
+      
+      // Reload classes to show the new class
+      await loadClasses();
+      
+    } catch (error: any) {
+      // Handle errors gracefully
+      console.error('Error creating class:', error);
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to create class. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleAddTeacher = async () => {
+    if (!newTeacher.teacherId || newTeacher.subjects.length === 0) {
+      toast({
+        title: "Validation Error",
+        description: "Please select a teacher and at least one subject",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      // Get the selected teacher to merge existing subjects
+      const selectedTeacher = teachers.find(t => t.id === newTeacher.teacherId);
+      if (!selectedTeacher) {
+        toast({
+          title: "Error",
+          description: "Selected teacher not found",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      // Merge existing subjects with new ones (avoid duplicates)
+      const existingSubjects = selectedTeacher.subjects || [];
+      const allSubjects = [...new Set([...existingSubjects, ...newTeacher.subjects])];
+
+      // Update teacher with new subjects
+      await teachersApi.update(newTeacher.teacherId, {
+        subjects: allSubjects,
+      });
+
+      toast({
+        title: "Success",
+        description: `Subjects assigned to ${selectedTeacher.name} successfully`,
+      });
+
+      // Reset form and close dialog
+      setNewTeacher({ teacherId: "", subjects: [] });
+      setTeacherSearchQuery("");
+      setTeacherSearchOpen(false);
+      setIsAddTeacherOpen(false);
+
+      // Reload teachers to show updated data
+      try {
+        const teachersData = await teachersApi.getAll();
+        setTeachers(teachersData || []);
+      } catch (reloadError) {
+        console.error('Error reloading teachers:', reloadError);
+      }
+    } catch (error: any) {
+      console.error('Error updating teacher:', error);
+      
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to assign subjects. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleAddSubject = async () => {
     const trimmed = newSubject.trim();
-    if (!trimmed || subjects.includes(trimmed)) return;
-    setSubjects([...subjects, trimmed]);
-    setNewSubject("");
+    if (!trimmed) {
+      toast({
+        title: "Validation Error",
+        description: "Please enter a subject name",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (subjects.includes(trimmed)) {
+      toast({
+        title: "Validation Error",
+        description: "Subject already exists",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      // Generate code from name (uppercase, first 3-4 letters)
+      const code = trimmed.toUpperCase().replace(/\s+/g, '').substring(0, 4);
+      
+      // Call API to create subject
+      await timetableApi.createSubject({
+        code: code,
+        name: trimmed,
+      });
+
+      toast({
+        title: "Success",
+        description: "Subject created successfully",
+      });
+
+      // Reload subjects from API
+      await loadSubjects();
+      setNewSubject("");
+    } catch (error: any) {
+      console.error('Error creating subject:', error);
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to create subject. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Handle create academic year
+  const handleCreateAcademicYear = async () => {
+    if (!newAcademicYear.name.trim() || !newAcademicYear.startDate || !newAcademicYear.endDate) {
+      toast({
+        title: "Validation Error",
+        description: "Please fill in all fields",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Validate date format
+    const startDate = new Date(newAcademicYear.startDate);
+    const endDate = new Date(newAcademicYear.endDate);
+    
+    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+      toast({
+        title: "Validation Error",
+        description: "Please enter valid dates",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (endDate <= startDate) {
+      toast({
+        title: "Validation Error",
+        description: "End date must be after start date",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      // Call API to create academic year
+      await academicYearsApi.create({
+        name: newAcademicYear.name.trim(),
+        startDate: newAcademicYear.startDate,
+        endDate: newAcademicYear.endDate,
+      });
+      
+      toast({
+        title: "Success",
+        description: "Academic year created successfully",
+      });
+
+      // Reset form and close dialog
+      setNewAcademicYear({ name: "", startDate: "", endDate: "" });
+      setIsAddAcademicYearOpen(false);
+
+      // Reload academic years to show the new year
+      await loadAcademicYears();
+    } catch (error: any) {
+      console.error('Error creating academic year:', error);
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to create academic year. Please try again.",
+        variant: "destructive",
+      });
+    }
   };
 
   const toggleSubject = (subject: string) => {
@@ -151,26 +475,117 @@ export default function AcademicSetup() {
     }));
   };
 
-  const handleAssignClassTeacher = () => {
-    if (!selectedSectionForAssign || !selectedTeacherForAssign) return;
-    
-    setClassesData(prev => prev.map(cls => {
-      if (cls.name === selectedSectionForAssign.className) {
-        return {
-          ...cls,
-          sections: cls.sections.map(sec => {
-            if (sec.name === selectedSectionForAssign.sectionName) {
-              return { ...sec, classTeacher: selectedTeacherForAssign };
-            }
-            return sec;
-          })
-        };
+  // Handle opening edit teacher dialog
+  const handleOpenEditTeacher = (teacher: any) => {
+    setEditingTeacher(teacher);
+    setEditTeacherSubjects(teacher.subjects || []);
+    setIsEditTeacherOpen(true);
+  };
+
+  // Handle updating teacher
+  const handleUpdateTeacher = async () => {
+    if (!editingTeacher || editTeacherSubjects.length === 0) {
+      toast({
+        title: "Validation Error",
+        description: "Please select at least one subject",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      // Call API to update teacher
+      await teachersApi.update(editingTeacher.id, {
+        subjects: editTeacherSubjects,
+      });
+
+      toast({
+        title: "Success",
+        description: "Teacher updated successfully",
+      });
+
+      // Reset form and close dialog
+      setEditingTeacher(null);
+      setEditTeacherSubjects([]);
+      setIsEditTeacherOpen(false);
+
+      // Reload teachers to show updated data
+      const teachersData = await teachersApi.getAll();
+      setTeachers(teachersData || []);
+    } catch (error: any) {
+      console.error('Error updating teacher:', error);
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to update teacher. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Toggle subject in edit mode
+  const toggleEditSubject = (subject: string) => {
+    setEditTeacherSubjects(prev =>
+      prev.includes(subject)
+        ? prev.filter(s => s !== subject)
+        : [...prev, subject]
+    );
+  };
+
+  const handleAssignClassTeacher = async () => {
+    if (!selectedSectionForAssign || !selectedTeacherForAssign) {
+      toast({
+        title: "Validation Error",
+        description: "Please select a class-section and teacher",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      // Find the class ID and teacher ID
+      const classData = classesData.find(c => c.name === selectedSectionForAssign.className);
+      if (!classData) {
+        throw new Error("Class not found");
       }
-      return cls;
-    }));
-    
-    setSelectedSectionForAssign(null);
-    setSelectedTeacherForAssign("");
+
+      // Find the section's class ID (each section is a separate class in DB)
+      const classesDataRaw = await classesApi.getAll();
+      const sectionClass = classesDataRaw.find((c: any) => 
+        c.name === selectedSectionForAssign.className && 
+        c.section === selectedSectionForAssign.sectionName
+      );
+
+      if (!sectionClass) {
+        throw new Error("Class section not found");
+      }
+
+      // Find teacher ID from name
+      const teacher = teachers.find(t => t.name === selectedTeacherForAssign);
+      if (!teacher) {
+        throw new Error("Teacher not found");
+      }
+
+      // Call API to update class teacher
+      await classesApi.updateClassTeacher(sectionClass.id, teacher.id);
+
+      toast({
+        title: "Success",
+        description: "Class teacher assigned successfully",
+      });
+
+      // Reload classes to show updated assignment
+      await loadClasses();
+      
+      setSelectedSectionForAssign(null);
+      setSelectedTeacherForAssign("");
+    } catch (error: any) {
+      console.error('Error assigning class teacher:', error);
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to assign class teacher. Please try again.",
+        variant: "destructive",
+      });
+    }
   };
 
   // Generate all class-section combinations for assignment
@@ -216,10 +631,55 @@ export default function AcademicSetup() {
             <div className="flex justify-between items-center">
               <h2 className="text-lg font-medium">Academic Years</h2>
               {isAdmin && (
-                <Button size="sm">
-                  <Plus className="w-4 h-4 mr-2" />
-                  Add Academic Year
-                </Button>
+                <Dialog open={isAddAcademicYearOpen} onOpenChange={setIsAddAcademicYearOpen}>
+                  <DialogTrigger asChild>
+                    <Button size="sm">
+                      <Plus className="w-4 h-4 mr-2" />
+                      Add Academic Year
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>Add New Academic Year</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-4 py-4">
+                      <div className="space-y-2">
+                        <Label>Academic Year Name *</Label>
+                        <Input 
+                          placeholder="e.g., 2025-26" 
+                          value={newAcademicYear.name}
+                          onChange={(e) => setNewAcademicYear(prev => ({ ...prev, name: e.target.value }))}
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Format: YYYY-YY (e.g., 2025-26)
+                        </p>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Start Date *</Label>
+                        <Input 
+                          type="date"
+                          value={newAcademicYear.startDate}
+                          onChange={(e) => setNewAcademicYear(prev => ({ ...prev, startDate: e.target.value }))}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>End Date *</Label>
+                        <Input 
+                          type="date"
+                          value={newAcademicYear.endDate}
+                          onChange={(e) => setNewAcademicYear(prev => ({ ...prev, endDate: e.target.value }))}
+                        />
+                      </div>
+                      <Button 
+                        className="w-full" 
+                        onClick={handleCreateAcademicYear}
+                        disabled={!newAcademicYear.name.trim() || !newAcademicYear.startDate || !newAcademicYear.endDate}
+                      >
+                        Create Academic Year
+                      </Button>
+                    </div>
+                  </DialogContent>
+                </Dialog>
               )}
             </div>
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
@@ -267,26 +727,50 @@ export default function AcademicSetup() {
                     <div className="space-y-4 py-4">
                       <div className="space-y-2">
                         <Label>Class Name</Label>
-                        <Input placeholder="e.g., Class 6" />
+                        <Input 
+                          placeholder="e.g., Class 6" 
+                          value={newClass.name}
+                          onChange={(e) => setNewClass(prev => ({ ...prev, name: e.target.value }))}
+                        />
                       </div>
                       <div className="space-y-2">
-                        <Label>Sections</Label>
-                        <Input placeholder="e.g., A, B, C" />
+                        <Label>Section</Label>
+                        <Input 
+                          placeholder="e.g., A" 
+                          value={newClass.section}
+                          onChange={(e) => setNewClass(prev => ({ ...prev, section: e.target.value }))}
+                        />
                       </div>
                       <div className="space-y-2">
-                        <Label>Class Teacher</Label>
-                        <Select>
+                        <Label>Class Teacher (Optional)</Label>
+                        <Select 
+                          value={newClass.classTeacherId || undefined} 
+                          onValueChange={(value) => {
+                            // Handle clearing selection - if value is empty, set to empty string
+                            setNewClass(prev => ({ ...prev, classTeacherId: value || "" }))
+                          }}
+                        >
                           <SelectTrigger>
                             <SelectValue placeholder="Select teacher" />
                           </SelectTrigger>
                           <SelectContent>
-                            {teachers.map((t) => (
-                              <SelectItem key={t.id} value={t.name}>{t.name}</SelectItem>
-                            ))}
+                            {teachers.length === 0 ? (
+                              <SelectItem value="no-teachers" disabled>No teachers available</SelectItem>
+                            ) : (
+                              teachers.map((t) => (
+                                <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+                              ))
+                            )}
                           </SelectContent>
                         </Select>
                       </div>
-                      <Button className="w-full">Create Class</Button>
+                      <Button 
+                        className="w-full" 
+                        onClick={handleCreateClass}
+                        disabled={!newClass.name?.trim() || !newClass.section?.trim()}
+                      >
+                        Create Class
+                      </Button>
                     </div>
                   </DialogContent>
                 </Dialog>
@@ -559,7 +1043,14 @@ export default function AcademicSetup() {
                 <p className="text-sm text-muted-foreground">Add teachers and assign subjects they teach</p>
               </div>
               {isAdmin && (
-                <Dialog open={isAddTeacherOpen} onOpenChange={setIsAddTeacherOpen}>
+                <Dialog open={isAddTeacherOpen} onOpenChange={(open) => {
+                  setIsAddTeacherOpen(open);
+                  if (!open) {
+                    setNewTeacher({ teacherId: "", subjects: [] });
+                    setTeacherSearchQuery("");
+                    setTeacherSearchOpen(false);
+                  }
+                }}>
                   <DialogTrigger asChild>
                     <Button size="sm">
                       <Plus className="w-4 h-4 mr-2" />
@@ -573,11 +1064,61 @@ export default function AcademicSetup() {
                     <div className="space-y-4 py-4">
                       <div className="space-y-2">
                         <Label>Teacher Name *</Label>
-                        <Input 
-                          placeholder="e.g., Mr. John Doe" 
-                          value={newTeacher.name}
-                          onChange={(e) => setNewTeacher(prev => ({ ...prev, name: e.target.value }))}
-                        />
+                        <Popover open={teacherSearchOpen} onOpenChange={setTeacherSearchOpen}>
+                          <PopoverTrigger asChild>
+                            <Button
+                              variant="outline"
+                              role="combobox"
+                              aria-expanded={teacherSearchOpen}
+                              className="w-full justify-between"
+                            >
+                              {newTeacher.teacherId
+                                ? (() => {
+                                    const selectedTeacher = teachers.find((t) => t.id === newTeacher.teacherId);
+                                    return selectedTeacher ? selectedTeacher.name : "Select teacher...";
+                                  })()
+                                : "Select teacher..."}
+                              <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-[400px] p-0" align="start">
+                            <Command>
+                              <CommandInput 
+                                placeholder="Search teachers by name..." 
+                                value={teacherSearchQuery}
+                                onValueChange={setTeacherSearchQuery}
+                              />
+                              <CommandList>
+                                <CommandEmpty>No teacher found.</CommandEmpty>
+                                <CommandGroup>
+                                  {teachers
+                                    .filter((teacher) =>
+                                      teacher.name.toLowerCase().includes(teacherSearchQuery.toLowerCase())
+                                    )
+                                    .map((teacher) => (
+                                      <CommandItem
+                                        key={teacher.id}
+                                        value={teacher.name}
+                                        onSelect={() => {
+                                          setNewTeacher(prev => ({ ...prev, teacherId: teacher.id }));
+                                          setTeacherSearchOpen(false);
+                                          setTeacherSearchQuery("");
+                                        }}
+                                      >
+                                        <Check
+                                          className={cn(
+                                            "mr-2 h-4 w-4",
+                                            newTeacher.teacherId === teacher.id ? "opacity-100" : "opacity-0"
+                                          )}
+                                        />
+                                        <span className="font-medium">{teacher.name}</span>
+                                      </CommandItem>
+                                    ))}
+                                </CommandGroup>
+                              </CommandList>
+                            </Command>
+                          </PopoverContent>
+                        </Popover>
                       </div>
                       <div className="space-y-2">
                         <Label>Subjects Teaching *</Label>
@@ -623,7 +1164,7 @@ export default function AcademicSetup() {
                       <Button 
                         className="w-full" 
                         onClick={handleAddTeacher}
-                        disabled={!newTeacher.name.trim() || newTeacher.subjects.length === 0}
+                        disabled={!newTeacher.teacherId || newTeacher.subjects.length === 0}
                       >
                         <GraduationCap className="w-4 h-4 mr-2" />
                         Add Teacher
@@ -633,6 +1174,62 @@ export default function AcademicSetup() {
                 </Dialog>
               )}
             </div>
+
+            {/* Edit Teacher Dialog */}
+            <Dialog open={isEditTeacherOpen} onOpenChange={(open) => {
+              setIsEditTeacherOpen(open);
+              if (!open) {
+                setEditingTeacher(null);
+                setEditTeacherSubjects([]);
+              }
+            }}>
+              <DialogContent className="max-w-md">
+                <DialogHeader>
+                  <DialogTitle>Edit Teacher Subjects</DialogTitle>
+                  <DialogDescription>
+                    Update subjects for {editingTeacher?.name}
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                  <div className="space-y-2">
+                    <Label>Teacher Name</Label>
+                    <Input 
+                      value={editingTeacher?.name || ""}
+                      disabled
+                      className="bg-muted"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Subjects Teaching *</Label>
+                    <div className="flex gap-2 flex-wrap p-3 border rounded-lg bg-muted/30 max-h-40 overflow-y-auto">
+                      {subjects.map((subject) => (
+                        <Badge 
+                          key={subject}
+                          variant={editTeacherSubjects.includes(subject) ? "default" : "outline"}
+                          className="cursor-pointer transition-colors"
+                          onClick={() => toggleEditSubject(subject)}
+                        >
+                          {subject}
+                        </Badge>
+                      ))}
+                    </div>
+                    {editTeacherSubjects.length > 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        Selected: {editTeacherSubjects.join(", ")}
+                      </p>
+                    )}
+                  </div>
+                  <Button 
+                    className="w-full" 
+                    onClick={handleUpdateTeacher}
+                    disabled={!editingTeacher || editTeacherSubjects.length === 0}
+                  >
+                    <Edit className="w-4 h-4 mr-2" />
+                    Update Teacher
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
 
             {/* Teacher Table */}
             <Card>
@@ -667,7 +1264,11 @@ export default function AcademicSetup() {
                         </TableCell>
                         {isAdmin && (
                           <TableCell className="text-right">
-                            <Button variant="ghost" size="icon">
+                            <Button 
+                              variant="ghost" 
+                              size="icon"
+                              onClick={() => handleOpenEditTeacher(teacher)}
+                            >
                               <Edit className="w-4 h-4" />
                             </Button>
                           </TableCell>

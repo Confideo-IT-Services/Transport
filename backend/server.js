@@ -19,6 +19,16 @@ const classesRoutes = require('./routes/classes');
 const studentsRoutes = require('./routes/students');
 const homeworkRoutes = require('./routes/homework');
 const schoolAdminsRoutes = require('./routes/schoolAdmins');
+const registrationLinksRoutes = require('./routes/registrationLinks');
+const uploadRoutes = require('./routes/upload');
+const timetableRoutes = require('./routes/timetable');
+const attendanceRoutes = require('./routes/attendance');
+const testsRoutes = require('./routes/tests');
+const academicYearsRoutes = require('./routes/academicYears');
+const feesRoutes = require('./routes/fees');
+const idCardTemplatesRoutes = require('./routes/idCardTemplates');
+const idCardGenerationRoutes = require('./routes/idCardGeneration');
+const otpRoutes = require('./routes/otp');
 
 // Use routes
 app.use('/api/auth', authRoutes);
@@ -28,6 +38,16 @@ app.use('/api/classes', classesRoutes);
 app.use('/api/students', studentsRoutes);
 app.use('/api/homework', homeworkRoutes);
 app.use('/api/school-admins', schoolAdminsRoutes);
+app.use('/api/registration-links', registrationLinksRoutes);
+app.use('/api/upload', uploadRoutes);
+app.use('/api/timetable', timetableRoutes);
+app.use('/api/attendance', attendanceRoutes);
+app.use('/api/tests', testsRoutes);
+app.use('/api/academic-years', academicYearsRoutes);
+app.use('/api/fees', feesRoutes);
+app.use('/api/id-templates', idCardTemplatesRoutes);
+app.use('/api/id-cards', idCardGenerationRoutes);
+app.use('/api/otp', otpRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
