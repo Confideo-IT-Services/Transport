@@ -63,7 +63,6 @@ export default function FeesModule() {
   // State
   const [loading, setLoading] = useState(true);
   const [studentFees, setStudentFees] = useState<any[]>([]);
-  const [feeCategories, setFeeCategories] = useState<any[]>([]);
   const [feeStructure, setFeeStructure] = useState<any[]>([]);
   const [classes, setClasses] = useState<any[]>([]);
   const [academicYears, setAcademicYears] = useState<any[]>([]);
@@ -79,23 +78,12 @@ export default function FeesModule() {
   const [searchTerm, setSearchTerm] = useState("");
 
   // Dialog states
-  const [isAddCategoryOpen, setIsAddCategoryOpen] = useState(false);
-  const [isEditCategoryOpen, setIsEditCategoryOpen] = useState(false);
   const [isViewStudentFeeOpen, setIsViewStudentFeeOpen] = useState(false);
   const [isEditStructureOpen, setIsEditStructureOpen] = useState(false);
   const [isRecordPaymentOpen, setIsRecordPaymentOpen] = useState(false);
   const [isCreateFeeOpen, setIsCreateFeeOpen] = useState(false);
   const [isEditFeeOpen, setIsEditFeeOpen] = useState(false);
   const [editingStudentFee, setEditingStudentFee] = useState<any>(null);
-  
-  // Form states
-  const [newCategory, setNewCategory] = useState({
-    name: "",
-    amount: "",
-    frequency: "monthly" as "monthly" | "quarterly" | "yearly",
-    description: ""
-  });
-  const [editingCategory, setEditingCategory] = useState<any>(null);
   const [selectedStudentFee, setSelectedStudentFee] = useState<any>(null);
   const [studentFeeDetails, setStudentFeeDetails] = useState<any>(null);
   const [selectedStudentForFee, setSelectedStudentForFee] = useState<any>(null);
@@ -153,15 +141,13 @@ export default function FeesModule() {
     const loadData = async () => {
       try {
         setLoading(true);
-        const [feesData, categoriesData, structureData, summaryData] = await Promise.all([
+        const [feesData, structureData, summaryData] = await Promise.all([
           feesApi.getStudentFees(selectedClassId !== "all" ? selectedClassId : undefined, searchTerm || undefined),
-          feesApi.getCategories(),
           feesApi.getFeeStructure(),
           feesApi.getSummary()
         ]);
         
         setStudentFees(feesData || []);
-        setFeeCategories(categoriesData || []);
         setFeeStructure(structureData || []);
         setSummary(summaryData || {
           totalCollected: 0,
@@ -197,103 +183,6 @@ export default function FeesModule() {
   });
 
   // Handlers
-  const handleAddCategory = async () => {
-    try {
-      if (!newCategory.name || !newCategory.amount) {
-        toast({
-          title: "Error",
-          description: "Please fill in all required fields",
-          variant: "destructive"
-        });
-        return;
-      }
-
-      await feesApi.createCategory({
-        name: newCategory.name,
-        amount: parseFloat(newCategory.amount),
-        frequency: newCategory.frequency,
-        description: newCategory.description || undefined
-      });
-
-      toast({
-        title: "Success",
-        description: "Fee category created successfully"
-      });
-
-      setIsAddCategoryOpen(false);
-      setNewCategory({ name: "", amount: "", frequency: "monthly", description: "" });
-      
-      // Reload categories
-      const categories = await feesApi.getCategories();
-      setFeeCategories(categories || []);
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error?.message || "Failed to create category",
-        variant: "destructive"
-      });
-    }
-  };
-
-  const handleEditCategory = async () => {
-    try {
-      if (!editingCategory || !editingCategory.name || !editingCategory.amount) {
-        toast({
-          title: "Error",
-          description: "Please fill in all required fields",
-          variant: "destructive"
-        });
-        return;
-      }
-
-      await feesApi.updateCategory(editingCategory.id, {
-        name: editingCategory.name,
-        amount: parseFloat(editingCategory.amount),
-        frequency: editingCategory.frequency,
-        description: editingCategory.description || undefined,
-        isActive: editingCategory.isActive !== false
-      });
-
-      toast({
-        title: "Success",
-        description: "Fee category updated successfully"
-      });
-
-      setIsEditCategoryOpen(false);
-      setEditingCategory(null);
-      
-      // Reload categories
-      const categories = await feesApi.getCategories();
-      setFeeCategories(categories || []);
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error?.message || "Failed to update category",
-        variant: "destructive"
-      });
-    }
-  };
-
-  const handleDeleteCategory = async (categoryId: string) => {
-    try {
-      await feesApi.deleteCategory(categoryId);
-      toast({
-        title: "Success",
-        description: "Fee category deleted successfully"
-      });
-      
-      // Reload categories
-      const categories = await feesApi.getCategories();
-      setFeeCategories(categories || []);
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error?.message || "Failed to delete category",
-        variant: "destructive"
-      });
-    }
-  };
-
   const handleViewStudentFee = async (studentFee: any) => {
     try {
       setSelectedStudentFee(studentFee);
@@ -895,7 +784,6 @@ ${result.schoolName}`;
           <TabsList>
             <TabsTrigger value="students">Student Fees</TabsTrigger>
             {isAdmin && <TabsTrigger value="structure">Fee Structure</TabsTrigger>}
-            {isAdmin && <TabsTrigger value="categories">Fee Categories</TabsTrigger>}
           </TabsList>
 
           {/* Student Fees */}
@@ -1241,185 +1129,7 @@ ${result.schoolName}`;
             </TabsContent>
           )}
 
-          {/* Fee Categories (Admin Only) */}
-          {isAdmin && (
-            <TabsContent value="categories" className="space-y-4">
-              <div className="flex justify-between items-center">
-                <h2 className="text-lg font-medium">Fee Categories</h2>
-                <Dialog open={isAddCategoryOpen} onOpenChange={setIsAddCategoryOpen}>
-                  <DialogTrigger asChild>
-                    <Button size="sm">
-                      <Plus className="w-4 h-4 mr-2" />
-                      Add Category
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent>
-                    <DialogHeader>
-                      <DialogTitle>Add Fee Category</DialogTitle>
-                    </DialogHeader>
-                    <div className="space-y-4 py-4">
-                      <div className="space-y-2">
-                        <Label>Category Name</Label>
-                        <Input 
-                          placeholder="e.g., Exam Fee" 
-                          value={newCategory.name}
-                          onChange={(e) => setNewCategory({...newCategory, name: e.target.value})}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Amount (₹)</Label>
-                        <Input 
-                          type="number" 
-                          placeholder="Enter amount"
-                          value={newCategory.amount}
-                          onChange={(e) => setNewCategory({...newCategory, amount: e.target.value})}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Frequency</Label>
-                        <Select 
-                          value={newCategory.frequency} 
-                          onValueChange={(value: any) => setNewCategory({...newCategory, frequency: value})}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select frequency" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="monthly">Monthly</SelectItem>
-                            <SelectItem value="quarterly">Quarterly</SelectItem>
-                            <SelectItem value="yearly">Yearly</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Description (Optional)</Label>
-                        <Input 
-                          placeholder="Enter description"
-                          value={newCategory.description}
-                          onChange={(e) => setNewCategory({...newCategory, description: e.target.value})}
-                        />
-                      </div>
-                      <DialogFooter>
-                        <Button variant="outline" onClick={() => setIsAddCategoryOpen(false)}>
-                          Cancel
-                        </Button>
-                        <Button onClick={handleAddCategory}>Add Category</Button>
-                      </DialogFooter>
-                    </div>
-                  </DialogContent>
-                </Dialog>
-              </div>
-              {loading ? (
-                <div className="flex items-center justify-center py-12">
-                  <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
-                </div>
-              ) : feeCategories.length === 0 ? (
-                <Card>
-                  <CardContent className="py-12 text-center text-muted-foreground">
-                    <p>No fee categories. Click "Add Category" to create one.</p>
-                  </CardContent>
-                </Card>
-              ) : (
-                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                  {feeCategories.map((category) => (
-                    <Card key={category.id}>
-                      <CardContent className="pt-6">
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1">
-                            <h3 className="font-semibold">{category.name}</h3>
-                            <p className="text-2xl font-bold mt-2">₹{category.amount.toLocaleString()}</p>
-                            <Badge variant="outline" className="mt-2 capitalize">
-                              {category.frequency}
-                            </Badge>
-                            {category.description && (
-                              <p className="text-sm text-muted-foreground mt-2">{category.description}</p>
-                            )}
-                          </div>
-                          <div className="flex gap-1">
-                            <Button 
-                              variant="ghost" 
-                              size="sm"
-                              onClick={() => {
-                                setEditingCategory(category);
-                                setIsEditCategoryOpen(true);
-                              }}
-                            >
-                              <Edit className="w-4 h-4" />
-                            </Button>
-                            <Button 
-                              variant="ghost" 
-                              size="sm"
-                              onClick={() => handleDeleteCategory(category.id)}
-                            >
-                              <X className="w-4 h-4" />
-                            </Button>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
-              )}
-            </TabsContent>
-          )}
         </Tabs>
-
-        {/* Edit Category Dialog */}
-        <Dialog open={isEditCategoryOpen} onOpenChange={setIsEditCategoryOpen}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Edit Fee Category</DialogTitle>
-            </DialogHeader>
-            {editingCategory && (
-              <div className="space-y-4 py-4">
-                <div className="space-y-2">
-                  <Label>Category Name</Label>
-                  <Input 
-                    value={editingCategory.name}
-                    onChange={(e) => setEditingCategory({...editingCategory, name: e.target.value})}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Amount (₹)</Label>
-                  <Input 
-                    type="number"
-                    value={editingCategory.amount}
-                    onChange={(e) => setEditingCategory({...editingCategory, amount: e.target.value})}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Frequency</Label>
-                  <Select 
-                    value={editingCategory.frequency} 
-                    onValueChange={(value: any) => setEditingCategory({...editingCategory, frequency: value})}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="monthly">Monthly</SelectItem>
-                      <SelectItem value="quarterly">Quarterly</SelectItem>
-                      <SelectItem value="yearly">Yearly</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Description (Optional)</Label>
-                  <Input 
-                    value={editingCategory.description || ""}
-                    onChange={(e) => setEditingCategory({...editingCategory, description: e.target.value})}
-                  />
-                </div>
-                <DialogFooter>
-                  <Button variant="outline" onClick={() => setIsEditCategoryOpen(false)}>
-                    Cancel
-                  </Button>
-                  <Button onClick={handleEditCategory}>Update Category</Button>
-                </DialogFooter>
-              </div>
-            )}
-          </DialogContent>
-        </Dialog>
 
         {/* View Student Fee Dialog */}
         <Dialog open={isViewStudentFeeOpen} onOpenChange={setIsViewStudentFeeOpen}>

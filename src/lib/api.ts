@@ -1147,3 +1147,25 @@ export const idCardGenerationApi = {
     return apiRequest(`/id-cards/preview/${studentId}/${templateId}`);
   },
 };
+
+// ============ NOTIFICATIONS API ============
+export const notificationsApi = {
+  // Send notification
+  send: async (data: {
+    title: string;
+    message: string;
+    targetType: 'all_classes' | 'selected_classes' | 'all_teachers' | 'all_parents';
+    classIds?: string[];
+    priority?: 'normal' | 'urgent';
+  }): Promise<{ success: boolean; id: string; sentCount: number; message: string }> => {
+    return apiRequest('/notifications', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  // Get all notifications
+  getAll: async (): Promise<any[]> => {
+    return apiRequest<any[]>('/notifications');
+  },
+};
