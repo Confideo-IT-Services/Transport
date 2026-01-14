@@ -305,6 +305,24 @@ export const academicYearsApi = {
       method: 'DELETE',
     });
   },
+
+  promoteStudents: async (yearId: string): Promise<{
+    success: boolean;
+    promoted: number;
+    skipped: number;
+    total: number;
+    errors?: Array<{
+      studentId: string;
+      studentName: string;
+      currentClass?: string;
+      reason?: string;
+      error?: string;
+    }>;
+  }> => {
+    return apiRequest(`/academic-years/${yearId}/promote-students`, {
+      method: 'POST',
+    });
+  },
 };
 
 // ============ STUDENTS API ============
@@ -392,6 +410,16 @@ export const studentsApi = {
     return apiRequest(`/students/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data),
+    });
+  },
+
+  updateTcStatus: async (
+    studentId: string | number,
+    tcStatus: 'none' | 'applied' | 'issued'
+  ): Promise<{ success: boolean }> => {
+    return apiRequest(`/students/${studentId}/tc-status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ tcStatus }),
     });
   },
 };
@@ -1145,27 +1173,5 @@ export const idCardGenerationApi = {
     template: IDCardTemplate;
   }> => {
     return apiRequest(`/id-cards/preview/${studentId}/${templateId}`);
-  },
-};
-
-// ============ NOTIFICATIONS API ============
-export const notificationsApi = {
-  // Send notification
-  send: async (data: {
-    title: string;
-    message: string;
-    targetType: 'all_classes' | 'selected_classes' | 'all_teachers' | 'all_parents';
-    classIds?: string[];
-    priority?: 'normal' | 'urgent';
-  }): Promise<{ success: boolean; id: string; sentCount: number; message: string }> => {
-    return apiRequest('/notifications', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-  },
-
-  // Get all notifications
-  getAll: async (): Promise<any[]> => {
-    return apiRequest<any[]>('/notifications');
   },
 };

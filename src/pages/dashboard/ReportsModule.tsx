@@ -17,6 +17,8 @@ import {
   CartesianGrid, 
   Tooltip, 
   ResponsiveContainer,
+  LineChart,
+  Line,
   PieChart,
   Pie,
   Cell,
@@ -60,7 +62,7 @@ import {
   FileText,
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
-import { attendanceApi, homeworkApi, studentsApi, classesApi, testsApi, timetableApi, feesApi } from "@/lib/api";
+import { attendanceApi, homeworkApi, studentsApi, classesApi, testsApi, timetableApi } from "@/lib/api";
 
 // Interfaces
 interface Student {
@@ -565,24 +567,15 @@ export default function ReportsModule() {
           setClassPerformance([]);
         }
         
-        // Load fee collected for selected class
-        if (selectedClassId) {
+        // Load total students count
+        if (isAdmin) {
           try {
-            const studentFees = await feesApi.getStudentFees(selectedClassId);
-            const totalCollected = studentFees.reduce((sum: number, fee: any) => {
-              return sum + (parseFloat(fee.paidAmount) || 0);
-            }, 0);
-            setFeeCollected(totalCollected);
+            const allStudents = await studentsApi.getAll();
+            setTotalStudents(allStudents.filter((s: any) => s.status === 'approved').length);
           } catch (error) {
-            console.error('Error loading fee collected:', error);
-            setFeeCollected(0);
+            console.error('Error loading students count:', error);
           }
-        } else {
-          setFeeCollected(0);
         }
-        
-        // Note: totalStudents is already correctly set on line 216 when students are loaded for the selected class
-        // No need to reload it here - it's already filtered by selectedClassId
         
       } catch (error) {
         console.error('Error loading analytics:', error);
@@ -1063,6 +1056,29 @@ export default function ReportsModule() {
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <Card>
                 <CardHeader>
+                  <CardTitle className="text-lg">Attendance Trend</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {attendanceTrend.length > 0 ? (
+                    <ResponsiveContainer width="100%" height={250}>
+                      <LineChart data={attendanceTrend}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                        <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" fontSize={12} />
+                        <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} domain={[0, 100]} />
+                        <Tooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "8px" }} />
+                        <Line type="monotone" dataKey="attendance" stroke="hsl(var(--primary))" strokeWidth={2} dot={{ fill: "hsl(var(--primary))" }} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div className="h-[250px] flex items-center justify-center text-muted-foreground">
+                      No attendance data available
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
                   <CardTitle className="text-lg">Homework Activity</CardTitle>
                 </CardHeader>
                 <CardContent>
@@ -1073,8 +1089,8 @@ export default function ReportsModule() {
                         <XAxis dataKey="week" stroke="hsl(var(--muted-foreground))" fontSize={12} />
                         <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} />
                         <Tooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "8px" }} />
-                        <Bar dataKey="assigned" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
-                        <Bar dataKey="completed" fill="#10b981" radius={[4, 4, 0, 0]} />
+                        <Bar dataKey="assigned" fill="hsl(var(--muted))" radius={[4, 4, 0, 0]} />
+                        <Bar dataKey="completed" fill="hsl(var(--secondary))" radius={[4, 4, 0, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
                   ) : (

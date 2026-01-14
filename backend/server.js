@@ -29,7 +29,6 @@ const feesRoutes = require('./routes/fees');
 const idCardTemplatesRoutes = require('./routes/idCardTemplates');
 const idCardGenerationRoutes = require('./routes/idCardGeneration');
 const otpRoutes = require('./routes/otp');
-const notificationsRoutes = require('./routes/notifications');
 
 // Use routes
 app.use('/api/auth', authRoutes);
@@ -49,7 +48,6 @@ app.use('/api/fees', feesRoutes);
 app.use('/api/id-templates', idCardTemplatesRoutes);
 app.use('/api/id-cards', idCardGenerationRoutes);
 app.use('/api/otp', otpRoutes);
-app.use('/api/notifications', notificationsRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
