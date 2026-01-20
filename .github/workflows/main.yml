@@ -1,13 +1,12 @@
 name: Deploy to AWS ECS
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
     inputs:
       branch:
         description: 'Select branch to deploy'
         required: true
+        default: 'main'
         type: choice
         options:
           - main
@@ -31,6 +30,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch || github.ref_name }}
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -60,45 +61,83 @@ jobs:
       - name: Update Backend Task Definition
         run: |
           # Get current task definition
-          TASK_DEF=$(aws ecs describe-task-definition --task-definition ${{ env.BACKEND_TASK_DEFINITION }} --region ${{ env.AWS_REGION }})
+          aws ecs describe-task-definition \
+            --task-definition ${{ env.BACKEND_TASK_DEFINITION }} \
+            --region ${{ env.AWS_REGION }} \
+            --query 'taskDefinition' > backend-task-def.json
           
-          # Extract the task definition JSON and update image
-          NEW_TASK_DEF=$(echo $TASK_DEF | jq --arg IMAGE "${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:latest" '.taskDefinition | .containerDefinitions[0].image = $IMAGE | del(.taskDefinitionArn) | del(.revision) | del(.status) | del(.requiresAttributes) | del(.compatibilities) | del(.registeredAt) | del(.registeredBy)')
+          # Update the image in the task definition
+          sed -i 's|"image": "[^"]*"|"image": "${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:latest"|g' backend-task-def.json
+          
+          # Remove fields that can't be in register-task-definition
+          jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' backend-task-def.json > backend-task-def-clean.json
           
           # Register new task definition
-          aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEF" --region ${{ env.AWS_REGION }}
+          aws ecs register-task-definition \
+            --cli-input-json file://backend-task-def-clean.json \
+            --region ${{ env.AWS_REGION }}
 
       - name: Update Frontend Task Definition
         run: |
           # Get current task definition
-          TASK_DEF=$(aws ecs describe-task-definition --task-definition ${{ env.FRONTEND_TASK_DEFINITION }} --region ${{ env.AWS_REGION }})
+          aws ecs describe-task-definition \
+            --task-definition ${{ env.FRONTEND_TASK_DEFINITION }} \
+            --region ${{ env.AWS_REGION }} \
+            --query 'taskDefinition' > frontend-task-def.json
           
-          # Extract the task definition JSON and update image
-          NEW_TASK_DEF=$(echo $TASK_DEF | jq --arg IMAGE "${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:latest" '.taskDefinition | .containerDefinitions[0].image = $IMAGE | del(.taskDefinitionArn) | del(.revision) | del(.status) | del(.requiresAttributes) | del(.compatibilities) | del(.registeredAt) | del(.registeredBy)')
+          # Update the image in the task definition
+          sed -i 's|"image": "[^"]*"|"image": "${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:latest"|g' frontend-task-def.json
+          
+          # Remove fields that can't be in register-task-definition
+          jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' frontend-task-def.json > frontend-task-def-clean.json
           
           # Register new task definition
-          aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEF" --region ${{ env.AWS_REGION }}
+          aws ecs register-task-definition \
+            --cli-input-json file://frontend-task-def-clean.json \
+            --region ${{ env.AWS_REGION }}
 
       - name: Deploy Backend to ECS
         run: |
-          aws ecs update-service --cluster ${{ env.ECS_CLUSTER }} --service ${{ env.BACKEND_SERVICE }} --force-new-deployment --region ${{ env.AWS_REGION }}
+          aws ecs update-service \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service ${{ env.BACKEND_SERVICE }} \
+            --force-new-deployment \
+            --region ${{ env.AWS_REGION }}
 
       - name: Deploy Frontend to ECS
         run: |
-          aws ecs update-service --cluster ${{ env.ECS_CLUSTER }} --service ${{ env.FRONTEND_SERVICE }} --force-new-deployment --region ${{ env.AWS_REGION }}
+          aws ecs update-service \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service ${{ env.FRONTEND_SERVICE }} \
+            --force-new-deployment \
+            --region ${{ env.AWS_REGION }}
 
       - name: Wait for Backend deployment
         run: |
-          aws ecs wait services-stable --cluster ${{ env.ECS_CLUSTER }} --services ${{ env.BACKEND_SERVICE }} --region ${{ env.AWS_REGION }}
+          aws ecs wait services-stable \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services ${{ env.BACKEND_SERVICE }} \
+            --region ${{ env.AWS_REGION }}
 
       - name: Wait for Frontend deployment
         run: |
-          aws ecs wait services-stable --cluster ${{ env.ECS_CLUSTER }} --services ${{ env.FRONTEND_SERVICE }} --region ${{ env.AWS_REGION }}
+          aws ecs wait services-stable \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services ${{ env.FRONTEND_SERVICE }} \
+            --region ${{ env.AWS_REGION }}
 
       - name: Verify deployment
         run: |
           echo "✅ Deployment completed successfully!"
           echo "Backend Service Status:"
-          aws ecs describe-services --cluster ${{ env.ECS_CLUSTER }} --services ${{ env.BACKEND_SERVICE }} --region ${{ env.AWS_REGION }} --query 'services[0].deployments[0].{taskDefinition: taskDefinition, status: status, desiredCount: desiredCount, runningCount: runningCount}'
+          aws ecs describe-services \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services ${{ env.BACKEND_SERVICE }} \
+            --region ${{ env.AWS_REGION }} \
+            --query 'services[0].deployments[0].{taskDefinition: taskDefinition, status: status, desiredCount: desiredCount, runningCount: runningCount}'
           echo "Frontend Service Status:"
-          aws ecs describe-services --cluster ${{ env.ECS_CLUSTER }} --services ${{ env.FRONTEND_SERVICE }} --region ${{ env.AWS_REGION }} --query 'services[0].deployments[0].{taskDefinition: taskDefinition, status: status, desiredCount: desiredCount, runningCount: runningCount}'
+          aws ecs describe-services \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services ${{ env.FRONTEND_SERVICE }} \
+            --region ${{ env.AWS_REGION }} \
+            --query 'services[0].deployments[0].{taskDefinition: taskDefinition, status: status, desiredCount: desiredCount, runningCount: runningCount}'
