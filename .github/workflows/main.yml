@@ -56,9 +56,10 @@ jobs:
           docker build -t ${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:${{ github.sha }} .
           docker push ${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:${{ github.sha }}
 
-      - name: Download Backend task definition
+      - name: Download and clean Backend task definition
         run: |
-          aws ecs describe-task-definition --task-definition ${{ env.BACKEND_TASK_DEFINITION }} --query taskDefinition > backend-task-def.json
+          aws ecs describe-task-definition --task-definition ${{ env.BACKEND_TASK_DEFINITION }} --query taskDefinition > backend-task-def-raw.json
+          jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy, .enableFaultInjection)' backend-task-def-raw.json > backend-task-def.json
 
       - name: Update Backend task definition with new image
         id: backend-task-def
@@ -69,16 +70,17 @@ jobs:
           image: ${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:${{ github.sha }}
 
       - name: Deploy Backend to ECS
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
           task-definition: ${{ steps.backend-task-def.outputs.task-definition }}
           service: ${{ env.BACKEND_SERVICE }}
           cluster: ${{ env.ECS_CLUSTER }}
           wait-for-service-stability: true
 
-      - name: Download Frontend task definition
+      - name: Download and clean Frontend task definition
         run: |
-          aws ecs describe-task-definition --task-definition ${{ env.FRONTEND_TASK_DEFINITION }} --query taskDefinition > frontend-task-def.json
+          aws ecs describe-task-definition --task-definition ${{ env.FRONTEND_TASK_DEFINITION }} --query taskDefinition > frontend-task-def-raw.json
+          jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy, .enableFaultInjection)' frontend-task-def-raw.json > frontend-task-def.json
 
       - name: Update Frontend task definition with new image
         id: frontend-task-def
@@ -89,7 +91,7 @@ jobs:
           image: ${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:${{ github.sha }}
 
       - name: Deploy Frontend to ECS
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
           task-definition: ${{ steps.frontend-task-def.outputs.task-definition }}
           service: ${{ env.FRONTEND_SERVICE }}
