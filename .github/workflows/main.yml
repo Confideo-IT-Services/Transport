@@ -22,8 +22,8 @@ env:
   BACKEND_SERVICE: allpulse-backend-service
   BACKEND_TASK_DEFINITION: allpulse-backend
   FRONTEND_TASK_DEFINITION: allpulse-frontend
-  BACKEND_CONTAINER_NAME: allpulse-backend
-  FRONTEND_CONTAINER_NAME: allpulse-frontend
+  BACKEND_CONTAINER_NAME: backend
+  FRONTEND_CONTAINER_NAME: frontend
 
 jobs:
   deploy:
