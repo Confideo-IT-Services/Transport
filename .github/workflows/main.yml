@@ -19,6 +19,8 @@ env:
   BACKEND_ECR_REPO: allpulse/backend
   FRONTEND_SERVICE: allpulse-frontend-service
   BACKEND_SERVICE: allpulse-backend-service
+  FRONTEND_TASK_DEFINITION: allpulse-frontend
+  BACKEND_TASK_DEFINITION: allpulse-backend
 
 jobs:
   deploy:
@@ -47,29 +49,49 @@ jobs:
         run: |
           cd backend
           docker build -t ${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:${{ github.sha }} .
-          docker build -t ${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:latest .
           docker push ${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:${{ github.sha }}
-          docker push ${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:latest
 
       - name: Build and push Frontend
         run: |
           docker build -t ${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:${{ github.sha }} .
-          docker build -t ${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:latest .
           docker push ${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:${{ github.sha }}
-          docker push ${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:latest
+
+      - name: Download Backend task definition
+        run: |
+          aws ecs describe-task-definition --task-definition ${{ env.BACKEND_TASK_DEFINITION }} --query taskDefinition > backend-task-def.json
+
+      - name: Update Backend task definition with new image
+        id: backend-task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: backend-task-def.json
+          container-name: backend
+          image: ${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:${{ github.sha }}
 
       - name: Deploy Backend to ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.backend-task-def.outputs.task-definition }}
+          service: ${{ env.BACKEND_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
+
+      - name: Download Frontend task definition
         run: |
-          aws ecs update-service --cluster ${{ env.ECS_CLUSTER }} --service ${{ env.BACKEND_SERVICE }} --force-new-deployment
+          aws ecs describe-task-definition --task-definition ${{ env.FRONTEND_TASK_DEFINITION }} --query taskDefinition > frontend-task-def.json
+
+      - name: Update Frontend task definition with new image
+        id: frontend-task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: frontend-task-def.json
+          container-name: frontend
+          image: ${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:${{ github.sha }}
 
       - name: Deploy Frontend to ECS
-        run: |
-          aws ecs update-service --cluster ${{ env.ECS_CLUSTER }} --service ${{ env.FRONTEND_SERVICE }} --force-new-deployment
-
-      - name: Wait for Backend deployment
-        run: |
-          aws ecs wait services-stable --cluster ${{ env.ECS_CLUSTER }} --services ${{ env.BACKEND_SERVICE }}
-
-      - name: Wait for Frontend deployment
-        run: |
-          aws ecs wait services-stable --cluster ${{ env.ECS_CLUSTER }} --services ${{ env.FRONTEND_SERVICE }}
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.frontend-task-def.outputs.task-definition }}
+          service: ${{ env.FRONTEND_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
