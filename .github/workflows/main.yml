@@ -10,30 +10,44 @@ on:
         options:
           - main
           - UAT
+      deploy_frontend:
+        description: 'Deploy Frontend'
+        type: boolean
+        default: true
+      deploy_backend:
+        description: 'Deploy Backend'
+        type: boolean
+        default: true
 
 env:
   AWS_REGION: ap-south-1
   ECR_REGISTRY: 237343249019.dkr.ecr.ap-south-1.amazonaws.com
   ECS_CLUSTER: Conventpulse
-  FRONTEND_ECR_REPO: allpulse/frontend
-  BACKEND_ECR_REPO: allpulse/backend
+  
+  FRONTEND_ECR: 237343249019.dkr.ecr.ap-south-1.amazonaws.com/allpulse/frontend
+  BACKEND_ECR: 237343249019.dkr.ecr.ap-south-1.amazonaws.com/allpulse/backend
+  
   FRONTEND_SERVICE: allpulse-frontend-service
   BACKEND_SERVICE: allpulse-backend-service
-  FRONTEND_TASK_DEFINITION: allpulse-frontend
-  BACKEND_TASK_DEFINITION: allpulse-backend
+  
+  FRONTEND_TASK_FAMILY: allpulse-frontend
+  BACKEND_TASK_FAMILY: allpulse-backend
+  
+  FRONTEND_CONTAINER: frontend
+  BACKEND_CONTAINER: backend
 
 jobs:
-  deploy:
+  deploy-backend:
+    if: github.event.inputs.deploy_backend == 'true'
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.branch }}
 
       - name: Display branch
-        run: echo "Deploying branch - ${{ github.event.inputs.branch }}"
+        run: echo "🚀 Deploying Backend from branch - ${{ github.event.inputs.branch }}"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -45,55 +59,122 @@ jobs:
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build and push Backend
+      - name: Build Backend Image
         run: |
-          cd backend
-          docker build -t ${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:${{ github.sha }} .
-          docker push ${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:${{ github.sha }}
+          docker build \
+            -t $BACKEND_ECR:${{ github.sha }} \
+            -t $BACKEND_ECR:latest \
+            ./backend
 
-      - name: Build and push Frontend
+      - name: Push Backend Image
         run: |
-          docker build -t ${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:${{ github.sha }} .
-          docker push ${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:${{ github.sha }}
-
-      - name: Download and clean Backend task definition
-        run: |
-          aws ecs describe-task-definition --task-definition ${{ env.BACKEND_TASK_DEFINITION }} --query taskDefinition > backend-task-def-raw.json
-          jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy, .enableFaultInjection)' backend-task-def-raw.json > backend-task-def.json
-
-      - name: Update Backend task definition with new image
-        id: backend-task-def
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: backend-task-def.json
-          container-name: backend
-          image: ${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:${{ github.sha }}
+          docker push $BACKEND_ECR:${{ github.sha }}
+          docker push $BACKEND_ECR:latest
 
       - name: Deploy Backend to ECS
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
-        with:
-          task-definition: ${{ steps.backend-task-def.outputs.task-definition }}
-          service: ${{ env.BACKEND_SERVICE }}
-          cluster: ${{ env.ECS_CLUSTER }}
-          wait-for-service-stability: true
-
-      - name: Download and clean Frontend task definition
         run: |
-          aws ecs describe-task-definition --task-definition ${{ env.FRONTEND_TASK_DEFINITION }} --query taskDefinition > frontend-task-def-raw.json
-          jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy, .enableFaultInjection)' frontend-task-def-raw.json > frontend-task-def.json
+          TASK_DEF=$(aws ecs describe-task-definition \
+            --task-definition $BACKEND_TASK_FAMILY)
+          
+          NEW_TASK_DEF=$(echo $TASK_DEF | jq \
+            --arg IMAGE "$BACKEND_ECR:${{ github.sha }}" \
+            '.taskDefinition
+            | .containerDefinitions |=
+              map(if .name=="'"$BACKEND_CONTAINER"'" then .image=$IMAGE else . end)
+            | del(
+                .taskDefinitionArn,
+                .revision,
+                .status,
+                .requiresAttributes,
+                .compatibilities,
+                .registeredAt,
+                .registeredBy,
+                .enableFaultInjection
+              )')
+          
+          aws ecs register-task-definition \
+            --cli-input-json "$NEW_TASK_DEF"
+          
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service $BACKEND_SERVICE \
+            --task-definition $BACKEND_TASK_FAMILY \
+            --force-new-deployment
+          
+          echo "⏳ Waiting for Backend service to stabilize..."
+          aws ecs wait services-stable \
+            --cluster $ECS_CLUSTER \
+            --services $BACKEND_SERVICE
+          
+          echo "✅ Backend deployed successfully!"
 
-      - name: Update Frontend task definition with new image
-        id: frontend-task-def
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
+  deploy-frontend:
+    if: github.event.inputs.deploy_frontend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
-          task-definition: frontend-task-def.json
-          container-name: frontend
-          image: ${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:${{ github.sha }}
+          ref: ${{ github.event.inputs.branch }}
+
+      - name: Display branch
+        run: echo "🚀 Deploying Frontend from branch - ${{ github.event.inputs.branch }}"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build Frontend Image
+        run: |
+          docker build \
+            -t $FRONTEND_ECR:${{ github.sha }} \
+            -t $FRONTEND_ECR:latest \
+            .
+
+      - name: Push Frontend Image
+        run: |
+          docker push $FRONTEND_ECR:${{ github.sha }}
+          docker push $FRONTEND_ECR:latest
 
       - name: Deploy Frontend to ECS
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
-        with:
-          task-definition: ${{ steps.frontend-task-def.outputs.task-definition }}
-          service: ${{ env.FRONTEND_SERVICE }}
-          cluster: ${{ env.ECS_CLUSTER }}
-          wait-for-service-stability: true
+        run: |
+          TASK_DEF=$(aws ecs describe-task-definition \
+            --task-definition $FRONTEND_TASK_FAMILY)
+          
+          NEW_TASK_DEF=$(echo $TASK_DEF | jq \
+            --arg IMAGE "$FRONTEND_ECR:${{ github.sha }}" \
+            '.taskDefinition
+            | .containerDefinitions |=
+              map(if .name=="'"$FRONTEND_CONTAINER"'" then .image=$IMAGE else . end)
+            | del(
+                .taskDefinitionArn,
+                .revision,
+                .status,
+                .requiresAttributes,
+                .compatibilities,
+                .registeredAt,
+                .registeredBy,
+                .enableFaultInjection
+              )')
+          
+          aws ecs register-task-definition \
+            --cli-input-json "$NEW_TASK_DEF"
+          
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service $FRONTEND_SERVICE \
+            --task-definition $FRONTEND_TASK_FAMILY \
+            --force-new-deployment
+          
+          echo "⏳ Waiting for Frontend service to stabilize..."
+          aws ecs wait services-stable \
+            --cluster $ECS_CLUSTER \
+            --services $FRONTEND_SERVICE
+          
+          echo "✅ Frontend deployed successfully!"
