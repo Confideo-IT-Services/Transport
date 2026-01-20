@@ -1,5 +1,5 @@
 name: Deploy to AWS ECS
- 
+
 on:
   workflow_dispatch:
     inputs:
@@ -10,7 +10,7 @@ on:
         options:
           - main
           - UAT
- 
+
 env:
   AWS_REGION: ap-south-1
   ECR_REGISTRY: 237343249019.dkr.ecr.ap-south-1.amazonaws.com
@@ -19,58 +19,57 @@ env:
   BACKEND_ECR_REPO: allpulse/backend
   FRONTEND_SERVICE: allpulse-frontend-service
   BACKEND_SERVICE: allpulse-backend-service
- 
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
- 
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.branch }}
- 
+
       - name: Display branch
         run: echo "Deploying branch - ${{ github.event.inputs.branch }}"
- 
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
- 
+
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
- 
+
       - name: Build and push Backend
         run: |
-          cd ConventPulse/backend
+          cd backend
           docker build -t ${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:${{ github.sha }} .
           docker build -t ${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:latest .
           docker push ${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:${{ github.sha }}
           docker push ${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:latest
- 
+
       - name: Build and push Frontend
         run: |
-          cd ConventPulse
           docker build -t ${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:${{ github.sha }} .
           docker build -t ${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:latest .
           docker push ${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:${{ github.sha }}
           docker push ${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:latest
- 
+
       - name: Deploy Backend to ECS
         run: |
           aws ecs update-service --cluster ${{ env.ECS_CLUSTER }} --service ${{ env.BACKEND_SERVICE }} --force-new-deployment
- 
+
       - name: Deploy Frontend to ECS
         run: |
           aws ecs update-service --cluster ${{ env.ECS_CLUSTER }} --service ${{ env.FRONTEND_SERVICE }} --force-new-deployment
- 
+
       - name: Wait for Backend deployment
         run: |
           aws ecs wait services-stable --cluster ${{ env.ECS_CLUSTER }} --services ${{ env.BACKEND_SERVICE }}
- 
+
       - name: Wait for Frontend deployment
         run: |
           aws ecs wait services-stable --cluster ${{ env.ECS_CLUSTER }} --services ${{ env.FRONTEND_SERVICE }}
