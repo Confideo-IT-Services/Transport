@@ -147,6 +147,8 @@ async function sendWhatsAppTemplateMessage(phoneNumber, templateName, languageCo
       return {
         success: true,
         messageId: messageId,
+        queueId: messageId, // Use messageId as queueId for Meta format (for database logging)
+        messageStatus: 'sent', // Meta format typically means message is sent
         data: response.data
       };
     }
@@ -234,8 +236,99 @@ function formatPhoneNumber(phone) {
   return cleaned;
 }
 
+/**
+ * Check WhatsApp message status using queue_id or message_id
+ * Note: 1automations.com may not have a direct status endpoint
+ * This function attempts multiple endpoint formats
+ * @param {string} messageId - Queue ID or Message ID from send response
+ * @returns {Promise<Object>} Status information
+ */
+async function checkWhatsAppMessageStatus(messageId) {
+  try {
+    const accessToken = process.env.WAZZAP_API_KEY;
+    const phoneNumberId = process.env.WAZZAP_PHONE_NUMBER_ID;
+    const apiBaseUrl = process.env.WAZZAP_API_URL || 'https://crmapi.1automations.com/api/meta';
+    const apiVersion = process.env.WAZZAP_API_VERSION || 'v19.0';
+
+    if (!accessToken || !phoneNumberId || !messageId) {
+      throw new Error('Missing required configuration or message ID');
+    }
+
+    // Try different endpoint formats (1automations.com may have different structure)
+    const endpoints = [
+      `${apiBaseUrl}/${apiVersion}/${phoneNumberId}/messages/${messageId}`, // Standard Meta format
+      `${apiBaseUrl}/${apiVersion}/messages/${messageId}`, // Alternative format
+      `${apiBaseUrl}/messages/${messageId}/status`, // 1automations.com specific
+      `${apiBaseUrl}/status/${messageId}` // Another possible format
+    ];
+
+    let lastError = null;
+    for (const endpoint of endpoints) {
+      try {
+        const response = await axios.get(endpoint, {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+          },
+          timeout: 5000
+        });
+
+        if (response.data) {
+          // Parse different response formats
+          const status = response.data.status || 
+                       response.data.message_status || 
+                       response.data.message?.message_status ||
+                       response.data.data?.status ||
+                       'unknown';
+          
+          return {
+            success: true,
+            messageId: messageId,
+            status: status,
+            timestamp: response.data.timestamp || response.data.updated_at || new Date().toISOString(),
+            data: response.data
+          };
+        }
+      } catch (err) {
+        // If 404, try next endpoint; if other error, log and continue
+        if (err.response?.status !== 404) {
+          if (process.env.NODE_ENV === 'development') {
+            console.warn(`Status check endpoint failed: ${endpoint}`, err.message);
+          }
+        }
+        lastError = err;
+        continue;
+      }
+    }
+
+    // If all endpoints failed, return error
+    // Note: 1automations.com might not support status checking via API
+    // In that case, status updates would come via webhooks
+    return {
+      success: false,
+      error: 'Status check endpoint not available. Status updates may come via webhooks.',
+      errorCode: 'ENDPOINT_NOT_FOUND'
+    };
+
+  } catch (error) {
+    console.error('WhatsApp Status Check Error:', {
+      message: error.message,
+      status: error.response?.status,
+      data: error.response?.data
+    });
+
+    return {
+      success: false,
+      error: error.response?.data?.error?.message || error.message || 'Failed to check message status',
+      errorCode: error.response?.data?.error?.code,
+      statusCode: error.response?.status
+    };
+  }
+}
+
 module.exports = {
   sendWhatsAppTemplateMessage,
-  formatPhoneNumber
+  formatPhoneNumber,
+  checkWhatsAppMessageStatus
 };
 
