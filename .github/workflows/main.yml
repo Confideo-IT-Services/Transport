@@ -55,23 +55,23 @@ jobs:
       - name: Build and push Backend
         run: |
           cd backend
-          docker build -t ${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:${{ github.sha }} .
-          docker tag ${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:${{ github.sha }} ${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:latest
-          docker push ${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:${{ github.sha }}
-          docker push ${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:latest
+          docker build -t ${{ secrets.ECR_REGISTRY }}/${{ secrets.BACKEND_ECR_REPO }}:${{ github.sha }} .
+          docker tag ${{ secrets.ECR_REGISTRY }}/${{ secrets.BACKEND_ECR_REPO }}:${{ github.sha }} ${{ secrets.ECR_REGISTRY }}/${{ secrets.BACKEND_ECR_REPO }}:latest
+          docker push ${{ secrets.ECR_REGISTRY }}/${{ secrets.BACKEND_ECR_REPO }}:${{ github.sha }}
+          docker push ${{ secrets.ECR_REGISTRY }}/${{ secrets.BACKEND_ECR_REPO }}:latest
 
       - name: Build and push Frontend
         run: |
-          docker build -t ${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:${{ github.sha }} .
-          docker tag ${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:${{ github.sha }} ${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:latest
-          docker push ${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:${{ github.sha }}
-          docker push ${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:latest
+          docker build -t ${{ secrets.ECR_REGISTRY }}/${{ secrets.FRONTEND_ECR_REPO }}:${{ github.sha }} .
+          docker tag ${{ secrets.ECR_REGISTRY }}/${{ secrets.FRONTEND_ECR_REPO }}:${{ github.sha }} ${{ secrets.ECR_REGISTRY }}/${{ secrets.FRONTEND_ECR_REPO }}:latest
+          docker push ${{ secrets.ECR_REGISTRY }}/${{ secrets.FRONTEND_ECR_REPO }}:${{ github.sha }}
+          docker push ${{ secrets.ECR_REGISTRY }}/${{ secrets.FRONTEND_ECR_REPO }}:latest
 
       - name: Download Backend Task Definition
         run: |
           aws ecs describe-task-definition \
-            --task-definition ${{ env.BACKEND_TASK_DEFINITION }} \
-            --region ${{ env.AWS_REGION }} \
+            --task-definition ${{ secrets.BACKEND_TASK_DEFINITION }} \
+            --region ${{ secrets.AWS_REGION }} \
             --query 'taskDefinition' > backend-task-def.json
           
           cat backend-task-def.json | jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' > backend-task-def-clean.json
@@ -81,22 +81,22 @@ jobs:
         uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
           task-definition: backend-task-def-clean.json
-          container-name: ${{ env.BACKEND_CONTAINER_NAME }}
-          image: ${{ env.ECR_REGISTRY }}/${{ env.BACKEND_ECR_REPO }}:latest
+          container-name: ${{ secrets.BACKEND_CONTAINER_NAME }}
+          image: ${{ secrets.ECR_REGISTRY }}/${{ secrets.BACKEND_ECR_REPO }}:latest
 
       - name: Deploy Backend to ECS
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
           task-definition: ${{ steps.render-backend.outputs.task-definition }}
-          service: ${{ env.BACKEND_SERVICE }}
-          cluster: ${{ env.ECS_CLUSTER }}
+          service: ${{ secrets.BACKEND_SERVICE }}
+          cluster: ${{ secrets.ECS_CLUSTER }}
           wait-for-service-stability: true
 
       - name: Download Frontend Task Definition
         run: |
           aws ecs describe-task-definition \
-            --task-definition ${{ env.FRONTEND_TASK_DEFINITION }} \
-            --region ${{ env.AWS_REGION }} \
+            --task-definition ${{ secrets.FRONTEND_TASK_DEFINITION }} \
+            --region ${{ secrets.AWS_REGION }} \
             --query 'taskDefinition' > frontend-task-def.json
           
           cat frontend-task-def.json | jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' > frontend-task-def-clean.json
@@ -106,15 +106,15 @@ jobs:
         uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
           task-definition: frontend-task-def-clean.json
-          container-name: ${{ env.FRONTEND_CONTAINER_NAME }}
-          image: ${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_ECR_REPO }}:latest
+          container-name: ${{ secrets.FRONTEND_CONTAINER_NAME }}
+          image: ${{ secrets.ECR_REGISTRY }}/${{ secrets.FRONTEND_ECR_REPO }}:latest
 
       - name: Deploy Frontend to ECS
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
           task-definition: ${{ steps.render-frontend.outputs.task-definition }}
-          service: ${{ env.FRONTEND_SERVICE }}
-          cluster: ${{ env.ECS_CLUSTER }}
+          service: ${{ secrets.FRONTEND_SERVICE }}
+          cluster: ${{ secrets.ECS_CLUSTER }}
           wait-for-service-stability: true
 
       - name: Deployment Success
