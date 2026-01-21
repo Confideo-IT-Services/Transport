@@ -1,1 +1,2 @@
 npm install @aws-sdk/client-s3 sharp multer
+cd backend && npm list axios 2>&1 | head -5

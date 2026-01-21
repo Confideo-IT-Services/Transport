@@ -47,6 +47,7 @@ router.get('/', authenticateToken, requireAdmin, async (req, res) => {
       photoUrl: s.photo_url,
       avatar: s.photo_url || '',
       status: s.status,
+      tcStatus: s.tc_status || 'none',
       admissionNumber: s.admission_number || null,
       createdAt: s.created_at,
       submittedAt: s.created_at,
@@ -85,6 +86,7 @@ router.get('/pending', authenticateToken, requireAdmin, async (req, res) => {
       parentEmail: s.parent_email,
       parentName: s.parent_name,
       status: s.status,
+      tcStatus: s.tc_status || 'none',
       admissionNumber: s.admission_number || null,
       createdAt: s.created_at
     })));
@@ -549,6 +551,41 @@ router.post('/:id/reject', authenticateToken, requireAdmin, async (req, res) => 
   } catch (error) {
     console.error('Reject student error:', error);
     res.status(500).json({ error: 'Failed to reject student' });
+  }
+});
+
+// Update TC status for student
+router.patch('/:id/tc-status', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { tcStatus } = req.body; // 'none', 'applied', or 'issued'
+    const schoolId = req.user.schoolId;
+
+    if (!['none', 'applied', 'issued'].includes(tcStatus)) {
+      return res.status(400).json({ error: 'Invalid TC status. Must be: none, applied, or issued' });
+    }
+
+    // Verify student belongs to school
+    const [students] = await db.query(
+      'SELECT id FROM students WHERE id = ? AND school_id = ?',
+      [id, schoolId]
+    );
+
+    if (students.length === 0) {
+      return res.status(404).json({ error: 'Student not found' });
+    }
+
+    await db.query(
+      'UPDATE students SET tc_status = ? WHERE id = ?',
+      [tcStatus, id]
+    );
+
+    console.log('✅ TC status updated:', { studentId: id, tcStatus });
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Update TC status error:', error);
+    res.status(500).json({ error: 'Failed to update TC status' });
   }
 });
 

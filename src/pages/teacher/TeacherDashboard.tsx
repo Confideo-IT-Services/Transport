@@ -1,9 +1,12 @@
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { StatCard } from "@/components/dashboard/StatCard";
 import { QuickAction } from "@/components/dashboard/QuickAction";
 import { Users, UserCheck, UserX, BookOpen, ClipboardCheck, Bell, FileText, AlertTriangle, Megaphone } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import { notificationsApi, Notification } from "@/lib/api";
+import { useAuth } from "@/contexts/AuthContext";
 
 const weeklyAttendance = [
   { day: "Mon", present: 42, absent: 3 },
@@ -13,15 +16,31 @@ const weeklyAttendance = [
   { day: "Fri", present: 43, absent: 2 },
 ];
 
-// Admin announcements for teachers
-const adminAnnouncements = [
-  { id: 1, title: "Staff Meeting Tomorrow", message: "All teachers are required to attend the staff meeting at 3 PM in the conference room.", time: "2 hours ago", priority: "urgent" },
-  { id: 2, title: "New Curriculum Guidelines", message: "Please review the updated curriculum guidelines shared via email.", time: "1 day ago", priority: "normal" },
-  { id: 3, title: "Report Submission Deadline", message: "Reminder: Progress reports for Q1 are due by Friday.", time: "2 days ago", priority: "normal" },
-];
+// Admin announcements will be fetched from API
 
 export default function TeacherDashboard() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const [adminAnnouncements, setAdminAnnouncements] = useState<Notification[]>([]);
+
+  useEffect(() => {
+    // Fetch notifications sent to teachers (admin announcements)
+    notificationsApi.getInbox()
+      .then(data => setAdminAnnouncements(data.slice(0, 3))) // Show latest 3
+      .catch(() => setAdminAnnouncements([]));
+  }, []);
+
+  const formatTimeAgo = (dateString: string) => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
+    
+    if (diffInSeconds < 60) return "Just now";
+    if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)} minutes ago`;
+    if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)} hours ago`;
+    if (diffInSeconds < 604800) return `${Math.floor(diffInSeconds / 86400)} days ago`;
+    return date.toLocaleDateString();
+  };
 
   const handleLogout = () => {
     navigate("/");
@@ -132,34 +151,38 @@ export default function TeacherDashboard() {
             Announcements from School Admin
           </h3>
           <div className="space-y-4 mt-4">
-            {adminAnnouncements.map((announcement) => (
-              <div
-                key={announcement.id}
-                className={`p-4 rounded-lg border ${
-                  announcement.priority === "urgent"
-                    ? "bg-warning/5 border-warning/30"
-                    : "bg-muted/30 border-border"
-                }`}
-              >
-                <div className="flex items-start gap-3">
-                  {announcement.priority === "urgent" ? (
-                    <AlertTriangle className="w-5 h-5 text-warning mt-0.5" />
-                  ) : (
-                    <Bell className="w-5 h-5 text-muted-foreground mt-0.5" />
-                  )}
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2">
-                      <h4 className="font-medium text-foreground">{announcement.title}</h4>
-                      {announcement.priority === "urgent" && (
-                        <span className="badge badge-warning text-xs">Urgent</span>
-                      )}
+            {adminAnnouncements.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-4">No announcements</p>
+            ) : (
+              adminAnnouncements.map((announcement) => (
+                <div
+                  key={announcement.id}
+                  className={`p-4 rounded-lg border ${
+                    announcement.priority === "urgent"
+                      ? "bg-warning/5 border-warning/30"
+                      : "bg-muted/30 border-border"
+                  }`}
+                >
+                  <div className="flex items-start gap-3">
+                    {announcement.priority === "urgent" ? (
+                      <AlertTriangle className="w-5 h-5 text-warning mt-0.5" />
+                    ) : (
+                      <Bell className="w-5 h-5 text-muted-foreground mt-0.5" />
+                    )}
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-medium text-foreground">{announcement.title}</h4>
+                        {announcement.priority === "urgent" && (
+                          <span className="badge badge-warning text-xs">Urgent</span>
+                        )}
+                      </div>
+                      <p className="text-sm text-muted-foreground mt-1">{announcement.message}</p>
+                      <p className="text-xs text-muted-foreground mt-2">{formatTimeAgo(announcement.time)}</p>
                     </div>
-                    <p className="text-sm text-muted-foreground mt-1">{announcement.message}</p>
-                    <p className="text-xs text-muted-foreground mt-2">{announcement.time}</p>
                   </div>
                 </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </div>
 

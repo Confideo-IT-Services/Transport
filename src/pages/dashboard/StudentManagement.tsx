@@ -64,6 +64,7 @@ interface Student {
   submittedData?: any;
   classId?: string;
   extra_fields?: Record<string, any>; // NEW: ID card extra fields
+  tcStatus?: 'none' | 'applied' | 'issued';
 }
 
 // Component to display student profile with only submitted fields
@@ -515,6 +516,19 @@ export default function StudentManagement() {
     }
   };
 
+  const handleUpdateTcStatus = async (studentId: string | number, tcStatus: 'none' | 'applied' | 'issued') => {
+    try {
+      await studentsApi.updateTcStatus(studentId, tcStatus);
+      toast.success(`TC status updated to ${tcStatus}`);
+      // Reload data
+      await loadData();
+    } catch (error: any) {
+      console.error('Error updating TC status:', error);
+      const errorMessage = error?.response?.data?.error || error?.message || "Failed to update TC status";
+      toast.error(errorMessage);
+    }
+  };
+
   const handleEditStudent = (student: Student) => {
     setEditingStudent({ ...student });
     setShowEditDialog(true);
@@ -838,6 +852,7 @@ export default function StudentManagement() {
                     <th className="text-left p-4 font-medium text-muted-foreground">Admission No</th>
                     <th className="text-left p-4 font-medium text-muted-foreground">Class</th>
                     <th className="text-left p-4 font-medium text-muted-foreground">Parent Contact</th>
+                    <th className="text-left p-4 font-medium text-muted-foreground">TC Status</th>
                     <th className="text-left p-4 font-medium text-muted-foreground">Actions</th>
                   </tr>
                 </thead>
@@ -862,6 +877,28 @@ export default function StudentManagement() {
                         </span>
                       </td>
                       <td className="p-4 text-muted-foreground">{student.parentPhone}</td>
+                      <td className="p-4">
+                        {user?.role === 'admin' ? (
+                          <Select
+                            value={student.tcStatus || 'none'}
+                            onValueChange={(value) => handleUpdateTcStatus(student.id, value as 'none' | 'applied' | 'issued')}
+                          >
+                            <SelectTrigger className="w-36">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="none">None</SelectItem>
+                              <SelectItem value="applied">TC Applied</SelectItem>
+                              <SelectItem value="issued">TC Issued</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <span className="text-sm text-muted-foreground">
+                            {student.tcStatus === 'applied' ? 'TC Applied' : 
+                             student.tcStatus === 'issued' ? 'TC Issued' : 'None'}
+                          </span>
+                        )}
+                      </td>
                       <td className="p-4">
                         <div className="flex gap-2">
                           <Button

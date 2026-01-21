@@ -91,6 +91,11 @@ export default function AcademicSetup() {
     endDate: "",
   });
 
+  // Promotion state
+  const [promoteStudents, setPromoteStudents] = useState(false);
+  const [isPromoting, setIsPromoting] = useState(false);
+  const [promotingYearId, setPromotingYearId] = useState<string | null>(null);
+
   // Class teacher assignment state
   const [selectedSectionForAssign, setSelectedSectionForAssign] = useState<{className: string, sectionName: string} | null>(null);
   const [selectedTeacherForAssign, setSelectedTeacherForAssign] = useState<string>("");
@@ -439,19 +444,47 @@ export default function AcademicSetup() {
 
     try {
       // Call API to create academic year
-      await academicYearsApi.create({
+      const result = await academicYearsApi.create({
         name: newAcademicYear.name.trim(),
         startDate: newAcademicYear.startDate,
         endDate: newAcademicYear.endDate,
       });
       
-      toast({
-        title: "Success",
-        description: "Academic year created successfully",
-      });
+      // If promotion is enabled, promote students
+      if (promoteStudents && result.yearId) {
+        setIsPromoting(true);
+        try {
+          const promotionResult = await academicYearsApi.promoteStudents(result.yearId);
+          
+          toast({
+            title: "Success",
+            description: `Academic year created successfully! ${promotionResult.promoted} students promoted to next class.${promotionResult.skipped > 0 ? ` ${promotionResult.skipped} students skipped.` : ''}`,
+          });
+
+          // Show errors if any
+          if (promotionResult.errors && promotionResult.errors.length > 0) {
+            console.warn('Promotion errors:', promotionResult.errors);
+          }
+        } catch (promoError: any) {
+          toast({
+            title: "Warning",
+            description: "Academic year created but student promotion failed. You can promote manually later.",
+            variant: "destructive",
+          });
+          console.error('Promotion error:', promoError);
+        } finally {
+          setIsPromoting(false);
+        }
+      } else {
+        toast({
+          title: "Success",
+          description: "Academic year created successfully",
+        });
+      }
 
       // Reset form and close dialog
       setNewAcademicYear({ name: "", startDate: "", endDate: "" });
+      setPromoteStudents(false);
       setIsAddAcademicYearOpen(false);
 
       // Reload academic years to show the new year
@@ -463,6 +496,43 @@ export default function AcademicSetup() {
         description: error?.message || "Failed to create academic year. Please try again.",
         variant: "destructive",
       });
+    }
+  };
+
+  // Handle manual student promotion
+  const handlePromoteStudents = async (yearId: string) => {
+    if (!confirm('Are you sure you want to promote all eligible students to the next class? Students with TC status will be excluded.')) {
+      return;
+    }
+
+    setPromotingYearId(yearId);
+    try {
+      const result = await academicYearsApi.promoteStudents(yearId);
+      
+      toast({
+        title: "Success",
+        description: `${result.promoted} students promoted successfully.${result.skipped > 0 ? ` ${result.skipped} students skipped.` : ''}`,
+      });
+
+      if (result.errors && result.errors.length > 0) {
+        console.warn('Promotion errors:', result.errors);
+        toast({
+          title: "Some students were skipped",
+          description: `${result.errors.length} students could not be promoted. Check console for details.`,
+          variant: "destructive",
+        });
+      }
+
+      // Reload data
+      await loadAcademicYears();
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to promote students",
+        variant: "destructive",
+      });
+    } finally {
+      setPromotingYearId(null);
     }
   };
 
@@ -670,10 +740,27 @@ export default function AcademicSetup() {
                           onChange={(e) => setNewAcademicYear(prev => ({ ...prev, endDate: e.target.value }))}
                         />
                       </div>
+                      <div className="flex items-center space-x-2">
+                        <input
+                          type="checkbox"
+                          id="promote-students"
+                          checked={promoteStudents}
+                          onChange={(e) => setPromoteStudents(e.target.checked)}
+                          className="rounded border-gray-300"
+                        />
+                        <Label htmlFor="promote-students" className="text-sm font-medium cursor-pointer">
+                          Automatically promote students to next class
+                        </Label>
+                      </div>
+                      {isPromoting && (
+                        <div className="text-sm text-blue-600">
+                          Promoting students...
+                        </div>
+                      )}
                       <Button 
                         className="w-full" 
                         onClick={handleCreateAcademicYear}
-                        disabled={!newAcademicYear.name.trim() || !newAcademicYear.startDate || !newAcademicYear.endDate}
+                        disabled={!newAcademicYear.name.trim() || !newAcademicYear.startDate || !newAcademicYear.endDate || isPromoting}
                       >
                         Create Academic Year
                       </Button>
@@ -696,8 +783,19 @@ export default function AcademicSetup() {
                       <Calendar className="w-4 h-4" />
                       <span>{year.startDate} - {year.endDate}</span>
                     </div>
+                    {isAdmin && year.status === "active" && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handlePromoteStudents(year.id)}
+                        disabled={promotingYearId === year.id}
+                        className="w-full mt-4"
+                      >
+                        {promotingYearId === year.id ? 'Promoting...' : 'Promote Students'}
+                      </Button>
+                    )}
                     {isAdmin && (
-                      <Button variant="outline" size="sm" className="w-full mt-4">
+                      <Button variant="outline" size="sm" className="w-full mt-2">
                         <Edit className="w-4 h-4 mr-2" />
                         Edit
                       </Button>

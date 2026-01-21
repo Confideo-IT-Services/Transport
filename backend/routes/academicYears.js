@@ -232,6 +232,191 @@ router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
   }
 });
 
+// Promote students to next class for new academic year
+router.post('/:id/promote-students', authenticateToken, requireAdmin, async (req, res) => {
+  // Start transaction
+  await db.query('START TRANSACTION');
+  
+  try {
+    const { id: newAcademicYearId } = req.params;
+    const schoolId = req.user.schoolId;
+    
+    if (!schoolId) {
+      await db.query('ROLLBACK');
+      return res.status(400).json({ error: 'School ID not found' });
+    }
+
+    // Get the new academic year
+    const [newYear] = await db.query(
+      'SELECT * FROM academic_years WHERE id = ? AND school_id = ?',
+      [newAcademicYearId, schoolId]
+    );
+
+    if (newYear.length === 0) {
+      await db.query('ROLLBACK');
+      return res.status(404).json({ error: 'Academic year not found' });
+    }
+
+    // Get the previous completed academic year
+    const [previousYear] = await db.query(
+      `SELECT * FROM academic_years 
+       WHERE school_id = ? AND status = 'completed' 
+       ORDER BY end_date DESC LIMIT 1`,
+      [schoolId]
+    );
+
+    if (previousYear.length === 0) {
+      await db.query('ROLLBACK');
+      return res.status(400).json({ 
+        error: 'No previous academic year found. Cannot promote students.' 
+      });
+    }
+
+    // Get all approved students from previous year (excluding TC students)
+    const [students] = await db.query(
+      `SELECT s.*, c.name as current_class_name, c.section as current_section
+       FROM students s
+       JOIN classes c ON s.class_id = c.id
+       WHERE s.school_id = ? 
+       AND s.status = 'approved'
+       AND (s.tc_status IS NULL OR s.tc_status = 'none')
+       ORDER BY c.name, c.section, s.roll_no`,
+      [schoolId]
+    );
+
+    if (students.length === 0) {
+      await db.query('COMMIT');
+      return res.json({ 
+        success: true, 
+        message: 'No students to promote',
+        promoted: 0,
+        skipped: 0,
+        total: 0
+      });
+    }
+
+    // Get all classes for the school to build mapping
+    const [allClasses] = await db.query(
+      'SELECT * FROM classes WHERE school_id = ? ORDER BY name, section',
+      [schoolId]
+    );
+
+    // Helper function to find next class
+    const findNextClass = (currentClassName, currentSection) => {
+      // Extract class number (e.g., "Class 1" -> 1, "1" -> 1, "Grade 5" -> 5)
+      const classMatch = currentClassName.match(/\d+/);
+      if (!classMatch) return null;
+      
+      const currentClassNum = parseInt(classMatch[0]);
+      const nextClassNum = currentClassNum + 1;
+      
+      // Build next class name patterns to search
+      const patterns = [
+        `Class ${nextClassNum}`,
+        `${nextClassNum}`,
+        `Grade ${nextClassNum}`,
+        `Std ${nextClassNum}`,
+        `Standard ${nextClassNum}`
+      ];
+
+      // Try to find matching class with same section first
+      for (const pattern of patterns) {
+        const matchingClass = allClasses.find(c => {
+          const nameMatch = c.name.toLowerCase().includes(pattern.toLowerCase());
+          const sectionMatch = (c.section === currentSection) || 
+                              (!c.section && !currentSection);
+          return nameMatch && sectionMatch;
+        });
+        if (matchingClass) return matchingClass;
+      }
+
+      // If no section match, try without section
+      for (const pattern of patterns) {
+        const matchingClass = allClasses.find(c => 
+          c.name.toLowerCase().includes(pattern.toLowerCase())
+        );
+        if (matchingClass) return matchingClass;
+      }
+
+      return null;
+    };
+
+    let promoted = 0;
+    let skipped = 0;
+    const errors = [];
+
+    // Process each student
+    for (const student of students) {
+      try {
+        const nextClass = findNextClass(
+          student.current_class_name, 
+          student.current_section
+        );
+
+        if (!nextClass) {
+          skipped++;
+          errors.push({
+            studentId: student.id,
+            studentName: student.name,
+            currentClass: `${student.current_class_name} ${student.current_section || ''}`.trim(),
+            reason: 'Next class not found'
+          });
+          continue;
+        }
+
+        // Verify next class exists in database
+        const [classCheck] = await db.query(
+          'SELECT id FROM classes WHERE id = ? AND school_id = ?',
+          [nextClass.id, schoolId]
+        );
+
+        if (classCheck.length === 0) {
+          skipped++;
+          errors.push({
+            studentId: student.id,
+            studentName: student.name,
+            currentClass: `${student.current_class_name} ${student.current_section || ''}`.trim(),
+            reason: 'Next class not found in database'
+          });
+          continue;
+        }
+
+        // Update student's class
+        await db.query(
+          'UPDATE students SET class_id = ?, updated_at = NOW() WHERE id = ?',
+          [nextClass.id, student.id]
+        );
+
+        promoted++;
+      } catch (error) {
+        skipped++;
+        errors.push({
+          studentId: student.id,
+          studentName: student.name,
+          error: error.message
+        });
+      }
+    }
+
+    await db.query('COMMIT');
+    
+    console.log(`✅ Student promotion completed: ${promoted} promoted, ${skipped} skipped`);
+
+    res.json({
+      success: true,
+      promoted,
+      skipped,
+      total: students.length,
+      errors: errors.length > 0 ? errors : undefined
+    });
+
+  } catch (error) {
+    await db.query('ROLLBACK');
+    console.error('Promote students error:', error);
+    res.status(500).json({ error: 'Failed to promote students' });
+  }
+});
+
 module.exports = router;
 
 

@@ -305,6 +305,24 @@ export const academicYearsApi = {
       method: 'DELETE',
     });
   },
+
+  promoteStudents: async (yearId: string): Promise<{
+    success: boolean;
+    promoted: number;
+    skipped: number;
+    total: number;
+    errors?: Array<{
+      studentId: string;
+      studentName: string;
+      currentClass?: string;
+      reason?: string;
+      error?: string;
+    }>;
+  }> => {
+    return apiRequest(`/academic-years/${yearId}/promote-students`, {
+      method: 'POST',
+    });
+  },
 };
 
 // ============ STUDENTS API ============
@@ -392,6 +410,16 @@ export const studentsApi = {
     return apiRequest(`/students/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data),
+    });
+  },
+
+  updateTcStatus: async (
+    studentId: string | number,
+    tcStatus: 'none' | 'applied' | 'issued'
+  ): Promise<{ success: boolean }> => {
+    return apiRequest(`/students/${studentId}/tc-status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ tcStatus }),
     });
   },
 };
@@ -663,6 +691,23 @@ export const homeworkApi = {
     return apiRequest(`/homework/${homeworkId}/completions/bulk`, {
       method: 'POST',
       body: JSON.stringify({ completions }),
+    });
+  },
+
+  // Send homework to all parents for a specific date using templates
+  sendToAllParents: async (date: string): Promise<{
+    success: boolean;
+    message: string;
+    results: {
+      total: number;
+      successful: number;
+      failed: number;
+      errors: Array<{ student: string; phone?: string; error: string; errorCode?: number }>;
+    };
+  }> => {
+    return apiRequest('/homework/send-to-all', {
+      method: 'POST',
+      body: JSON.stringify({ date }),
     });
   },
 };
@@ -1006,6 +1051,84 @@ export const feesApi = {
   },
 };
 
+// ============ NOTIFICATIONS API ============
+export interface Notification {
+  id: string;
+  title: string;
+  message: string;
+  sender: string;
+  priority: 'normal' | 'urgent';
+  time: string;
+  read: boolean;
+  readAt?: string;
+}
+
+export interface SentNotification {
+  id: string;
+  title: string;
+  recipients: string;
+  time: string;
+  status: 'draft' | 'sent' | 'failed';
+}
+
+export interface NotificationTemplate {
+  id: string;
+  name: string;
+  title: string;
+  message: string;
+}
+
+export const notificationsApi = {
+  // Get inbox notifications
+  getInbox: async (): Promise<Notification[]> => {
+    return apiRequest<Notification[]>('/notifications');
+  },
+
+  // Get sent notifications
+  getSent: async (): Promise<SentNotification[]> => {
+    return apiRequest<SentNotification[]>('/notifications/sent');
+  },
+
+  // Get templates
+  getTemplates: async (): Promise<NotificationTemplate[]> => {
+    return apiRequest<NotificationTemplate[]>('/notifications/templates');
+  },
+
+  // Create template
+  createTemplate: async (data: {
+    name: string;
+    title: string;
+    message: string;
+  }): Promise<{ success: boolean; id: string }> => {
+    return apiRequest('/notifications/templates', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  // Send notification
+  send: async (data: {
+    title: string;
+    message: string;
+    targetType: 'all_classes' | 'selected_classes' | 'all_teachers' | 'all_parents' | 'specific_students';
+    targetClasses?: string[];
+    targetStudents?: string[];
+    priority?: 'normal' | 'urgent';
+  }): Promise<{ success: boolean; message: string; notificationId: string; sentCount: number }> => {
+    return apiRequest('/notifications', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  // Mark as read
+  markAsRead: async (notificationId: string): Promise<{ success: boolean }> => {
+    return apiRequest(`/notifications/${notificationId}/read`, {
+      method: 'PUT',
+    });
+  },
+};
+
 // ============ ID CARD TEMPLATES API ============
 export interface IDCardTemplate {
   id: string;
@@ -1145,27 +1268,5 @@ export const idCardGenerationApi = {
     template: IDCardTemplate;
   }> => {
     return apiRequest(`/id-cards/preview/${studentId}/${templateId}`);
-  },
-};
-
-// ============ NOTIFICATIONS API ============
-export const notificationsApi = {
-  // Send notification
-  send: async (data: {
-    title: string;
-    message: string;
-    targetType: 'all_classes' | 'selected_classes' | 'all_teachers' | 'all_parents';
-    classIds?: string[];
-    priority?: 'normal' | 'urgent';
-  }): Promise<{ success: boolean; id: string; sentCount: number; message: string }> => {
-    return apiRequest('/notifications', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-  },
-
-  // Get all notifications
-  getAll: async (): Promise<any[]> => {
-    return apiRequest<any[]>('/notifications');
   },
 };
