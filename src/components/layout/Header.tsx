@@ -9,6 +9,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { useNavigate, useLocation } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { notificationsApi } from "@/lib/api";
 
 interface HeaderProps {
   userName: string;
@@ -17,6 +21,49 @@ interface HeaderProps {
 }
 
 export function Header({ userName, userRole, onLogout }: HeaderProps) {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  // Fetch unread notification count
+  useEffect(() => {
+    const fetchUnreadCount = async () => {
+      try {
+        const notifications = await notificationsApi.getInbox();
+        const unread = notifications.filter(n => !n.read).length;
+        setUnreadCount(unread);
+      } catch (error) {
+        console.error('Error fetching unread count:', error);
+      }
+    };
+
+    fetchUnreadCount();
+    
+    // Listen for notification read events
+    const handleNotificationRead = () => {
+      fetchUnreadCount();
+    };
+    
+    window.addEventListener('notification-read', handleNotificationRead);
+    
+    // Refresh count when navigating to/from notifications page
+    const interval = setInterval(fetchUnreadCount, 5000); // Refresh every 5 seconds
+    
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('notification-read', handleNotificationRead);
+    };
+  }, [location.pathname]);
+
+  const handleNotificationClick = () => {
+    // Redirect based on role
+    if (userRole === 'admin') {
+      navigate('/dashboard/notifications');
+    } else if (userRole === 'teacher') {
+      navigate('/dashboard/notifications');
+    }
+  };
+
   return (
     <header className="h-16 bg-card border-b border-border px-6 flex items-center justify-between">
       {/* Search */}
@@ -31,9 +78,21 @@ export function Header({ userName, userRole, onLogout }: HeaderProps) {
       {/* Right section */}
       <div className="flex items-center gap-4">
         {/* Notifications */}
-        <Button variant="ghost" size="icon" className="relative">
+        <Button 
+          variant="ghost" 
+          size="icon" 
+          className="relative"
+          onClick={handleNotificationClick}
+        >
           <Bell className="w-5 h-5 text-muted-foreground" />
-          <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-destructive rounded-full" />
+          {unreadCount > 0 && (
+            <Badge 
+              variant="destructive" 
+              className="absolute -top-1 -right-1 h-5 w-5 p-0 flex items-center justify-center text-xs"
+            >
+              {unreadCount > 9 ? '9+' : unreadCount}
+            </Badge>
+          )}
         </Button>
 
         {/* Profile dropdown */}

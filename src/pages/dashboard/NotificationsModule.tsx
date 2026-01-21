@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { UnifiedLayout } from "@/components/layout/UnifiedLayout";
 import { useAuth } from "@/contexts/AuthContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -21,82 +21,68 @@ import {
   CheckCircle2,
   Clock,
   AlertTriangle,
-  Megaphone
+  Megaphone,
+  Loader2
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-
-const notifications = [
-  { 
-    id: 1, 
-    title: "Staff Meeting Tomorrow", 
-    message: "All teachers are requested to attend the staff meeting at 3 PM in the conference room.",
-    sender: "School Admin",
-    time: "2 hours ago",
-    priority: "normal",
-    read: false
-  },
-  { 
-    id: 2, 
-    title: "Annual Day Preparations", 
-    message: "Please submit the list of students participating in Annual Day events by Friday.",
-    sender: "School Admin",
-    time: "1 day ago",
-    priority: "urgent",
-    read: true
-  },
-  { 
-    id: 3, 
-    title: "Holiday Notice", 
-    message: "School will remain closed on 26th January for Republic Day celebrations.",
-    sender: "School Admin",
-    time: "2 days ago",
-    priority: "normal",
-    read: true
-  },
-];
-
-const sentNotifications = [
-  { 
-    id: 1, 
-    title: "Homework Reminder - Class 5A", 
-    recipients: "42 parents",
-    time: "1 hour ago",
-    status: "delivered"
-  },
-  { 
-    id: 2, 
-    title: "Absence Notification - Arjun Kumar", 
-    recipients: "1 parent",
-    time: "3 hours ago",
-    status: "delivered"
-  },
-  { 
-    id: 3, 
-    title: "PTM Reminder", 
-    recipients: "42 parents",
-    time: "1 day ago",
-    status: "delivered"
-  },
-];
-
-const quickTemplates = [
-  { id: "absence", label: "Absence Notification", title: "Student Absence Notification", message: "Dear Parent, this is to inform you that your child was marked absent today. Please contact the school if you have any queries." },
-  { id: "leave", label: "Leave Approved", title: "Leave Application Approved", message: "Dear Parent, your child's leave application has been approved. Please ensure regular attendance after the leave period." },
-  { id: "homework", label: "Homework Reminder", title: "Homework Reminder", message: "Dear Parent, this is a reminder that your child has pending homework assignments. Please ensure timely completion." },
-  { id: "fee", label: "Fee Reminder", title: "Fee Payment Reminder", message: "Dear Parent, this is a gentle reminder that your child's fee payment is pending. Please clear the dues at the earliest." },
-];
+import { notificationsApi, classesApi, Notification, SentNotification, NotificationTemplate } from "@/lib/api";
 
 export default function NotificationsModule() {
   const { user } = useAuth();
   const { toast } = useToast();
   const isAdmin = user?.role === "admin";
+  
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [sentNotifications, setSentNotifications] = useState<SentNotification[]>([]);
+  const [templates, setTemplates] = useState<NotificationTemplate[]>([]);
+  const [classes, setClasses] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
+  
   const [notificationTitle, setNotificationTitle] = useState("");
   const [notificationMessage, setNotificationMessage] = useState("");
   const [recipient, setRecipient] = useState("");
+  const [selectedClassIds, setSelectedClassIds] = useState<string[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState("");
+  const [priority, setPriority] = useState<"normal" | "urgent">("normal");
+
+  // Fetch data on mount
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  const fetchData = async () => {
+    try {
+      setLoading(true);
+      const [inboxData, sentData, classesData] = await Promise.all([
+        notificationsApi.getInbox().catch(() => []),
+        notificationsApi.getSent().catch(() => []),
+        classesApi.getAll().catch(() => [])
+      ]);
+
+      setNotifications(inboxData);
+      setSentNotifications(sentData);
+      setClasses(classesData);
+
+      // Fetch templates if admin
+      if (isAdmin) {
+        const templatesData = await notificationsApi.getTemplates().catch(() => []);
+        setTemplates(templatesData);
+      }
+    } catch (error) {
+      console.error('Error fetching notifications:', error);
+      toast({
+        title: "Error",
+        description: "Failed to load notifications",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleTemplateSelect = (templateId: string) => {
-    const template = quickTemplates.find(t => t.id === templateId);
+    const template = templates.find(t => t.id === templateId);
     if (template) {
       setNotificationTitle(template.title);
       setNotificationMessage(template.message);
@@ -104,7 +90,19 @@ export default function NotificationsModule() {
     }
   };
 
-  const handleSendNotification = () => {
+  const formatTimeAgo = (dateString: string) => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
+    
+    if (diffInSeconds < 60) return "Just now";
+    if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)} minutes ago`;
+    if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)} hours ago`;
+    if (diffInSeconds < 604800) return `${Math.floor(diffInSeconds / 86400)} days ago`;
+    return date.toLocaleDateString();
+  };
+
+  const handleSendNotification = async () => {
     if (!notificationTitle || !notificationMessage || !recipient) {
       toast({
         title: "Error",
@@ -113,17 +111,83 @@ export default function NotificationsModule() {
       });
       return;
     }
-    
-    toast({
-      title: "Notification Sent",
-      description: `Your notification has been sent to ${recipient}.`,
-    });
-    
-    setNotificationTitle("");
-    setNotificationMessage("");
-    setRecipient("");
-    setSelectedTemplate("");
+
+    try {
+      setSending(true);
+
+      // Determine target type and classes
+      let targetType: 'all_classes' | 'selected_classes' | 'all_teachers' | 'all_parents' | 'specific_students';
+      let targetClasses: string[] | undefined;
+
+      if (recipient === 'all-teachers') {
+        targetType = 'all_teachers';
+      } else if (recipient === 'all-parents') {
+        targetType = 'all_classes';
+      } else if (recipient.startsWith('class-')) {
+        targetType = 'selected_classes';
+        const classId = recipient.replace('class-', '');
+        targetClasses = [classId];
+      } else {
+        targetType = 'all_classes';
+      }
+
+      const result = await notificationsApi.send({
+        title: notificationTitle,
+        message: notificationMessage,
+        targetType,
+        targetClasses,
+        priority: isAdmin ? priority : 'normal'
+      });
+
+      toast({
+        title: "Success",
+        description: result.message,
+      });
+
+      // Reset form
+      setNotificationTitle("");
+      setNotificationMessage("");
+      setRecipient("");
+      setSelectedClassIds([]);
+      setSelectedTemplate("");
+      
+      // Refresh data
+      await fetchData();
+    } catch (error: any) {
+      console.error('Error sending notification:', error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to send notification",
+        variant: "destructive",
+      });
+    } finally {
+      setSending(false);
+    }
   };
+
+  const handleMarkAsRead = async (notificationId: string) => {
+    try {
+      await notificationsApi.markAsRead(notificationId);
+      // Update local state
+      setNotifications(prev => 
+        prev.map(n => n.id === notificationId ? { ...n, read: true } : n)
+      );
+      // Dispatch custom event to update header badge
+      window.dispatchEvent(new CustomEvent('notification-read'));
+    } catch (error) {
+      console.error('Error marking as read:', error);
+    }
+  };
+
+  if (loading) {
+    return (
+      <UnifiedLayout>
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        </div>
+      </UnifiedLayout>
+    );
+  }
 
   return (
     <UnifiedLayout>
@@ -161,34 +225,43 @@ export default function NotificationsModule() {
                       <>
                         <SelectItem value="all-teachers">All Teachers</SelectItem>
                         <SelectItem value="all-parents">All Parents</SelectItem>
-                        <SelectItem value="class-5a">Class 5A Parents</SelectItem>
-                        <SelectItem value="class-5b">Class 5B Parents</SelectItem>
+                        {classes.map((cls) => (
+                          <SelectItem key={cls.id} value={`class-${cls.id}`}>
+                            {cls.name} {cls.section ? `- ${cls.section}` : ''} Parents
+                          </SelectItem>
+                        ))}
                       </>
                     ) : (
                       <>
                         <SelectItem value="all-parents">All Class Parents</SelectItem>
-                        <SelectItem value="specific">Specific Student's Parents</SelectItem>
+                        {classes.map((cls) => (
+                          <SelectItem key={cls.id} value={`class-${cls.id}`}>
+                            {cls.name} {cls.section ? `- ${cls.section}` : ''} Parents
+                          </SelectItem>
+                        ))}
                       </>
                     )}
                   </SelectContent>
                 </Select>
               </div>
 
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Quick Templates</label>
-                <Select value={selectedTemplate} onValueChange={handleTemplateSelect}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select a template (optional)" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {quickTemplates.map((template) => (
-                      <SelectItem key={template.id} value={template.id}>
-                        {template.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+              {isAdmin && templates.length > 0 && (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Quick Templates</label>
+                  <Select value={selectedTemplate} onValueChange={handleTemplateSelect}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select a template (optional)" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {templates.map((template) => (
+                        <SelectItem key={template.id} value={template.id}>
+                          {template.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
 
               <div className="space-y-2">
                 <label className="text-sm font-medium">Title</label>
@@ -212,7 +285,7 @@ export default function NotificationsModule() {
               {isAdmin && (
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Priority</label>
-                  <Select defaultValue="normal">
+                  <Select value={priority} onValueChange={(value: "normal" | "urgent") => setPriority(value)}>
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
@@ -224,9 +297,22 @@ export default function NotificationsModule() {
                 </div>
               )}
 
-              <Button className="w-full" onClick={handleSendNotification}>
-                <Send className="w-4 h-4 mr-2" />
-                Send Notification
+              <Button 
+                className="w-full" 
+                onClick={handleSendNotification}
+                disabled={sending}
+              >
+                {sending ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Sending...
+                  </>
+                ) : (
+                  <>
+                    <Send className="w-4 h-4 mr-2" />
+                    Send Notification
+                  </>
+                )}
               </Button>
             </CardContent>
           </Card>
@@ -254,7 +340,7 @@ export default function NotificationsModule() {
                   </div>
                   <div>
                     <p className="text-2xl font-bold">{sentNotifications.length}</p>
-                    <p className="text-sm text-muted-foreground">Sent Today</p>
+                    <p className="text-sm text-muted-foreground">Sent</p>
                   </div>
                 </div>
               </CardContent>
@@ -277,75 +363,98 @@ export default function NotificationsModule() {
           </TabsList>
 
           <TabsContent value="inbox" className="space-y-4">
-            {notifications.map((notification) => (
-              <Card key={notification.id} className={!notification.read ? "border-primary/50" : ""}>
-                <CardContent className="py-4">
-                  <div className="flex items-start gap-4">
-                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                      notification.priority === "urgent" 
-                        ? "bg-destructive/10" 
-                        : "bg-primary/10"
-                    }`}>
-                      {notification.priority === "urgent" ? (
-                        <AlertTriangle className="w-5 h-5 text-destructive" />
-                      ) : (
-                        <Megaphone className="w-5 h-5 text-primary" />
-                      )}
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2">
-                        <h3 className={`font-semibold ${!notification.read ? "text-foreground" : "text-muted-foreground"}`}>
-                          {notification.title}
-                        </h3>
-                        {!notification.read && (
-                          <Badge variant="default" className="text-xs">New</Badge>
-                        )}
-                        {notification.priority === "urgent" && (
-                          <Badge variant="destructive" className="text-xs">Urgent</Badge>
-                        )}
-                      </div>
-                      <p className="text-sm text-muted-foreground mt-1">{notification.message}</p>
-                      <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
-                        <span>From: {notification.sender}</span>
-                        <span>{notification.time}</span>
-                      </div>
-                    </div>
-                  </div>
+            {notifications.length === 0 ? (
+              <Card>
+                <CardContent className="py-8 text-center text-muted-foreground">
+                  No notifications
                 </CardContent>
               </Card>
-            ))}
-          </TabsContent>
-
-          <TabsContent value="sent" className="space-y-4">
-            {sentNotifications.map((notification) => (
-              <Card key={notification.id}>
-                <CardContent className="py-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                      <div className="w-10 h-10 rounded-lg bg-secondary/10 flex items-center justify-center">
-                        <CheckCircle2 className="w-5 h-5 text-secondary" />
+            ) : (
+              notifications.map((notification) => (
+                <Card 
+                  key={notification.id} 
+                  className={!notification.read ? "border-primary/50 cursor-pointer" : "cursor-pointer"}
+                  onClick={() => !notification.read && handleMarkAsRead(notification.id)}
+                >
+                  <CardContent className="py-4">
+                    <div className="flex items-start gap-4">
+                      <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                        notification.priority === "urgent" 
+                          ? "bg-destructive/10" 
+                          : "bg-primary/10"
+                      }`}>
+                        {notification.priority === "urgent" ? (
+                          <AlertTriangle className="w-5 h-5 text-destructive" />
+                        ) : (
+                          <Megaphone className="w-5 h-5 text-primary" />
+                        )}
                       </div>
-                      <div>
-                        <h3 className="font-semibold">{notification.title}</h3>
-                        <div className="flex items-center gap-4 mt-1 text-xs text-muted-foreground">
-                          <span className="flex items-center gap-1">
-                            <Users className="w-3 h-3" />
-                            {notification.recipients}
-                          </span>
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <h3 className={`font-semibold ${!notification.read ? "text-foreground" : "text-muted-foreground"}`}>
+                            {notification.title}
+                          </h3>
+                          {!notification.read && (
+                            <Badge variant="default" className="text-xs">New</Badge>
+                          )}
+                          {notification.priority === "urgent" && (
+                            <Badge variant="destructive" className="text-xs">Urgent</Badge>
+                          )}
+                        </div>
+                        <p className="text-sm text-muted-foreground mt-1">{notification.message}</p>
+                        <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
+                          <span>From: {notification.sender}</span>
                           <span className="flex items-center gap-1">
                             <Clock className="w-3 h-3" />
-                            {notification.time}
+                            {formatTimeAgo(notification.time)}
                           </span>
                         </div>
                       </div>
                     </div>
-                    <Badge variant="secondary" className="bg-secondary/10 text-secondary">
-                      {notification.status}
-                    </Badge>
-                  </div>
+                  </CardContent>
+                </Card>
+              ))
+            )}
+          </TabsContent>
+
+          <TabsContent value="sent" className="space-y-4">
+            {sentNotifications.length === 0 ? (
+              <Card>
+                <CardContent className="py-8 text-center text-muted-foreground">
+                  No sent notifications
                 </CardContent>
               </Card>
-            ))}
+            ) : (
+              sentNotifications.map((notification) => (
+                <Card key={notification.id}>
+                  <CardContent className="py-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-4">
+                        <div className="w-10 h-10 rounded-lg bg-secondary/10 flex items-center justify-center">
+                          <CheckCircle2 className="w-5 h-5 text-secondary" />
+                        </div>
+                        <div>
+                          <h3 className="font-semibold">{notification.title}</h3>
+                          <div className="flex items-center gap-4 mt-1 text-xs text-muted-foreground">
+                            <span className="flex items-center gap-1">
+                              <Users className="w-3 h-3" />
+                              {notification.recipients}
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <Clock className="w-3 h-3" />
+                              {formatTimeAgo(notification.time)}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                      <Badge variant="secondary" className="bg-secondary/10 text-secondary">
+                        {notification.status}
+                      </Badge>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))
+            )}
           </TabsContent>
         </Tabs>
       </div>

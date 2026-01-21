@@ -2,9 +2,49 @@ import { Bell, Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/contexts/AuthContext";
 import { Badge } from "@/components/ui/badge";
+import { useNavigate, useLocation } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { notificationsApi } from "@/lib/api";
 
 export function UnifiedHeader() {
   const { user } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  // Fetch unread notification count
+  useEffect(() => {
+    const fetchUnreadCount = async () => {
+      try {
+        const notifications = await notificationsApi.getInbox();
+        const unread = notifications.filter(n => !n.read).length;
+        setUnreadCount(unread);
+      } catch (error) {
+        console.error('Error fetching unread count:', error);
+      }
+    };
+
+    fetchUnreadCount();
+    
+    // Listen for notification read events
+    const handleNotificationRead = () => {
+      fetchUnreadCount();
+    };
+    
+    window.addEventListener('notification-read', handleNotificationRead);
+    
+    // Refresh count when navigating to/from notifications page
+    const interval = setInterval(fetchUnreadCount, 5000); // Refresh every 5 seconds
+    
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('notification-read', handleNotificationRead);
+    };
+  }, [location.pathname]);
+
+  const handleNotificationClick = () => {
+    navigate('/dashboard/notifications');
+  };
 
   return (
     <header className="sticky top-0 z-30 h-16 bg-card border-b border-border flex items-center justify-between px-6">
@@ -20,9 +60,19 @@ export function UnifiedHeader() {
       {/* Right side */}
       <div className="flex items-center gap-4">
         {/* Notifications */}
-        <button className="relative p-2 rounded-lg hover:bg-muted transition-colors">
+        <button 
+          onClick={handleNotificationClick}
+          className="relative p-2 rounded-lg hover:bg-muted transition-colors"
+        >
           <Bell className="w-5 h-5 text-muted-foreground" />
-          <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-destructive rounded-full" />
+          {unreadCount > 0 && (
+            <Badge 
+              variant="destructive" 
+              className="absolute -top-1 -right-1 h-5 w-5 p-0 flex items-center justify-center text-xs"
+            >
+              {unreadCount > 9 ? '9+' : unreadCount}
+            </Badge>
+          )}
         </button>
 
         {/* Role Badge */}

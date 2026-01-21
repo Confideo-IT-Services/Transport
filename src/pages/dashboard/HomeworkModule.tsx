@@ -585,10 +585,87 @@ export default function HomeworkModule() {
 
   const filteredHomework = homework.filter(h => {
     if (!filterDate) return h.status !== "draft";
-    return h.status !== "draft" && h.createdAt === filterDate;
+    // Normalize dates for comparison (handle both YYYY-MM-DD and full ISO strings)
+    const hwDate = h.createdAt 
+      ? (h.createdAt.includes('T') ? h.createdAt.split('T')[0] : h.createdAt)
+      : '';
+    const filterDateNormalized = filterDate.includes('T') ? filterDate.split('T')[0] : filterDate;
+    return h.status !== "draft" && hwDate === filterDateNormalized;
   });
 
   const drafts = homework.filter(h => h.status === "draft");
+
+  // Helper function to group homework by creation date
+  const groupHomeworkByDate = (homeworkList: HomeworkItem[]) => {
+    const grouped: Record<string, HomeworkItem[]> = {};
+    
+    homeworkList.forEach(hw => {
+      // Extract date part (YYYY-MM-DD) from createdAt
+      // Handle both timestamp strings and date-only strings
+      const dateKey = hw.createdAt 
+        ? (hw.createdAt.includes('T') ? hw.createdAt.split('T')[0] : hw.createdAt)
+        : new Date().toISOString().split('T')[0];
+      
+      if (!grouped[dateKey]) {
+        grouped[dateKey] = [];
+      }
+      grouped[dateKey].push(hw);
+    });
+    
+    // Sort dates in descending order (newest first)
+    return Object.entries(grouped).sort((a, b) => 
+      new Date(b[0]).getTime() - new Date(a[0]).getTime()
+    );
+  };
+
+  // Function to send all homeworks for a specific date to all parents
+  const handleSendAllForDate = async (dateKey: string, homeworksForDate: HomeworkItem[]) => {
+    if (homeworksForDate.length === 0) {
+      toast.error("No homework found for this date");
+      return;
+    }
+
+    // Confirm before sending
+    if (!confirm(`Are you sure you want to send homework notifications to ALL parents for ${new Date(dateKey).toLocaleDateString()}?`)) {
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      
+      // Call backend API to send WhatsApp template messages
+      const result = await homeworkApi.sendToAllParents(dateKey);
+      
+      if (result.success) {
+        toast.success(
+          `✅ ${result.results.successful} out of ${result.results.total} parents received the message!`
+        );
+        
+        // Mark all homeworks as sent
+        setHomework(homework.map(h => {
+          const isInDateGroup = homeworksForDate.some(hw => hw.id === h.id);
+          return isInDateGroup 
+            ? { ...h, sentToParents: true, status: h.status === "draft" ? "active" : h.status }
+            : h;
+        }));
+        
+        // Show errors if any
+        if (result.results.failed > 0) {
+          console.warn('Some messages failed:', result.results.errors);
+          toast.warning(
+            `⚠️ ${result.results.failed} messages failed. Check console for details.`
+          );
+        }
+      } else {
+        toast.error("Failed to send messages. Please try again.");
+      }
+    } catch (error: any) {
+      console.error('Error sending messages:', error);
+      toast.error(error?.message || "Failed to send WhatsApp messages");
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   // Calculate student frequency
   // Get all unique students from all homework items
@@ -825,74 +902,112 @@ export default function HomeworkModule() {
               )}
             </div>
 
-            {/* Homework List */}
-            <div className="bg-card rounded-xl border border-border overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead className="bg-muted/50">
-                    <tr>
-                      <th className="text-left p-4 font-medium text-muted-foreground">Subjects</th>
-                      <th className="text-left p-4 font-medium text-muted-foreground">Due Date</th>
-                      <th className="text-left p-4 font-medium text-muted-foreground">Completion</th>
-                      <th className="text-left p-4 font-medium text-muted-foreground">Status</th>
-                      <th className="text-left p-4 font-medium text-muted-foreground">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {filteredHomework.map(hw => {
-                      const completedCount = hw.students.filter(s => s.completed).length;
-                      const totalCount = hw.students.length;
-                      return (
-                        <tr key={hw.id} className="hover:bg-muted/30">
-                          <td className="p-4">
-                            <div className="flex flex-wrap gap-1">
-                              {hw.subjects.map(s => (
-                                <span key={s.subjectId} className="px-2 py-0.5 bg-primary/10 text-primary rounded text-xs">
-                                  {s.subjectName}
-                                </span>
-                              ))}
-                            </div>
-                          </td>
-                          <td className="p-4">
-                            <div className="flex items-center gap-2 text-muted-foreground">
-                              <Clock className="w-4 h-4" />
-                              {new Date(hw.dueDate).toLocaleDateString()}
-                            </div>
-                          </td>
-                          <td className="p-4">
-                            <div className="flex items-center gap-2">
-                              <Progress value={(completedCount / totalCount) * 100} className="w-20 h-2" />
-                              <span className="text-sm">{completedCount}/{totalCount}</span>
-                            </div>
-                          </td>
-                          <td className="p-4">
-                            <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                              hw.status === "completed"
-                                ? "bg-green-100 text-green-800"
-                                : "bg-yellow-100 text-yellow-800"
-                            }`}>
-                              {hw.status === "completed" ? <CheckCircle className="w-3 h-3 mr-1" /> : <Clock className="w-3 h-3 mr-1" />}
-                              {hw.status}
-                            </span>
-                          </td>
-                          <td className="p-4">
-                            <div className="flex gap-2">
-                              <Button size="sm" variant="outline" onClick={() => openCompletionDialog(hw)}>
-                                <Users className="w-4 h-4 mr-1" />
-                                Update
-                              </Button>
-                              <Button size="sm" variant={hw.sentToParents ? "ghost" : "default"} onClick={() => handleSendToParents(hw)}>
-                                <MessageCircle className="w-4 h-4" />
-                              </Button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+            {/* Grouped Homework List */}
+            {(() => {
+              const groupedHomework = groupHomeworkByDate(filteredHomework);
+              
+              if (groupedHomework.length === 0) {
+                return (
+                  <div className="text-center py-12 text-muted-foreground">
+                    No homework found
+                  </div>
+                );
+              }
+
+              return (
+                <div className="space-y-8">
+                  {groupedHomework.map(([dateKey, homeworksForDate]) => (
+                    <div key={dateKey} className="bg-card rounded-xl border border-border overflow-hidden">
+                      {/* Date Header with Send to All Button */}
+                      <div className="bg-muted/50 p-4 border-b border-border flex items-center justify-between">
+                        <div>
+                          <h3 className="font-semibold text-foreground">
+                            {new Date(dateKey).toLocaleDateString('en-US', {
+                              weekday: 'long',
+                              year: 'numeric',
+                              month: 'long',
+                              day: 'numeric'
+                            })}
+                          </h3>
+                          <p className="text-sm text-muted-foreground mt-1">
+                            {homeworksForDate.length} homework{homeworksForDate.length !== 1 ? 's' : ''} created
+                          </p>
+                        </div>
+                        <Button 
+                          onClick={() => handleSendAllForDate(dateKey, homeworksForDate)}
+                          className="flex items-center gap-2"
+                        >
+                          <MessageCircle className="w-4 h-4" />
+                          Send to All Parents
+                        </Button>
+                      </div>
+
+                      {/* Homework Table for this Date */}
+                      <div className="overflow-x-auto">
+                        <table className="w-full">
+                          <thead className="bg-muted/30">
+                            <tr>
+                              <th className="text-left p-4 font-medium text-muted-foreground">Subjects</th>
+                              <th className="text-left p-4 font-medium text-muted-foreground">Due Date</th>
+                              <th className="text-left p-4 font-medium text-muted-foreground">Completion</th>
+                              <th className="text-left p-4 font-medium text-muted-foreground">Status</th>
+                              <th className="text-left p-4 font-medium text-muted-foreground">Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-border">
+                            {homeworksForDate.map(hw => {
+                              const completedCount = hw.students.filter(s => s.completed).length;
+                              const totalCount = hw.students.length;
+                              return (
+                                <tr key={hw.id} className="hover:bg-muted/30">
+                                  <td className="p-4">
+                                    <div className="flex flex-wrap gap-1">
+                                      {hw.subjects.map(s => (
+                                        <span key={s.subjectId} className="px-2 py-0.5 bg-primary/10 text-primary rounded text-xs">
+                                          {s.subjectName}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </td>
+                                  <td className="p-4">
+                                    <div className="flex items-center gap-2 text-muted-foreground">
+                                      <Clock className="w-4 h-4" />
+                                      {new Date(hw.dueDate).toLocaleDateString()}
+                                    </div>
+                                  </td>
+                                  <td className="p-4">
+                                    <div className="flex items-center gap-2">
+                                      <Progress value={(completedCount / totalCount) * 100} className="w-20 h-2" />
+                                      <span className="text-sm">{completedCount}/{totalCount}</span>
+                                    </div>
+                                  </td>
+                                  <td className="p-4">
+                                    <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                                      hw.status === "completed"
+                                        ? "bg-green-100 text-green-800"
+                                        : "bg-yellow-100 text-yellow-800"
+                                    }`}>
+                                      {hw.status === "completed" ? <CheckCircle className="w-3 h-3 mr-1" /> : <Clock className="w-3 h-3 mr-1" />}
+                                      {hw.status}
+                                    </span>
+                                  </td>
+                                  <td className="p-4">
+                                    <Button size="sm" variant="outline" onClick={() => openCompletionDialog(hw)}>
+                                      <Users className="w-4 h-4 mr-1" />
+                                      Update
+                                    </Button>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
           </TabsContent>
 
           {/* Student Frequency Tab */}

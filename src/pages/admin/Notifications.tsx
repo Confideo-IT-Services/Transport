@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Send, Bell, Users, School, Clock, UserCog, AlertTriangle } from "lucide-react";
+import { Send, Bell, Users, School, Clock, UserCog, AlertTriangle, Loader2 } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -16,50 +16,131 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { toast } from "sonner";
-
-const recentNotifications = [
-  { id: 1, title: "School Holiday Announcement", target: "All Classes", time: "2 hours ago", status: "sent" },
-  { id: 2, title: "Parent-Teacher Meeting", target: "Class 3, Class 4", time: "1 day ago", status: "sent" },
-  { id: 3, title: "Exam Schedule Update", target: "All Classes", time: "2 days ago", status: "sent" },
-  { id: 4, title: "Staff Meeting Tomorrow", target: "All Teachers", time: "3 days ago", status: "sent" },
-  { id: 5, title: "New Curriculum Guidelines", target: "All Teachers", time: "4 days ago", status: "sent" },
-];
-
-const classes = [
-  "Class 1A", "Class 1B", "Class 2A", "Class 2B",
-  "Class 3A", "Class 3B", "Class 4A", "Class 4B",
-];
+import { notificationsApi, classesApi, SentNotification } from "@/lib/api";
+import { useAuth } from "@/contexts/AuthContext";
 
 export default function Notifications() {
   const navigate = useNavigate();
-  const [target, setTarget] = useState("all");
-  const [selectedClasses, setSelectedClasses] = useState<string[]>([]);
+  const { user } = useAuth();
+  const [target, setTarget] = useState<"all" | "selected" | "teachers">("all");
+  const [selectedClassIds, setSelectedClassIds] = useState<string[]>([]);
+  const [classes, setClasses] = useState<any[]>([]);
   const [title, setTitle] = useState("");
   const [message, setMessage] = useState("");
-  const [priority, setPriority] = useState("normal");
+  const [priority, setPriority] = useState<"normal" | "urgent">("normal");
+  const [recentNotifications, setRecentNotifications] = useState<SentNotification[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  const fetchData = async () => {
+    try {
+      setLoading(true);
+      const [classesData, sentData] = await Promise.all([
+        classesApi.getAll().catch(() => []),
+        notificationsApi.getSent().catch(() => [])
+      ]);
+      setClasses(classesData);
+      setRecentNotifications(sentData.slice(0, 5)); // Show last 5
+    } catch (error) {
+      console.error('Error fetching data:', error);
+      toast.error("Failed to load data");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const toggleClass = (classId: string) => {
+    setSelectedClassIds((prev) =>
+      prev.includes(classId)
+        ? prev.filter((c) => c !== classId)
+        : [...prev, classId]
+    );
+  };
+
+  const formatTimeAgo = (dateString: string) => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
+    
+    if (diffInSeconds < 60) return "Just now";
+    if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)} minutes ago`;
+    if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)} hours ago`;
+    if (diffInSeconds < 604800) return `${Math.floor(diffInSeconds / 86400)} days ago`;
+    return date.toLocaleDateString();
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!title || !message) {
+      toast.error("Please fill in title and message");
+      return;
+    }
+
+    if (target === "selected" && selectedClassIds.length === 0) {
+      toast.error("Please select at least one class");
+      return;
+    }
+
+    try {
+      setSending(true);
+
+      let targetType: 'all_classes' | 'selected_classes' | 'all_teachers';
+      let targetClasses: string[] | undefined;
+
+      if (target === "teachers") {
+        targetType = 'all_teachers';
+      } else if (target === "all") {
+        targetType = 'all_classes';
+      } else {
+        targetType = 'selected_classes';
+        targetClasses = selectedClassIds;
+      }
+
+      const result = await notificationsApi.send({
+        title,
+        message,
+        targetType,
+        targetClasses,
+        priority
+      });
+
+      toast.success(result.message);
+      setTitle("");
+      setMessage("");
+      setSelectedClassIds([]);
+      setTarget("all");
+      
+      // Refresh data
+      await fetchData();
+    } catch (error: any) {
+      console.error('Error sending notification:', error);
+      toast.error(error.message || "Failed to send notification");
+    } finally {
+      setSending(false);
+    }
+  };
 
   const handleLogout = () => {
     navigate("/");
   };
 
-  const toggleClass = (className: string) => {
-    setSelectedClasses((prev) =>
-      prev.includes(className)
-        ? prev.filter((c) => c !== className)
-        : [...prev, className]
+  if (loading) {
+    return (
+      <DashboardLayout role="admin" userName={user?.name || "Admin User"} onLogout={handleLogout}>
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        </div>
+      </DashboardLayout>
     );
-  };
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const targetLabel = target === "all" ? "all classes" : target === "teachers" ? "all teachers" : `${selectedClasses.length} classes`;
-    toast.success(`Notification sent to ${targetLabel}!`);
-    setTitle("");
-    setMessage("");
-  };
+  }
 
   return (
-    <DashboardLayout role="admin" userName="Admin User" onLogout={handleLogout}>
+    <DashboardLayout role="admin" userName={user?.name || "Admin User"} onLogout={handleLogout}>
       <div className="space-y-6">
         {/* Page Header */}
         <div>
@@ -79,7 +160,7 @@ export default function Notifications() {
               {/* Target Selection */}
               <div className="space-y-3">
                 <Label>Send to</Label>
-                <Select value={target} onValueChange={setTarget}>
+                <Select value={target} onValueChange={(value: "all" | "selected" | "teachers") => setTarget(value)}>
                   <SelectTrigger>
                     <SelectValue placeholder="Select recipients" />
                   </SelectTrigger>
@@ -123,20 +204,25 @@ export default function Notifications() {
               {target === "selected" && (
                 <div className="space-y-3">
                   <Label>Select Classes</Label>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 max-h-64 overflow-y-auto">
                     {classes.map((cls) => (
                       <label
-                        key={cls}
+                        key={cls.id}
                         className="flex items-center gap-2 p-3 border border-border rounded-lg cursor-pointer hover:bg-muted/50 transition-colors"
                       >
                         <Checkbox
-                          checked={selectedClasses.includes(cls)}
-                          onCheckedChange={() => toggleClass(cls)}
+                          checked={selectedClassIds.includes(cls.id)}
+                          onCheckedChange={() => toggleClass(cls.id)}
                         />
-                        <span className="text-sm">{cls}</span>
+                        <span className="text-sm">{cls.name} {cls.section ? `- ${cls.section}` : ''}</span>
                       </label>
                     ))}
                   </div>
+                  {selectedClassIds.length > 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      {selectedClassIds.length} class(es) selected
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -144,7 +230,7 @@ export default function Notifications() {
               {target === "teachers" && (
                 <div className="space-y-3">
                   <Label>Priority</Label>
-                  <RadioGroup value={priority} onValueChange={setPriority} className="flex gap-4">
+                  <RadioGroup value={priority} onValueChange={(value: "normal" | "urgent") => setPriority(value)} className="flex gap-4">
                     <label className="flex items-center gap-3 p-3 border border-border rounded-lg cursor-pointer hover:bg-muted/50 transition-colors flex-1">
                       <RadioGroupItem value="normal" />
                       <div className="flex items-center gap-2">
@@ -186,9 +272,18 @@ export default function Notifications() {
                 />
               </div>
 
-              <Button type="submit" className="w-full sm:w-auto">
-                <Send className="w-4 h-4 mr-2" />
-                {target === "teachers" ? "Send to Teachers" : "Send Notification"}
+              <Button type="submit" className="w-full sm:w-auto" disabled={sending}>
+                {sending ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Sending...
+                  </>
+                ) : (
+                  <>
+                    <Send className="w-4 h-4 mr-2" />
+                    {target === "teachers" ? "Send to Teachers" : "Send Notification"}
+                  </>
+                )}
               </Button>
             </form>
           </div>
@@ -201,28 +296,28 @@ export default function Notifications() {
             </h3>
             
             <div className="space-y-4">
-              {recentNotifications.map((notification) => (
-                <div
-                  key={notification.id}
-                  className="p-4 border border-border rounded-lg hover:bg-muted/30 transition-colors"
-                >
-                  <h4 className="font-medium text-foreground">{notification.title}</h4>
-                  <div className="flex items-center gap-4 mt-2 text-sm text-muted-foreground">
-                    <span className="flex items-center gap-1">
-                      {notification.target === "All Teachers" ? (
-                        <UserCog className="w-3 h-3" />
-                      ) : (
+              {recentNotifications.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-4">No recent notifications</p>
+              ) : (
+                recentNotifications.map((notification) => (
+                  <div
+                    key={notification.id}
+                    className="p-4 border border-border rounded-lg hover:bg-muted/30 transition-colors"
+                  >
+                    <h4 className="font-medium text-foreground">{notification.title}</h4>
+                    <div className="flex items-center gap-4 mt-2 text-sm text-muted-foreground">
+                      <span className="flex items-center gap-1">
                         <Users className="w-3 h-3" />
-                      )}
-                      {notification.target}
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Clock className="w-3 h-3" />
-                      {notification.time}
-                    </span>
+                        {notification.recipients}
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <Clock className="w-3 h-3" />
+                        {formatTimeAgo(notification.time)}
+                      </span>
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </div>
         </div>

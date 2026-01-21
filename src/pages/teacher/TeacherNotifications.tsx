@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Send, Bell, AlertTriangle, Clock, Users, User, UserX, Calendar } from "lucide-react";
+import { Send, Bell, AlertTriangle, Clock, Users, User, UserX, Calendar, Loader2 } from "lucide-react";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -16,24 +16,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
-
-const recentNotifications = [
-  { id: 1, title: "Field Trip Permission", priority: "normal", time: "2 hours ago", recipients: "All Parents" },
-  { id: 2, title: "Parent Meeting Reminder", priority: "urgent", time: "1 day ago", recipients: "All Parents" },
-  { id: 3, title: "Homework Deadline Extended", priority: "normal", time: "2 days ago", recipients: "Rahul S., Priya M." },
-  { id: 4, title: "Emergency School Closure", priority: "urgent", time: "3 days ago", recipients: "All Parents" },
-];
-
-const students = [
-  { id: 1, name: "Rahul Sharma", rollNo: "01" },
-  { id: 2, name: "Priya Mehta", rollNo: "02" },
-  { id: 3, name: "Amit Kumar", rollNo: "03" },
-  { id: 4, name: "Sneha Patel", rollNo: "04" },
-  { id: 5, name: "Vikram Singh", rollNo: "05" },
-  { id: 6, name: "Ananya Das", rollNo: "06" },
-  { id: 7, name: "Rohan Gupta", rollNo: "07" },
-  { id: 8, name: "Kavya Nair", rollNo: "08" },
-];
+import { notificationsApi, studentsApi, classesApi, SentNotification } from "@/lib/api";
+import { useAuth } from "@/contexts/AuthContext";
 
 const notificationTemplates = [
   { 
@@ -61,19 +45,61 @@ const notificationTemplates = [
 
 export default function TeacherNotifications() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [title, setTitle] = useState("");
   const [message, setMessage] = useState("");
-  const [priority, setPriority] = useState("normal");
-  const [recipientType, setRecipientType] = useState("all");
-  const [selectedStudents, setSelectedStudents] = useState<number[]>([]);
+  const [priority, setPriority] = useState<"normal" | "urgent">("normal");
+  const [recipientType, setRecipientType] = useState<"all" | "selected">("all");
+  const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
   const [notificationType, setNotificationType] = useState("custom");
+  const [students, setStudents] = useState<any[]>([]);
+  const [classes, setClasses] = useState<any[]>([]);
+  const [recentNotifications, setRecentNotifications] = useState<SentNotification[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  const fetchData = async () => {
+    try {
+      setLoading(true);
+      const [classesData, sentData] = await Promise.all([
+        classesApi.getAll().catch(() => []),
+        notificationsApi.getSent().catch(() => [])
+      ]);
+
+      setClasses(classesData);
+      setRecentNotifications(sentData.slice(0, 5));
+
+      // Get students from teacher's assigned classes
+      if (classesData.length > 0) {
+        const allStudents: any[] = [];
+        for (const cls of classesData) {
+          try {
+            const classStudents = await studentsApi.getByClass(cls.id);
+            allStudents.push(...classStudents);
+          } catch (error) {
+            console.error(`Error fetching students for class ${cls.id}:`, error);
+          }
+        }
+        setStudents(allStudents);
+      }
+    } catch (error) {
+      console.error('Error fetching data:', error);
+      toast.error("Failed to load data");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleLogout = () => {
     navigate("/");
   };
 
-  const handleStudentToggle = (studentId: number) => {
-    setSelectedStudents(prev =>
+  const handleStudentToggle = (studentId: string) => {
+    setSelectedStudentIds(prev =>
       prev.includes(studentId)
         ? prev.filter(id => id !== studentId)
         : [...prev, studentId]
@@ -81,10 +107,10 @@ export default function TeacherNotifications() {
   };
 
   const handleSelectAll = () => {
-    if (selectedStudents.length === students.length) {
-      setSelectedStudents([]);
+    if (selectedStudentIds.length === students.length) {
+      setSelectedStudentIds([]);
     } else {
-      setSelectedStudents(students.map(s => s.id));
+      setSelectedStudentIds(students.map(s => s.id));
     }
   };
 
@@ -95,21 +121,104 @@ export default function TeacherNotifications() {
       setTitle(template.title);
       setMessage(template.message);
       setPriority(value === "absence" ? "urgent" : "normal");
+    } else {
+      setTitle("");
+      setMessage("");
+      setPriority("normal");
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    toast.success("Notification sent successfully!");
+  const formatTimeAgo = (dateString: string) => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
+    
+    if (diffInSeconds < 60) return "Just now";
+    if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)} minutes ago`;
+    if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)} hours ago`;
+    if (diffInSeconds < 604800) return `${Math.floor(diffInSeconds / 86400)} days ago`;
+    return date.toLocaleDateString();
   };
 
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!title || !message) {
+      toast.error("Please fill in title and message");
+      return;
+    }
+
+    if (recipientType === "selected" && selectedStudentIds.length === 0) {
+      toast.error("Please select at least one student");
+      return;
+    }
+
+    try {
+      setSending(true);
+
+      let targetType: 'all_classes' | 'specific_students';
+      let targetStudents: string[] | undefined;
+
+      if (recipientType === "all") {
+        // Get all class IDs for teacher's classes
+        const classIds = classes.map(c => c.id);
+        if (classIds.length === 0) {
+          toast.error("No classes assigned");
+          return;
+        }
+        // For "all", we'll use all_classes with the teacher's classes
+        targetType = 'all_classes';
+      } else {
+        targetType = 'specific_students';
+        targetStudents = selectedStudentIds;
+      }
+
+      const result = await notificationsApi.send({
+        title,
+        message,
+        targetType: targetType === 'all_classes' ? 'all_classes' : 'specific_students',
+        targetStudents,
+        priority
+      });
+
+      toast.success(result.message);
+      setTitle("");
+      setMessage("");
+      setSelectedStudentIds([]);
+      setRecipientType("all");
+      setNotificationType("custom");
+      
+      // Refresh data
+      await fetchData();
+    } catch (error: any) {
+      console.error('Error sending notification:', error);
+      toast.error(error.message || "Failed to send notification");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const classNames = classes.map(c => `${c.name}${c.section ? ` - ${c.section}` : ''}`).join(', ');
+
+  if (loading) {
+    return (
+      <DashboardLayout role="teacher" userName={user?.name || "Teacher"} onLogout={handleLogout}>
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        </div>
+      </DashboardLayout>
+    );
+  }
+
   return (
-    <DashboardLayout role="teacher" userName="Sarah Johnson" onLogout={handleLogout}>
+    <DashboardLayout role="teacher" userName={user?.name || "Teacher"} onLogout={handleLogout}>
       <div className="space-y-6">
         {/* Page Header */}
         <div>
           <h1 className="page-title">Notifications</h1>
-          <p className="text-muted-foreground mt-1">Send notifications to parents of Class 3A.</p>
+          <p className="text-muted-foreground mt-1">
+            Send notifications to parents of {classNames || "your assigned classes"}.
+          </p>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -172,7 +281,7 @@ export default function TeacherNotifications() {
               {/* Recipients */}
               <div className="space-y-3">
                 <Label>Send To</Label>
-                <RadioGroup value={recipientType} onValueChange={setRecipientType} className="flex gap-4">
+                <RadioGroup value={recipientType} onValueChange={(value: "all" | "selected") => setRecipientType(value)} className="flex gap-4">
                   <label className="flex items-center gap-3 p-4 border border-border rounded-lg cursor-pointer hover:bg-muted/50 transition-colors flex-1">
                     <RadioGroupItem value="all" />
                     <div className="flex items-center gap-2">
@@ -208,28 +317,34 @@ export default function TeacherNotifications() {
                       onClick={handleSelectAll}
                       className="text-xs"
                     >
-                      {selectedStudents.length === students.length ? "Deselect All" : "Select All"}
+                      {selectedStudentIds.length === students.length ? "Deselect All" : "Select All"}
                     </Button>
                   </div>
                   <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto border border-border rounded-lg p-3">
-                    {students.map((student) => (
-                      <label
-                        key={student.id}
-                        className="flex items-center gap-2 p-2 rounded-md hover:bg-muted/50 cursor-pointer transition-colors"
-                      >
-                        <Checkbox
-                          checked={selectedStudents.includes(student.id)}
-                          onCheckedChange={() => handleStudentToggle(student.id)}
-                        />
-                        <span className="text-sm">
-                          {student.rollNo}. {student.name}
-                        </span>
-                      </label>
-                    ))}
+                    {students.length === 0 ? (
+                      <p className="text-sm text-muted-foreground col-span-2 text-center py-4">
+                        No students found
+                      </p>
+                    ) : (
+                      students.map((student) => (
+                        <label
+                          key={student.id}
+                          className="flex items-center gap-2 p-2 rounded-md hover:bg-muted/50 cursor-pointer transition-colors"
+                        >
+                          <Checkbox
+                            checked={selectedStudentIds.includes(student.id)}
+                            onCheckedChange={() => handleStudentToggle(student.id)}
+                          />
+                          <span className="text-sm">
+                            {student.rollNo || ''}. {student.name}
+                          </span>
+                        </label>
+                      ))
+                    )}
                   </div>
-                  {selectedStudents.length > 0 && (
+                  {selectedStudentIds.length > 0 && (
                     <p className="text-xs text-muted-foreground">
-                      {selectedStudents.length} student(s) selected
+                      {selectedStudentIds.length} student(s) selected
                     </p>
                   )}
                 </div>
@@ -238,7 +353,7 @@ export default function TeacherNotifications() {
               {/* Priority */}
               <div className="space-y-3">
                 <Label>Priority</Label>
-                <RadioGroup value={priority} onValueChange={setPriority} className="flex gap-4">
+                <RadioGroup value={priority} onValueChange={(value: "normal" | "urgent") => setPriority(value)} className="flex gap-4">
                   <label className="flex items-center gap-3 p-4 border border-border rounded-lg cursor-pointer hover:bg-muted/50 transition-colors flex-1">
                     <RadioGroupItem value="normal" />
                     <div className="flex items-center gap-2">
@@ -262,9 +377,22 @@ export default function TeacherNotifications() {
                 </RadioGroup>
               </div>
 
-              <Button type="submit" className="w-full sm:w-auto" disabled={recipientType === "selected" && selectedStudents.length === 0}>
-                <Send className="w-4 h-4 mr-2" />
-                {recipientType === "all" ? "Send to All Parents" : `Send to ${selectedStudents.length} Parent(s)`}
+              <Button 
+                type="submit" 
+                className="w-full sm:w-auto" 
+                disabled={(recipientType === "selected" && selectedStudentIds.length === 0) || sending}
+              >
+                {sending ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Sending...
+                  </>
+                ) : (
+                  <>
+                    <Send className="w-4 h-4 mr-2" />
+                    {recipientType === "all" ? "Send to All Parents" : `Send to ${selectedStudentIds.length} Parent(s)`}
+                  </>
+                )}
               </Button>
             </form>
           </div>
@@ -277,33 +405,30 @@ export default function TeacherNotifications() {
             </h3>
 
             <div className="space-y-4">
-              {recentNotifications.map((notification) => (
-                <div
-                  key={notification.id}
-                  className="p-4 border border-border rounded-lg hover:bg-muted/30 transition-colors"
-                >
-                  <div className="flex items-start gap-3">
-                    {notification.priority === "urgent" ? (
-                      <AlertTriangle className="w-5 h-5 text-warning mt-0.5" />
-                    ) : (
+              {recentNotifications.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-4">No recent notifications</p>
+              ) : (
+                recentNotifications.map((notification) => (
+                  <div
+                    key={notification.id}
+                    className="p-4 border border-border rounded-lg hover:bg-muted/30 transition-colors"
+                  >
+                    <div className="flex items-start gap-3">
                       <Bell className="w-5 h-5 text-muted-foreground mt-0.5" />
-                    )}
-                    <div className="flex-1">
-                      <h4 className="font-medium text-foreground">{notification.title}</h4>
-                      <p className="text-xs text-muted-foreground mt-0.5">To: {notification.recipients}</p>
-                      <div className="flex items-center gap-2 mt-1">
-                        <span className={`badge ${notification.priority === "urgent" ? "badge-warning" : "badge-info"}`}>
-                          {notification.priority}
-                        </span>
-                        <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                          <Clock className="w-3 h-3" />
-                          {notification.time}
-                        </span>
+                      <div className="flex-1">
+                        <h4 className="font-medium text-foreground">{notification.title}</h4>
+                        <p className="text-xs text-muted-foreground mt-0.5">To: {notification.recipients}</p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                            <Clock className="w-3 h-3" />
+                            {formatTimeAgo(notification.time)}
+                          </span>
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </div>
         </div>

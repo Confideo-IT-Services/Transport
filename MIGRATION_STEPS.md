@@ -205,3 +205,5 @@ If you encounter any issues during migration, check:
 - MySQL user permissions
 - Database logs for detailed error messages
 
+
+

@@ -180,8 +180,8 @@ export default function ReportsModule() {
               setSelectedClassId(assignedClass.id);
             }
           } else {
-            setSelectedClass(`${classesData[0].name}${classesData[0].section ? ` - Section ${classesData[0].section}` : ''}`);
-            setSelectedClassId(classesData[0].id);
+            // For admin: Don't auto-select a class, leave it empty to show all tests initially
+            // selectedClassId and selectedClass remain empty
           }
         }
       } catch (error) {
@@ -239,15 +239,20 @@ export default function ReportsModule() {
   // Load tests from database
   useEffect(() => {
     const loadTests = async () => {
-      if (!selectedClassId) {
+      if (!selectedClassId && !isAdmin) {
         setTests([]);
         return;
       }
       setIsLoadingTests(true);
       try {
         const testsData = await testsApi.getAll();
-        // Filter tests for selected class
-        const filteredTests = testsData.filter((t: any) => t.classId === selectedClassId);
+        // For admin: if no class selected, show all tests; if class selected, filter by that class
+        // For teacher: filter by selected class
+        const filteredTests = isAdmin 
+          ? (selectedClassId 
+              ? testsData.filter((t: any) => t.classId === selectedClassId)  // Filter by selected class
+              : testsData)  // Show all tests when no class selected
+          : testsData.filter((t: any) => t.classId === selectedClassId);
         setTests(filteredTests);
       } catch (error) {
         console.error('Error loading tests:', error);
@@ -262,7 +267,7 @@ export default function ReportsModule() {
       }
     };
     loadTests();
-  }, [selectedClassId, location.pathname]);
+  }, [selectedClassId, isAdmin, location.pathname]);
 
   // Load analytics data
   useEffect(() => {
@@ -615,7 +620,7 @@ export default function ReportsModule() {
   };
 
   // Component to display test results in Student Reports tab
-  const TestResultsView = ({ testId, testName }: { testId: string; testName: string }) => {
+  const TestResultsView = ({ testId, testName, isAdmin }: { testId: string; testName: string; isAdmin: boolean }) => {
     const [results, setResults] = useState<any[]>([]);
     const [loading, setLoading] = useState(false);
     const [testDetails, setTestDetails] = useState<any>(null);
@@ -659,7 +664,7 @@ export default function ReportsModule() {
                 ))}
                 <TableHead className="text-center">Total</TableHead>
                 <TableHead className="text-center">Grade</TableHead>
-                <TableHead className="text-center">Action</TableHead>
+                {!isAdmin && <TableHead className="text-center">Action</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -688,18 +693,20 @@ export default function ReportsModule() {
                         {overallGrade}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-center">
-                      <Button 
-                        variant="ghost" 
-                        size="sm" 
-                        onClick={() => {
-                          const test = { ...testDetails, name: testName };
-                          sendTestResultToParent(test, result);
-                        }}
-                      >
-                        <Send className="w-4 h-4" />
-                      </Button>
-                    </TableCell>
+                    {!isAdmin && (
+                      <TableCell className="text-center">
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          onClick={() => {
+                            const test = { ...testDetails, name: testName };
+                            sendTestResultToParent(test, result);
+                          }}
+                        >
+                          <Send className="w-4 h-4" />
+                        </Button>
+                      </TableCell>
+                    )}
                   </TableRow>
                 );
               })}
@@ -945,15 +952,17 @@ export default function ReportsModule() {
             <p className="text-muted-foreground mt-1">Manage student reports, exam results, and analytics</p>
           </div>
           <div className="flex items-center gap-3">
-            <Select value={selectedClassId} onValueChange={(value) => {
+            <Select value={selectedClassId || ""} onValueChange={(value) => {
               setSelectedClassId(value);
               const cls = classes.find(c => c.id === value);
               if (cls) {
                 setSelectedClass(`${cls.name}${cls.section ? ` - Section ${cls.section}` : ''}`);
+              } else {
+                setSelectedClass("");
               }
             }}>
               <SelectTrigger className="w-48">
-                <SelectValue placeholder="Select class" />
+                <SelectValue placeholder={isAdmin ? "All Classes" : "Select class"} />
               </SelectTrigger>
               <SelectContent>
                 {classes.map((cls) => (
@@ -1164,12 +1173,15 @@ export default function ReportsModule() {
           <TabsContent value="tests" className="space-y-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-muted-foreground">Create tests, view details, and send to parents</p>
+                <p className="text-sm text-muted-foreground">
+                  {isAdmin ? "View tests created for classes" : "Create tests, view details, and send to parents"}
+                </p>
               </div>
-              <Dialog open={showCreateTest} onOpenChange={setShowCreateTest}>
-                <DialogTrigger asChild>
-                  <Button><Plus className="w-4 h-4 mr-2" />Create Test</Button>
-                </DialogTrigger>
+              {!isAdmin && (
+                <Dialog open={showCreateTest} onOpenChange={setShowCreateTest}>
+                  <DialogTrigger asChild>
+                    <Button><Plus className="w-4 h-4 mr-2" />Create Test</Button>
+                  </DialogTrigger>
                 <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
                   <DialogHeader>
                     <DialogTitle>Create New Test</DialogTitle>
@@ -1258,6 +1270,7 @@ export default function ReportsModule() {
                   </div>
                 </DialogContent>
               </Dialog>
+              )}
             </div>
 
             {/* Tests List */}
@@ -1265,7 +1278,13 @@ export default function ReportsModule() {
               <div className="text-center py-12 text-muted-foreground">Loading tests...</div>
             ) : tests.length === 0 ? (
               <div className="text-center py-12 text-muted-foreground border rounded-lg">
-                <p>No tests created yet. Click "Create Test" to get started.</p>
+                <p>
+                  {isAdmin 
+                    ? (selectedClassId 
+                        ? `No tests created for ${selectedClass}.` 
+                        : "No tests found for any class.")
+                    : "No tests created yet. Click \"Create Test\" to get started."}
+                </p>
               </div>
             ) : (
               <div className="grid gap-3">
@@ -1328,12 +1347,14 @@ export default function ReportsModule() {
                       ))}
                     </div>
                   </div>
-                  <Button 
-                    className="w-full" 
-                    onClick={() => sendTestDetailsToParents(testDetails)}
-                  >
-                    <Send className="w-4 h-4 mr-2" />Send Test Details to All Parents
-                  </Button>
+                  {!isAdmin && (
+                    <Button 
+                      className="w-full" 
+                      onClick={() => sendTestDetailsToParents(testDetails)}
+                    >
+                      <Send className="w-4 h-4 mr-2" />Send Test Details to All Parents
+                    </Button>
+                  )}
                 </CardContent>
               </Card>
             )}
@@ -1343,7 +1364,9 @@ export default function ReportsModule() {
           <TabsContent value="student-reports" className="space-y-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-muted-foreground">Add marks for tests and send results to parents</p>
+                <p className="text-sm text-muted-foreground">
+                  {isAdmin ? "View student marks and test results" : "Add marks for tests and send results to parents"}
+                </p>
               </div>
             </div>
 
@@ -1352,7 +1375,13 @@ export default function ReportsModule() {
               <div className="text-center py-12 text-muted-foreground">Loading tests...</div>
             ) : tests.length === 0 ? (
               <div className="text-center py-12 text-muted-foreground border rounded-lg">
-                <p>No tests available. Create a test in the "Tests" tab first.</p>
+                <p>
+                  {isAdmin 
+                    ? (selectedClassId 
+                        ? `No tests found for ${selectedClass}.` 
+                        : "No tests found for any class.")
+                    : "No tests available. Create a test in the \"Tests\" tab first."}
+                </p>
               </div>
             ) : (
               <div className="grid gap-3">
@@ -1371,10 +1400,11 @@ export default function ReportsModule() {
                             </p>
                           </div>
                         </div>
-                        <Button 
-                          variant="outline" 
-                          size="sm"
-                          onClick={async () => {
+                        {!isAdmin && (
+                          <Button 
+                            variant="outline" 
+                            size="sm"
+                            onClick={async () => {
                             try {
                               const details = await testsApi.getById(test.id);
                               setSelectedTest(details);
@@ -1425,13 +1455,14 @@ export default function ReportsModule() {
                               });
                             }
                           }}
-                        >
-                          <Plus className="w-4 h-4 mr-1" />Add Marks
-                        </Button>
+                          >
+                            <Plus className="w-4 h-4 mr-1" />Add Marks
+                          </Button>
+                        )}
                       </div>
                     </CardHeader>
                     <CardContent>
-                      <TestResultsView testId={test.id} testName={test.name} />
+                      <TestResultsView testId={test.id} testName={test.name} isAdmin={isAdmin} />
                     </CardContent>
                   </Card>
                 ))}
@@ -1525,16 +1556,18 @@ export default function ReportsModule() {
                           </TableBody>
                         </Table>
                       </div>
-                      <Button 
-                        onClick={(e) => {
-                          e.preventDefault();
-                          handleSaveTestMarks();
-                        }} 
-                        className="w-full"
-                        type="button"
-                      >
-                        Save Marks
-                      </Button>
+                      {!isAdmin && (
+                        <Button 
+                          onClick={(e) => {
+                            e.preventDefault();
+                            handleSaveTestMarks();
+                          }} 
+                          className="w-full"
+                          type="button"
+                        >
+                          Save Marks
+                        </Button>
+                      )}
                     </>
                   )}
                 </>
