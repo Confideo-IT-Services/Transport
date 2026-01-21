@@ -36,6 +36,35 @@ const uploadJson = multer({
   },
 });
 
+// Configure multer for notification files (allows various file types)
+const uploadFiles = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+  fileFilter: (req, file, cb) => {
+    // Allow common file types for notifications
+    const allowedMimes = [
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'image/jpeg',
+      'image/jpg',
+      'image/png',
+      'image/gif',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'text/plain',
+      'application/vnd.ms-powerpoint',
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+    ];
+    
+    if (allowedMimes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('File type not allowed. Allowed types: PDF, DOC, DOCX, JPG, PNG, GIF, XLS, XLSX, PPT, PPTX, TXT'), false);
+    }
+  },
+});
+
 // Upload student photo to S3
 router.post('/photo', uploadImages.single('photo'), async (req, res) => {
   try {
@@ -297,6 +326,90 @@ router.post('/id-layout', uploadJson.single('layout'), async (req, res) => {
     console.error('❌ Layout upload error:', error);
     res.status(500).json({ 
       error: 'Failed to upload layout',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+// Upload notification attachment to S3
+router.post('/notification-file', uploadFiles.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    if (!BUCKET_NAME) {
+      return res.status(500).json({ error: 'S3 bucket not configured' });
+    }
+
+    console.log('📤 Processing notification file upload:', {
+      originalName: req.file.originalname,
+      mimetype: req.file.mimetype,
+      size: req.file.size
+    });
+
+    // Get file extension from original filename
+    const fileExtension = req.file.originalname.split('.').pop() || 'bin';
+    
+    // Generate unique filename - store in media/notifications/ folder
+    const fileName = `media/notifications/${uuidv4()}.${fileExtension}`;
+    const contentType = req.file.mimetype;
+    const region = process.env.AWS_REGION || 'us-east-1';
+
+    // Upload to S3 - try with ACL first, fallback without if ACL is disabled
+    let command;
+    try {
+      command = new PutObjectCommand({
+        Bucket: BUCKET_NAME,
+        Key: fileName,
+        Body: req.file.buffer,
+        ContentType: contentType,
+        ACL: 'public-read', // Make publicly accessible
+      });
+      await s3Client.send(command);
+    } catch (aclError) {
+      // If ACL fails (bucket might have ACL disabled), try without ACL
+      if (aclError.name === 'AccessControlListNotSupported' || aclError.code === 'NotImplemented') {
+        console.log('⚠️  ACL not supported, uploading without ACL');
+        command = new PutObjectCommand({
+          Bucket: BUCKET_NAME,
+          Key: fileName,
+          Body: req.file.buffer,
+          ContentType: contentType,
+        });
+        await s3Client.send(command);
+      } else {
+        throw aclError;
+      }
+    }
+
+    // Construct S3 URL (handle different region formats)
+    let fileUrl;
+    if (region === 'us-east-1') {
+      // us-east-1 uses different URL format
+      fileUrl = `https://${BUCKET_NAME}.s3.amazonaws.com/${fileName}`;
+    } else {
+      fileUrl = `https://${BUCKET_NAME}.s3.${region}.amazonaws.com/${fileName}`;
+    }
+
+    console.log('✅ Notification file uploaded to S3:', fileUrl);
+
+    res.json({
+      success: true,
+      fileUrl: fileUrl,
+      fileName: req.file.originalname,
+      fileSize: req.file.size,
+      fileType: req.file.mimetype
+    });
+  } catch (error) {
+    console.error('❌ Notification file upload error:', error);
+    console.error('Error details:', {
+      code: error.code,
+      message: error.message,
+      name: error.name
+    });
+    res.status(500).json({ 
+      error: 'Failed to upload file',
       details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }

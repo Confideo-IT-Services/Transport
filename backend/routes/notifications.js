@@ -22,6 +22,7 @@ router.get('/', authenticateToken, async (req, res) => {
           n.message,
           n.priority,
           n.target_type,
+          n.attachment_url,
           n.created_at,
           u.name as sender_name,
           COALESCE(nr.is_read, FALSE) as is_read,
@@ -45,6 +46,7 @@ router.get('/', authenticateToken, async (req, res) => {
           n.message,
           n.priority,
           n.target_type,
+          n.attachment_url,
           n.created_at,
           u.name as sender_name,
           FALSE as is_read,
@@ -54,7 +56,7 @@ router.get('/', authenticateToken, async (req, res) => {
         INNER JOIN users u ON n.sender_id = u.id
         WHERE n.school_id = ?
           AND nr.recipient_type = 'teacher'
-        GROUP BY n.id, n.title, n.message, n.priority, n.target_type, n.created_at, u.name
+        GROUP BY n.id, n.title, n.message, n.priority, n.target_type, n.attachment_url, n.created_at, u.name
         ORDER BY n.created_at DESC
         LIMIT 50
       `;
@@ -71,6 +73,7 @@ router.get('/', authenticateToken, async (req, res) => {
       message: n.message,
       sender: n.sender_name,
       priority: n.priority,
+      attachmentUrl: n.attachment_url,
       time: n.created_at,
       read: n.is_read || false,
       readAt: n.read_at
@@ -96,6 +99,7 @@ router.get('/sent', authenticateToken, async (req, res) => {
         n.target_students,
         n.sent_count,
         n.status,
+        n.attachment_url,
         n.created_at,
         COUNT(DISTINCT nr.id) as recipient_count
       FROM notifications n
@@ -125,7 +129,8 @@ router.get('/sent', authenticateToken, async (req, res) => {
         title: n.title,
         recipients: recipients,
         time: n.created_at,
-        status: n.status
+        status: n.status,
+        attachmentUrl: n.attachment_url
       };
     }));
   } catch (error) {
@@ -180,7 +185,7 @@ router.post('/templates', authenticateToken, requireAdmin, async (req, res) => {
 // Send notification
 router.post('/', authenticateToken, async (req, res) => {
   try {
-    const { title, message, targetType, targetClasses, targetStudents, priority } = req.body;
+    const { title, message, targetType, targetClasses, targetStudents, priority, attachmentUrl } = req.body;
     const userId = req.user.id;
     const userRole = req.user.role;
     const schoolId = req.user.schoolId;
@@ -192,12 +197,12 @@ router.post('/', authenticateToken, async (req, res) => {
     const notificationId = uuidv4();
     const notificationPriority = priority || 'normal';
 
-    // Insert notification
+    // Insert notification with attachment_url
     await db.query(`
       INSERT INTO notifications (
         id, school_id, sender_id, sender_role, title, message,
-        target_type, target_classes, target_students, priority, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'sent')
+        target_type, target_classes, target_students, priority, status, attachment_url
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'sent', ?)
     `, [
       notificationId,
       schoolId,
@@ -208,7 +213,8 @@ router.post('/', authenticateToken, async (req, res) => {
       targetType,
       targetClasses ? JSON.stringify(targetClasses) : null,
       targetStudents ? JSON.stringify(targetStudents) : null,
-      notificationPriority
+      notificationPriority,
+      attachmentUrl || null
     ]);
 
     // Create recipients based on target type

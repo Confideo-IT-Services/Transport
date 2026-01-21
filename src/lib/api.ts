@@ -561,6 +561,33 @@ export const uploadApi = {
     
     return response.json();
   },
+
+  uploadNotificationFile: async (file: File): Promise<{ 
+    success: boolean; 
+    fileUrl: string; 
+    fileName: string; 
+    fileSize: number; 
+    fileType: string 
+  }> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    const token = getToken();
+    const response = await fetch(`${API_BASE_URL}/upload/notification-file`, {
+      method: 'POST',
+      headers: token ? {
+        'Authorization': `Bearer ${token}`
+      } : {},
+      body: formData,
+    });
+    
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Upload failed' }));
+      throw new Error(error.error || 'Failed to upload file');
+    }
+    
+    return response.json();
+  },
 };
 
 // ============ TIMETABLE API ============
@@ -1114,6 +1141,7 @@ export const notificationsApi = {
     targetClasses?: string[];
     targetStudents?: string[];
     priority?: 'normal' | 'urgent';
+    attachmentUrl?: string;
   }): Promise<{ success: boolean; message: string; notificationId: string; sentCount: number }> => {
     return apiRequest('/notifications', {
       method: 'POST',

@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Send, Bell, Users, School, Clock, UserCog, AlertTriangle, Loader2 } from "lucide-react";
+import { Send, Bell, Users, School, Clock, UserCog, AlertTriangle, Loader2, Paperclip, X, File } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -16,7 +16,7 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { toast } from "sonner";
-import { notificationsApi, classesApi, SentNotification } from "@/lib/api";
+import { notificationsApi, classesApi, SentNotification, uploadApi } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 
 export default function Notifications() {
@@ -31,6 +31,9 @@ export default function Notifications() {
   const [recentNotifications, setRecentNotifications] = useState<SentNotification[]>([]);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [attachment, setAttachment] = useState<File | null>(null);
+  const [attachmentUrl, setAttachmentUrl] = useState<string>("");
+  const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -73,6 +76,39 @@ export default function Notifications() {
     return date.toLocaleDateString();
   };
 
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Validate file size (max 10MB)
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error("File size must be less than 10MB");
+      return;
+    }
+
+    try {
+      setUploading(true);
+      setAttachment(file);
+
+      // Upload file to S3 in media/notifications/ folder
+      const result = await uploadApi.uploadNotificationFile(file);
+      setAttachmentUrl(result.fileUrl);
+      toast.success("File uploaded successfully");
+    } catch (error: any) {
+      console.error('File upload error:', error);
+      toast.error(error.message || "Failed to upload file");
+      setAttachment(null);
+      setAttachmentUrl("");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleRemoveAttachment = () => {
+    setAttachment(null);
+    setAttachmentUrl("");
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -106,7 +142,8 @@ export default function Notifications() {
         message,
         targetType,
         targetClasses,
-        priority
+        priority,
+        attachmentUrl: attachmentUrl || undefined
       });
 
       toast.success(result.message);
@@ -114,6 +151,8 @@ export default function Notifications() {
       setMessage("");
       setSelectedClassIds([]);
       setTarget("all");
+      setAttachment(null);
+      setAttachmentUrl("");
       
       // Refresh data
       await fetchData();
@@ -272,7 +311,52 @@ export default function Notifications() {
                 />
               </div>
 
-              <Button type="submit" className="w-full sm:w-auto" disabled={sending}>
+              {/* File Attachment */}
+              <div className="space-y-2">
+                <Label>Attachment (Optional)</Label>
+                {!attachment ? (
+                  <div className="flex items-center gap-2">
+                    <label className="flex items-center gap-2 px-4 py-2 border border-border rounded-lg cursor-pointer hover:bg-muted/50 transition-colors">
+                      <Paperclip className="w-4 h-4" />
+                      <span className="text-sm">Choose File</span>
+                      <input
+                        type="file"
+                        className="hidden"
+                        onChange={handleFileChange}
+                        disabled={uploading}
+                        accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.gif,.xls,.xlsx,.ppt,.pptx,.txt"
+                      />
+                    </label>
+                    {uploading && (
+                      <span className="text-sm text-muted-foreground">Uploading...</span>
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between p-3 border border-border rounded-lg bg-muted/30">
+                    <div className="flex items-center gap-2">
+                      <File className="w-4 h-4 text-primary" />
+                      <span className="text-sm font-medium">{attachment.name}</span>
+                      <span className="text-xs text-muted-foreground">
+                        ({(attachment.size / 1024).toFixed(1)} KB)
+                      </span>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleRemoveAttachment}
+                      className="h-8 w-8 p-0"
+                    >
+                      <X className="w-4 h-4" />
+                    </Button>
+                  </div>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  Supported formats: PDF, DOC, DOCX, JPG, PNG, GIF, XLS, XLSX, PPT, PPTX, TXT (Max 10MB)
+                </p>
+              </div>
+
+              <Button type="submit" className="w-full sm:w-auto" disabled={sending || uploading}>
                 {sending ? (
                   <>
                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />
@@ -305,6 +389,17 @@ export default function Notifications() {
                     className="p-4 border border-border rounded-lg hover:bg-muted/30 transition-colors"
                   >
                     <h4 className="font-medium text-foreground">{notification.title}</h4>
+                    {(notification as any).attachmentUrl && (
+                      <a
+                        href={(notification as any).attachmentUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-2 mt-2 text-sm text-primary hover:underline"
+                      >
+                        <File className="w-3 h-3" />
+                        View Attachment
+                      </a>
+                    )}
                     <div className="flex items-center gap-4 mt-2 text-sm text-muted-foreground">
                       <span className="flex items-center gap-1">
                         <Users className="w-3 h-3" />
