@@ -1,7 +1,7 @@
 name: Deploy to AWS ECS
 
 on:
-  workflow_dispatch:
+ workflow_dispatch:
     inputs:
       branch:
         description: 'Select branch to deploy'
@@ -11,19 +11,26 @@ on:
         options:
           - main
           - UAT
+      environment:
+        description: "Select environment"
+        required: true
+        type: choice
+        options:
+          - main UAT
+          
 
-env:
-  AWS_REGION: ap-south-1
-  ECR_REGISTRY: 237343249019.dkr.ecr.ap-south-1.amazonaws.com
-  ECS_CLUSTER: Conventpulse
-  FRONTEND_ECR_REPO: allpulse/frontend
-  BACKEND_ECR_REPO: allpulse/backend
-  FRONTEND_SERVICE: allpulse-frontend-service
-  BACKEND_SERVICE: allpulse-backend-service
-  BACKEND_TASK_DEFINITION: allpulse-backend
-  FRONTEND_TASK_DEFINITION: allpulse-frontend
-  BACKEND_CONTAINER_NAME: backend
-  FRONTEND_CONTAINER_NAME: frontend
+#env:
+  #AWS_REGION: ap-south-1
+  #ECR_REGISTRY: 237343249019.dkr.ecr.ap-south-1.amazonaws.com
+  #ECS_CLUSTER: Conventpulse
+  #FRONTEND_ECR_REPO: allpulse/frontend
+  #BACKEND_ECR_REPO: allpulse/backend
+  #FRONTEND_SERVICE: allpulse-frontend-service
+  #BACKEND_SERVICE: allpulse-backend-service
+  #BACKEND_TASK_DEFINITION: allpulse-backend
+  #FRONTEND_TASK_DEFINITION: allpulse-frontend
+  #BACKEND_CONTAINER_NAME: backend
+  #FRONTEND_CONTAINER_NAME: frontend
 
 jobs:
   deploy:
