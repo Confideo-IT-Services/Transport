@@ -62,7 +62,7 @@ jobs:
 
       - name: Build and push Frontend
         run: |
-          docker build -t ${{ secrets.ECR_REGISTRY }}/${{ secrets.FRONTEND_ECR_REPO }}:${{ github.sha }} .
+          docker build --no-cache -t ${{ secrets.ECR_REGISTRY }}/${{ secrets.FRONTEND_ECR_REPO }}:${{ github.sha }} .
           docker tag ${{ secrets.ECR_REGISTRY }}/${{ secrets.FRONTEND_ECR_REPO }}:${{ github.sha }} ${{ secrets.ECR_REGISTRY }}/${{ secrets.FRONTEND_ECR_REPO }}:latest
           docker push ${{ secrets.ECR_REGISTRY }}/${{ secrets.FRONTEND_ECR_REPO }}:${{ github.sha }}
           docker push ${{ secrets.ECR_REGISTRY }}/${{ secrets.FRONTEND_ECR_REPO }}:latest
