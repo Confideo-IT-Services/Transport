@@ -352,7 +352,7 @@ router.post('/test-whatsapp', authenticateToken, requireTeacher, async (req, res
     }
 
     const templateName = process.env.WAZZAP_TEMPLATE_NAME;
-    const templateLanguage = process.env.WAZZAP_TEMPLATE_LANGUAGE || 'en_US';
+    const templateLanguage = process.env.WAZZAP_TEMPLATE_LANGUAGE || 'en';
     
     // Test with sample data matching your template
     const testParams = [
@@ -398,7 +398,7 @@ router.post('/send-to-all', authenticateToken, requireTeacher, async (req, res) 
 
     // Get template configuration
     const templateName = process.env.WAZZAP_TEMPLATE_NAME;
-    const templateLanguage = process.env.WAZZAP_TEMPLATE_LANGUAGE || 'en_US';
+    const templateLanguage = process.env.WAZZAP_TEMPLATE_LANGUAGE || 'en';
 
     if (!templateName) {
       return res.status(500).json({ 

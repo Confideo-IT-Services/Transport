@@ -9,7 +9,7 @@ const axios = require('axios');
  * 
  * @param {string} phoneNumber - Phone number with country code (no +)
  * @param {string} templateName - Approved template name (convent_pulse_hw)
- * @param {string} languageCode - Language code (en_US)
+ * @param {string} languageCode - Language code (en)
  * @param {Array<string>} templateParams - Array of 5 parameter values
  * @returns {Promise<Object>} API response
  */
@@ -47,15 +47,16 @@ async function sendWhatsAppTemplateMessage(phoneNumber, templateName, languageCo
     // Primary endpoint: https://crmapi.1automations.com/api/meta/v19.0/{PHONE_NUMBER_ID}/messages
     const endpoint = `${apiBaseUrl}/${apiVersion}/${phoneNumberId}/messages`;
 
-    // Build payload exactly as per Meta's WhatsApp Cloud API format
+    // Build payload exactly as per Meta's WhatsApp Cloud API format (via 1automations.com)
     const payload = {
-      messaging_product: "whatsapp",
       to: formattedPhone,
+      recipient_type: "individual",
       type: "template",
       template: {
         name: templateName,
         language: {
-          code: languageCode || "en_US"
+          policy: "deterministic",
+          code: languageCode || "en"
         },
         components: [
           {
