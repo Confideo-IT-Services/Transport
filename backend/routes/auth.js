@@ -212,9 +212,11 @@ router.get('/verify', authenticateToken, async (req, res) => {
     // Fetch fresh user data
     if (user.role === 'teacher') {
       const [teachers] = await db.query(
-        `SELECT t.*, s.name as school_name 
+        `SELECT t.*, s.name as school_name,
+                c.name as class_name, c.section as class_section
          FROM teachers t 
          LEFT JOIN schools s ON t.school_id = s.id 
+         LEFT JOIN classes c ON t.class_id = c.id
          WHERE t.id = ?`,
         [user.id]
       );
@@ -228,13 +230,18 @@ router.get('/verify', authenticateToken, async (req, res) => {
         id: teacher.id,
         name: teacher.name,
         username: teacher.username,
+        email: teacher.email,
+        phone: teacher.phone,
         role: 'teacher',
         schoolId: teacher.school_id,
-        schoolName: teacher.school_name
+        schoolName: teacher.school_name,
+        className: teacher.class_name ? `${teacher.class_name} ${teacher.class_section || ''}`.trim() : null
       });
     } else {
       const [users] = await db.query(
-        `SELECT u.*, s.name as school_name 
+        `SELECT u.*, s.name as school_name, s.code as school_code, 
+                s.type as school_type, s.location as school_location,
+                s.address as school_address, s.phone as school_phone, s.email as school_email
          FROM users u 
          LEFT JOIN schools s ON u.school_id = s.id 
          WHERE u.id = ?`,
@@ -250,14 +257,256 @@ router.get('/verify', authenticateToken, async (req, res) => {
         id: dbUser.id,
         name: dbUser.name,
         email: dbUser.email,
+        phone: dbUser.phone,
         role: dbUser.role,
         schoolId: dbUser.school_id,
-        schoolName: dbUser.school_name
+        schoolName: dbUser.school_name,
+        schoolCode: dbUser.school_code,
+        schoolType: dbUser.school_type,
+        schoolLocation: dbUser.school_location,
+        schoolAddress: dbUser.school_address,
+        schoolPhone: dbUser.school_phone,
+        schoolEmail: dbUser.school_email
       });
     }
   } catch (error) {
     console.error('Verify token error:', error);
     res.status(500).json({ error: 'Verification failed' });
+  }
+});
+
+// Update own profile (self-update)
+router.put('/profile', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const userRole = req.user.role;
+    const { name, email, phone } = req.body;
+
+    if (userRole === 'teacher') {
+      // Update teacher profile
+      const updates = [];
+      const values = [];
+
+      if (name) {
+        updates.push('name = ?');
+        values.push(name);
+      }
+      
+      if (email !== undefined) {
+        // Check if email already exists for another teacher
+        const [existing] = await db.query(
+          'SELECT id FROM teachers WHERE email = ? AND id != ? AND school_id = ?',
+          [email, userId, req.user.schoolId]
+        );
+        if (existing.length > 0) {
+          return res.status(400).json({ error: 'Email already exists' });
+        }
+        updates.push('email = ?');
+        values.push(email || null);
+      }
+      
+      if (phone !== undefined) {
+        updates.push('phone = ?');
+        values.push(phone || null);
+      }
+
+      if (updates.length === 0) {
+        return res.status(400).json({ error: 'No fields to update' });
+      }
+
+      values.push(userId);
+      await db.query(
+        `UPDATE teachers SET ${updates.join(', ')} WHERE id = ?`,
+        values
+      );
+
+      // Fetch updated teacher data
+      const [teachers] = await db.query(
+        `SELECT t.*, s.name as school_name,
+                c.name as class_name, c.section as class_section
+         FROM teachers t 
+         LEFT JOIN schools s ON t.school_id = s.id 
+         LEFT JOIN classes c ON t.class_id = c.id
+         WHERE t.id = ?`,
+        [userId]
+      );
+
+      if (teachers.length === 0) {
+        return res.status(404).json({ error: 'Teacher not found' });
+      }
+
+      const teacher = teachers[0];
+      res.json({
+        success: true,
+        user: {
+          id: teacher.id,
+          name: teacher.name,
+          username: teacher.username,
+          email: teacher.email,
+          phone: teacher.phone,
+          role: 'teacher',
+          schoolId: teacher.school_id,
+          schoolName: teacher.school_name,
+          className: teacher.class_name ? `${teacher.class_name} ${teacher.class_section || ''}`.trim() : null
+        }
+      });
+    } else if (userRole === 'admin') {
+      // Update admin profile
+      const updates = [];
+      const values = [];
+
+      if (name) {
+        updates.push('name = ?');
+        values.push(name);
+      }
+      
+      // Note: Email updates for admin might be restricted, but we'll allow it
+      // You can add additional validation here if needed
+      if (email !== undefined && email !== null) {
+        // Check if email already exists for another admin
+        const [existing] = await db.query(
+          'SELECT id FROM users WHERE email = ? AND id != ?',
+          [email, userId]
+        );
+        if (existing.length > 0) {
+          return res.status(400).json({ error: 'Email already exists' });
+        }
+        updates.push('email = ?');
+        values.push(email);
+      }
+
+      // Add phone support for admins
+      if (phone !== undefined) {
+        updates.push('phone = ?');
+        values.push(phone || null);
+      }
+
+      if (updates.length === 0) {
+        return res.status(400).json({ error: 'No fields to update' });
+      }
+
+      values.push(userId);
+      await db.query(
+        `UPDATE users SET ${updates.join(', ')} WHERE id = ?`,
+        values
+      );
+
+      // Fetch updated user data with school details
+      const [users] = await db.query(
+        `SELECT u.*, s.name as school_name, s.code as school_code,
+                s.type as school_type, s.location as school_location,
+                s.address as school_address, s.phone as school_phone, s.email as school_email
+         FROM users u 
+         LEFT JOIN schools s ON u.school_id = s.id 
+         WHERE u.id = ?`,
+        [userId]
+      );
+
+      if (users.length === 0) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+
+      const dbUser = users[0];
+      res.json({
+        success: true,
+        user: {
+          id: dbUser.id,
+          name: dbUser.name,
+          email: dbUser.email,
+          phone: dbUser.phone,
+          role: dbUser.role,
+          schoolId: dbUser.school_id,
+          schoolName: dbUser.school_name,
+          schoolCode: dbUser.school_code,
+          schoolType: dbUser.school_type,
+          schoolLocation: dbUser.school_location,
+          schoolAddress: dbUser.school_address,
+          schoolPhone: dbUser.school_phone,
+          schoolEmail: dbUser.school_email
+        }
+      });
+    } else {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+  } catch (error) {
+    console.error('Update profile error:', error);
+    res.status(500).json({ error: 'Failed to update profile' });
+  }
+});
+
+// Change password
+router.put('/change-password', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const userRole = req.user.role;
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: 'Current password and new password are required' });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: 'New password must be at least 6 characters' });
+    }
+
+    if (userRole === 'teacher') {
+      // Get teacher's current password
+      const [teachers] = await db.query(
+        'SELECT password FROM teachers WHERE id = ?',
+        [userId]
+      );
+
+      if (teachers.length === 0) {
+        return res.status(404).json({ error: 'Teacher not found' });
+      }
+
+      const teacher = teachers[0];
+      const isPasswordValid = await bcrypt.compare(currentPassword, teacher.password);
+
+      if (!isPasswordValid) {
+        return res.status(401).json({ error: 'Current password is incorrect' });
+      }
+
+      // Update password
+      const hashedPassword = await bcrypt.hash(newPassword, 10);
+      await db.query(
+        'UPDATE teachers SET password = ? WHERE id = ?',
+        [hashedPassword, userId]
+      );
+
+      res.json({ success: true, message: 'Password updated successfully' });
+    } else if (userRole === 'admin') {
+      // Get admin's current password
+      const [users] = await db.query(
+        'SELECT password FROM users WHERE id = ?',
+        [userId]
+      );
+
+      if (users.length === 0) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+
+      const dbUser = users[0];
+      const isPasswordValid = await bcrypt.compare(currentPassword, dbUser.password);
+
+      if (!isPasswordValid) {
+        return res.status(401).json({ error: 'Current password is incorrect' });
+      }
+
+      // Update password
+      const hashedPassword = await bcrypt.hash(newPassword, 10);
+      await db.query(
+        'UPDATE users SET password = ? WHERE id = ?',
+        [hashedPassword, userId]
+      );
+
+      res.json({ success: true, message: 'Password updated successfully' });
+    } else {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+  } catch (error) {
+    console.error('Change password error:', error);
+    res.status(500).json({ error: 'Failed to change password' });
   }
 });
 

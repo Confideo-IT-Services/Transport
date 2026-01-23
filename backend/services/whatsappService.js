@@ -1,4 +1,5 @@
 const axios = require('axios');
+const templates = require('../config/whatsappTemplates');
 
 /**
  * Send WhatsApp template message using Meta WhatsApp Cloud API (via 1automations.com)
@@ -32,9 +33,8 @@ async function sendWhatsAppTemplateMessage(phoneNumber, templateName, languageCo
       throw new Error('Template name is required');
     }
 
-    if (templateParams.length !== 5) {
-      throw new Error('Template requires exactly 5 parameters');
-    }
+    // Parameter count validation removed - different templates have different counts
+    // Validation is now done in sendWhatsAppMessage() based on template config
 
     // Format phone number (ensure it has country code, no +)
     let formattedPhone = phoneNumber.replace(/\D/g, '');
@@ -221,6 +221,48 @@ async function sendWhatsAppTemplateMessage(phoneNumber, templateName, languageCo
 }
 
 /**
+ * Send WhatsApp message using template type from config
+ * @param {string} phoneNumber - Phone number with country code
+ * @param {string} messageType - Type from templates config (e.g., 'homework', 'attendance')
+ * @param {Array<string>} templateParams - Parameters for the template
+ * @param {Object} options - Additional options (templateName override, language override, etc.)
+ * @returns {Promise<Object>} API response
+ */
+async function sendWhatsAppMessage(phoneNumber, messageType, templateParams = [], options = {}) {
+  try {
+    // Get template configuration
+    const templateConfig = templates[messageType];
+    
+    if (!templateConfig) {
+      throw new Error(`Template type '${messageType}' not found in configuration. Available types: ${Object.keys(templates).join(', ')}`);
+    }
+
+    // Get template name (use override if provided, otherwise from config)
+    const templateName = options.templateName || templateConfig.templateName;
+    const language = options.language || templateConfig.language || process.env.WAZZAP_TEMPLATE_LANGUAGE || 'en';
+    
+    // Validate parameter count
+    if (templateParams.length !== templateConfig.paramCount) {
+      throw new Error(
+        `Template '${messageType}' requires ${templateConfig.paramCount} parameters, ` +
+        `but ${templateParams.length} were provided. Parameters: ${JSON.stringify(templateParams)}`
+      );
+    }
+
+    // Use the existing function with the resolved template name
+    return await sendWhatsAppTemplateMessage(phoneNumber, templateName, language, templateParams);
+
+  } catch (error) {
+    console.error('WhatsApp Message Error:', error.message);
+    return {
+      success: false,
+      error: error.message,
+      errorCode: 'TEMPLATE_CONFIG_ERROR'
+    };
+  }
+}
+
+/**
  * Format phone number for WhatsApp (add country code if missing)
  */
 function formatPhoneNumber(phone) {
@@ -328,7 +370,8 @@ async function checkWhatsAppMessageStatus(messageId) {
 }
 
 module.exports = {
-  sendWhatsAppTemplateMessage,
+  sendWhatsAppMessage, // New multi-template function
+  sendWhatsAppTemplateMessage, // Old function for backward compatibility
   formatPhoneNumber,
   checkWhatsAppMessageStatus
 };

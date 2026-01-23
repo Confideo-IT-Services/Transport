@@ -3,6 +3,7 @@ const { v4: uuidv4 } = require('uuid');
 const router = express.Router();
 const db = require('../config/database');
 const { authenticateToken, requireAdmin, requireTeacher } = require('../middleware/auth');
+const { sendWhatsAppMessage, formatPhoneNumber } = require('../services/whatsappService');
 
 // ============ STUDENT ATTENDANCE ============
 
@@ -640,6 +641,192 @@ router.get('/stats/monthly', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Get monthly stats error:', error);
     res.status(500).json({ error: 'Failed to fetch monthly statistics' });
+  }
+});
+
+// Send monthly attendance reports to all parents via WhatsApp
+router.post('/send-to-all', authenticateToken, requireTeacher, async (req, res) => {
+  try {
+    const { month, year, classId } = req.body; // month: 1-12, year: 2026
+
+    if (!month || !year) {
+      return res.status(400).json({ error: 'Month and year are required' });
+    }
+
+    const schoolId = req.user.schoolId;
+
+    // Get school name
+    const [schools] = await db.query(
+      'SELECT name FROM schools WHERE id = ?',
+      [schoolId]
+    );
+    const schoolName = schools.length > 0 ? schools[0].name : 'School';
+
+    // Format month name (e.g., "January 2026")
+    const monthNames = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December'
+    ];
+    const monthText = `${monthNames[parseInt(month) - 1]} ${year}`;
+
+    // Build query to get students with attendance percentage
+    let studentsQuery = `
+      SELECT 
+        s.id,
+        s.name as student_name,
+        s.parent_phone,
+        s.parent_name,
+        c.name as class_name,
+        COUNT(CASE WHEN a.status = 'present' THEN 1 END) as present_days,
+        COUNT(CASE WHEN a.status IN ('present', 'absent', 'leave') THEN 1 END) as total_days,
+        CASE 
+          WHEN COUNT(CASE WHEN a.status IN ('present', 'absent', 'leave') THEN 1 END) > 0
+          THEN ROUND(
+            (COUNT(CASE WHEN a.status = 'present' THEN 1 END) * 100.0) / 
+            COUNT(CASE WHEN a.status IN ('present', 'absent', 'leave') THEN 1 END),
+            1
+          )
+          ELSE 0
+        END as attendance_percentage
+      FROM students s
+      LEFT JOIN classes c ON s.class_id = c.id
+      LEFT JOIN attendance a ON a.student_id = s.id 
+        AND YEAR(a.date) = ? 
+        AND MONTH(a.date) = ?
+      WHERE s.status = 'approved'
+        AND s.parent_phone IS NOT NULL 
+        AND s.parent_phone != ''
+    `;
+
+    const queryParams = [year, month];
+
+    // Add class filter if provided
+    if (classId) {
+      studentsQuery += ' AND s.class_id = ?';
+      queryParams.push(classId);
+    }
+
+    // Add school filter
+    studentsQuery += ' AND s.school_id = ?';
+    queryParams.push(schoolId);
+
+    // Add teacher filter if teacher
+    if (req.user.role === 'teacher') {
+      studentsQuery += ` AND s.class_id IN (
+        SELECT id FROM classes WHERE school_id = ? AND class_teacher_id = ?
+      )`;
+      queryParams.push(schoolId, req.user.id);
+    }
+
+    studentsQuery += ' GROUP BY s.id, s.name, s.parent_phone, s.parent_name, c.name';
+    studentsQuery += ' HAVING total_days > 0'; // Only students with attendance records
+
+    const [students] = await db.query(studentsQuery, queryParams);
+
+    if (students.length === 0) {
+      return res.status(404).json({ 
+        error: 'No students with attendance records found for this month' 
+      });
+    }
+
+    // Send messages to all parents
+    const results = {
+      total: students.length,
+      successful: 0,
+      failed: 0,
+      errors: []
+    };
+
+    for (const student of students) {
+      const formattedPhone = formatPhoneNumber(student.parent_phone);
+      
+      if (!formattedPhone) {
+        results.failed++;
+        results.errors.push({
+          student: student.student_name,
+          phone: student.parent_phone,
+          error: 'Invalid phone number format'
+        });
+        continue;
+      }
+
+      // Build template parameters for attendance template
+      // Template: Hello {{1}}, 📊 This month "{{2}}" Attendance Report of your child *{{3}}* is {{4}}%. Thank you, {{5}} Management.
+      // Parameters: [parent_name, month, student_name, attendance_percentage, school_name]
+      const templateParams = [
+        student.parent_name || 'Parent',           // {{1}} - Parent name
+        monthText,                                 // {{2}} - Month (e.g., "January 2026")
+        student.student_name,                      // {{3}} - Student name
+        student.attendance_percentage.toString(),   // {{4}} - Attendance percentage (e.g., "80")
+        schoolName                                 // {{5}} - School name
+      ];
+
+      // Send template message using the new multi-template system
+      const result = await sendWhatsAppMessage(
+        formattedPhone,
+        'attendance',  // Message type from config
+        templateParams
+      );
+
+      if (result.success && (result.queueId || result.messageId)) {
+        const queueId = result.queueId || result.messageId;
+        
+        // Log successful message to database
+        try {
+          await db.query(
+            `INSERT INTO whatsapp_messages 
+             (id, queue_id, message_id, recipient_phone, recipient_name, template_name, 
+              message_type, status, related_type, related_id, school_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              uuidv4(),
+              queueId,
+              result.messageId || null,
+              formattedPhone,
+              student.student_name,
+              'convent_pulse_attendance',
+              'template',
+              result.messageStatus || 'queued',
+              'attendance',
+              `${year}-${month}`, // Store year-month as related_id
+              schoolId
+            ]
+          );
+        } catch (logError) {
+          console.error('Failed to log WhatsApp message:', logError);
+        }
+
+        results.successful++;
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`✅ Successfully sent attendance to ${student.student_name} (${formattedPhone}) - Message ID: ${queueId}`);
+        }
+      } else {
+        results.failed++;
+        results.errors.push({
+          student: student.student_name,
+          phone: formattedPhone,
+          error: result.error || 'Failed to send message'
+        });
+        if (process.env.NODE_ENV === 'development') {
+          console.error(`❌ Failed to send to ${student.student_name}:`, result.error);
+        }
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Attendance reports sent: ${results.successful} successful, ${results.failed} failed`,
+      results: {
+        total: results.total,
+        successful: results.successful,
+        failed: results.failed,
+        errors: results.errors
+      }
+    });
+
+  } catch (error) {
+    console.error('Send attendance reports error:', error);
+    res.status(500).json({ error: 'Failed to send attendance reports' });
   }
 });
 

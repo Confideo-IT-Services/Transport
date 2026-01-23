@@ -104,6 +104,7 @@ export default function AttendanceModule() {
   const [attendanceEndDate, setAttendanceEndDate] = useState<Date>(() => new Date());
   const [studentAttendancePercentages, setStudentAttendancePercentages] = useState<any[]>([]);
   const [isLoadingPercentages, setIsLoadingPercentages] = useState(false);
+  const [isSendingAttendance, setIsSendingAttendance] = useState(false);
   const [markingTeacherId, setMarkingTeacherId] = useState<string | null>(null);
   const [teacherStatus, setTeacherStatus] = useState<'present' | 'absent' | 'late' | 'leave'>('present');
   const [teacherRemarks, setTeacherRemarks] = useState('');
@@ -463,6 +464,78 @@ export default function AttendanceModule() {
 
     loadStudentAttendancePercentages();
   }, [selectedClassId, attendanceStartDate, attendanceEndDate]);
+
+  // Send attendance reports to all parents
+  const handleSendAttendanceToAll = async () => {
+    if (!selectedClassId) {
+      toast({
+        title: "Error",
+        description: "Please select a class first",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (studentAttendancePercentages.length === 0) {
+      toast({
+        title: "Error",
+        description: "No attendance data to send",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Get month and year from the start date (use start date as it represents the month)
+    const month = attendanceStartDate.getMonth() + 1; // JavaScript months are 0-indexed
+    const year = attendanceStartDate.getFullYear();
+
+    // Confirm before sending
+    const monthName = attendanceStartDate.toLocaleString('default', { month: 'long' });
+    if (!confirm(`Are you sure you want to send attendance reports for ${monthName} ${year} to ALL parents?`)) {
+      return;
+    }
+
+    try {
+      setIsSendingAttendance(true);
+      
+      const result = await attendanceApi.sendToAll({
+        month,
+        year,
+        classId: selectedClassId
+      });
+
+      if (result.success) {
+        toast({
+          title: "Success",
+          description: `✅ ${result.results.successful} out of ${result.results.total} parents received the attendance report!`,
+        });
+
+        if (result.results.failed > 0) {
+          console.warn('Some messages failed:', result.results.errors);
+          toast({
+            title: "Warning",
+            description: `⚠️ ${result.results.failed} messages failed. Check console for details.`,
+            variant: "destructive",
+          });
+        }
+      } else {
+        toast({
+          title: "Error",
+          description: "Failed to send attendance reports",
+          variant: "destructive",
+        });
+      }
+    } catch (error: any) {
+      console.error('Error sending attendance reports:', error);
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to send WhatsApp messages",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSendingAttendance(false);
+    }
+  };
 
   // Load students when class is selected
   useEffect(() => {
@@ -1180,7 +1253,7 @@ export default function AttendanceModule() {
                     <TrendingUp className="w-5 h-5 text-primary" />
                     Student Attendance Percentage
                   </CardTitle>
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-3 flex-wrap">
                     <div className="flex items-center gap-2">
                       <Label htmlFor="attendance-start-date" className="text-sm whitespace-nowrap">From:</Label>
                       <Input
@@ -1217,6 +1290,24 @@ export default function AttendanceModule() {
                         className="w-40"
                       />
                     </div>
+                    {/* Send to All Parents Button */}
+                    <Button
+                      onClick={handleSendAttendanceToAll}
+                      disabled={isSendingAttendance || !selectedClassId || studentAttendancePercentages.length === 0}
+                      className="ml-auto"
+                    >
+                      {isSendingAttendance ? (
+                        <>
+                          <Clock className="w-4 h-4 mr-2 animate-spin" />
+                          Sending...
+                        </>
+                      ) : (
+                        <>
+                          <Users className="w-4 h-4 mr-2" />
+                          Send to All Parents
+                        </>
+                      )}
+                    </Button>
                   </div>
                 </div>
               </CardHeader>

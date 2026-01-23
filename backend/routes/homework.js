@@ -340,7 +340,7 @@ router.post('/:id/completions/bulk', authenticateToken, requireTeacher, async (r
   }
 });
 
-const { sendWhatsAppTemplateMessage, formatPhoneNumber } = require('../services/whatsappService');
+const { sendWhatsAppMessage, sendWhatsAppTemplateMessage, formatPhoneNumber } = require('../services/whatsappService');
 
 // TEST ENDPOINT - Test WhatsApp API with single message (remove after testing)
 router.post('/test-whatsapp', authenticateToken, requireTeacher, async (req, res) => {

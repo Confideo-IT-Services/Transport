@@ -14,6 +14,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { 
   Bell, 
   Send, 
@@ -22,10 +28,14 @@ import {
   Clock,
   AlertTriangle,
   Megaphone,
-  Loader2
+  Loader2,
+  FileText,
+  X,
+  Download,
+  ExternalLink
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { notificationsApi, classesApi, Notification, SentNotification, NotificationTemplate } from "@/lib/api";
+import { notificationsApi, classesApi, uploadApi, Notification, SentNotification, NotificationTemplate } from "@/lib/api";
 
 export default function NotificationsModule() {
   const { user } = useAuth();
@@ -45,6 +55,18 @@ export default function NotificationsModule() {
   const [selectedClassIds, setSelectedClassIds] = useState<string[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState("");
   const [priority, setPriority] = useState<"normal" | "urgent">("normal");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [attachmentUrl, setAttachmentUrl] = useState<string | null>(null);
+  const [uploadingFile, setUploadingFile] = useState(false);
+  const [attachmentInfo, setAttachmentInfo] = useState<{
+    name: string;
+    url: string;
+    type: string;
+  } | null>(null);
+  const [selectedNotification, setSelectedNotification] = useState<Notification | null>(null);
+  const [viewingAttachment, setViewingAttachment] = useState(false);
+  const [selectedSentNotification, setSelectedSentNotification] = useState<SentNotification | null>(null);
+  const [viewingSentAttachment, setViewingSentAttachment] = useState(false);
 
   // Fetch data on mount
   useEffect(() => {
@@ -102,6 +124,56 @@ export default function NotificationsModule() {
     return date.toLocaleDateString();
   };
 
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Validate file size (10MB)
+    if (file.size > 10 * 1024 * 1024) {
+      toast({
+        title: "Error",
+        description: "File size must be less than 10MB",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      setUploadingFile(true);
+      setSelectedFile(file);
+      
+      const result = await uploadApi.uploadNotificationAttachment(file);
+      
+      setAttachmentUrl(result.fileUrl);
+      setAttachmentInfo({
+        name: result.originalName,
+        url: result.fileUrl,
+        type: result.fileType
+      });
+      
+      toast({
+        title: "Success",
+        description: "File uploaded successfully",
+      });
+    } catch (error: any) {
+      console.error('Error uploading file:', error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to upload file",
+        variant: "destructive",
+      });
+      setSelectedFile(null);
+    } finally {
+      setUploadingFile(false);
+    }
+  };
+
+  const handleRemoveFile = () => {
+    setSelectedFile(null);
+    setAttachmentUrl(null);
+    setAttachmentInfo(null);
+  };
+
   const handleSendNotification = async () => {
     if (!notificationTitle || !notificationMessage || !recipient) {
       toast({
@@ -136,7 +208,10 @@ export default function NotificationsModule() {
         message: notificationMessage,
         targetType,
         targetClasses,
-        priority: isAdmin ? priority : 'normal'
+        priority: isAdmin ? priority : 'normal',
+        attachmentUrl: attachmentUrl || undefined,
+        attachmentName: attachmentInfo?.name || undefined,
+        attachmentType: attachmentInfo?.type || undefined,
       });
 
       toast({
@@ -150,6 +225,9 @@ export default function NotificationsModule() {
       setRecipient("");
       setSelectedClassIds([]);
       setSelectedTemplate("");
+      setSelectedFile(null);
+      setAttachmentUrl(null);
+      setAttachmentInfo(null);
       
       // Refresh data
       await fetchData();
@@ -177,6 +255,32 @@ export default function NotificationsModule() {
     } catch (error) {
       console.error('Error marking as read:', error);
     }
+  };
+
+  const handleNotificationClick = (notification: Notification) => {
+    setSelectedNotification(notification);
+    setViewingAttachment(false); // Reset viewing state when opening new notification
+    // Mark as read if unread
+    if (!notification.read) {
+      handleMarkAsRead(notification.id);
+    }
+  };
+
+  // Helper function to check if file is an image
+  const isImageFile = (url: string, type?: string) => {
+    if (type) {
+      return type.startsWith('image/');
+    }
+    const extension = url.split('.').pop()?.toLowerCase();
+    return ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg'].includes(extension || '');
+  };
+
+  // Helper function to check if file is PDF
+  const isPdfFile = (url: string, type?: string) => {
+    if (type) {
+      return type === 'application/pdf';
+    }
+    return url.toLowerCase().endsWith('.pdf');
   };
 
   if (loading) {
@@ -282,6 +386,42 @@ export default function NotificationsModule() {
                 />
               </div>
 
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Attachment (Optional)</label>
+                {!attachmentInfo ? (
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="file"
+                      accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.txt,.csv"
+                      onChange={handleFileSelect}
+                      disabled={uploadingFile}
+                      className="flex-1"
+                    />
+                    {uploadingFile && (
+                      <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between p-3 border rounded-lg bg-muted/50">
+                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                      <FileText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                      <span className="text-sm truncate">{attachmentInfo.name}</span>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleRemoveFile}
+                    >
+                      <X className="w-4 h-4" />
+                    </Button>
+                  </div>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  Supported: Images, PDF, Word, Excel, Text files (Max 10MB)
+                </p>
+              </div>
+
               {isAdmin && (
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Priority</label>
@@ -374,7 +514,7 @@ export default function NotificationsModule() {
                 <Card 
                   key={notification.id} 
                   className={!notification.read ? "border-primary/50 cursor-pointer" : "cursor-pointer"}
-                  onClick={() => !notification.read && handleMarkAsRead(notification.id)}
+                  onClick={() => handleNotificationClick(notification)}
                 >
                   <CardContent className="py-4">
                     <div className="flex items-start gap-4">
@@ -426,14 +566,18 @@ export default function NotificationsModule() {
               </Card>
             ) : (
               sentNotifications.map((notification) => (
-                <Card key={notification.id}>
+                <Card 
+                  key={notification.id}
+                  className="cursor-pointer hover:bg-muted/50 transition-colors"
+                  onClick={() => setSelectedSentNotification(notification)}
+                >
                   <CardContent className="py-4">
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-4">
+                      <div className="flex items-center gap-4 flex-1">
                         <div className="w-10 h-10 rounded-lg bg-secondary/10 flex items-center justify-center">
                           <CheckCircle2 className="w-5 h-5 text-secondary" />
                         </div>
-                        <div>
+                        <div className="flex-1">
                           <h3 className="font-semibold">{notification.title}</h3>
                           <div className="flex items-center gap-4 mt-1 text-xs text-muted-foreground">
                             <span className="flex items-center gap-1">
@@ -442,14 +586,25 @@ export default function NotificationsModule() {
                             </span>
                             <span className="flex items-center gap-1">
                               <Clock className="w-3 h-3" />
-                              {formatTimeAgo(notification.time)}
+                              {formatTimeAgo(notification.time || notification.createdAt)}
                             </span>
+                            {notification.attachmentUrl && (
+                              <span className="flex items-center gap-1">
+                                <FileText className="w-3 h-3" />
+                                Attachment
+                              </span>
+                            )}
                           </div>
                         </div>
                       </div>
-                      <Badge variant="secondary" className="bg-secondary/10 text-secondary">
-                        {notification.status}
-                      </Badge>
+                      <div className="flex items-center gap-2">
+                        {notification.priority === "urgent" && (
+                          <Badge variant="destructive" className="text-xs">Urgent</Badge>
+                        )}
+                        <Badge variant="secondary" className="bg-secondary/10 text-secondary">
+                          {notification.status}
+                        </Badge>
+                      </div>
                     </div>
                   </CardContent>
                 </Card>
@@ -457,6 +612,305 @@ export default function NotificationsModule() {
             )}
           </TabsContent>
         </Tabs>
+
+        {/* Notification Detail Dialog */}
+        {selectedNotification && (
+          <Dialog open={!!selectedNotification} onOpenChange={(open) => {
+            if (!open) {
+              setSelectedNotification(null);
+              setViewingAttachment(false);
+            }
+          }}>
+            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  {selectedNotification.priority === "urgent" ? (
+                    <AlertTriangle className="w-5 h-5 text-destructive" />
+                  ) : (
+                    <Megaphone className="w-5 h-5 text-primary" />
+                  )}
+                  {selectedNotification.title}
+                </DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4 mt-4">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground mb-2">From</p>
+                  <p className="text-sm">{selectedNotification.sender || selectedNotification.senderName}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground mb-2">Message</p>
+                  <p className="text-sm whitespace-pre-wrap">{selectedNotification.message}</p>
+                </div>
+                {selectedNotification.attachmentUrl && (
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground mb-2">Attachment</p>
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2 p-3 border rounded-lg bg-muted/50">
+                        <FileText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                        <span className="text-sm flex-1 truncate">{selectedNotification.attachmentName || 'Attachment'}</span>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={async () => {
+                            try {
+                              // Fetch the file as blob
+                              const response = await fetch(selectedNotification.attachmentUrl!);
+                              const blob = await response.blob();
+                              const blobUrl = window.URL.createObjectURL(blob);
+                              
+                              // Create download link
+                              const link = document.createElement('a');
+                              link.href = blobUrl;
+                              link.download = selectedNotification.attachmentName || 'attachment';
+                              document.body.appendChild(link);
+                              link.click();
+                              
+                              // Cleanup
+                              document.body.removeChild(link);
+                              window.URL.revokeObjectURL(blobUrl);
+                              
+                              toast({
+                                title: "Success",
+                                description: "File download started",
+                              });
+                            } catch (error) {
+                              console.error('Error downloading file:', error);
+                              toast({
+                                title: "Error",
+                                description: "Failed to download file",
+                                variant: "destructive",
+                              });
+                            }
+                          }}
+                        >
+                          <Download className="w-4 h-4 mr-2" />
+                          Download
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setViewingAttachment(true)}
+                        >
+                          <ExternalLink className="w-4 h-4 mr-2" />
+                          View
+                        </Button>
+                      </div>
+                      
+                      {/* Inline viewer for images and PDFs */}
+                      {viewingAttachment && (
+                        <div className="border rounded-lg p-4 bg-muted/30">
+                          <div className="flex items-center justify-between mb-3">
+                            <p className="text-sm font-medium">Preview</p>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setViewingAttachment(false)}
+                            >
+                              <X className="w-4 h-4" />
+                            </Button>
+                          </div>
+                          {isImageFile(selectedNotification.attachmentUrl, selectedNotification.attachmentType) ? (
+                            <div className="flex justify-center">
+                              <img
+                                src={selectedNotification.attachmentUrl}
+                                alt={selectedNotification.attachmentName || 'Attachment'}
+                                className="max-w-full max-h-[500px] rounded-lg object-contain"
+                              />
+                            </div>
+                          ) : isPdfFile(selectedNotification.attachmentUrl, selectedNotification.attachmentType) ? (
+                            <div className="w-full h-[500px]">
+                              <iframe
+                                src={selectedNotification.attachmentUrl}
+                                className="w-full h-full rounded-lg border"
+                                title={selectedNotification.attachmentName || 'PDF Preview'}
+                              />
+                            </div>
+                          ) : (
+                            <div className="text-center py-8 text-muted-foreground">
+                              <FileText className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                              <p className="text-sm">Preview not available for this file type</p>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="mt-4"
+                                onClick={() => window.open(selectedNotification.attachmentUrl, '_blank')}
+                              >
+                                Open in New Tab
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+                <div className="flex items-center gap-4 text-xs text-muted-foreground pt-2 border-t">
+                  <span className="flex items-center gap-1">
+                    <Clock className="w-3 h-3" />
+                    {formatTimeAgo(selectedNotification.time || selectedNotification.createdAt)}
+                  </span>
+                  {selectedNotification.priority === "urgent" && (
+                    <Badge variant="destructive" className="text-xs">Urgent</Badge>
+                  )}
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
+        )}
+
+        {/* Sent Notification Detail Dialog */}
+        {selectedSentNotification && (
+          <Dialog open={!!selectedSentNotification} onOpenChange={(open) => {
+            if (!open) {
+              setSelectedSentNotification(null);
+              setViewingSentAttachment(false);
+            }
+          }}>
+            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  {selectedSentNotification.priority === "urgent" ? (
+                    <AlertTriangle className="w-5 h-5 text-destructive" />
+                  ) : (
+                    <Megaphone className="w-5 h-5 text-primary" />
+                  )}
+                  {selectedSentNotification.title}
+                </DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4 mt-4">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground mb-2">To</p>
+                  <p className="text-sm">
+                    {selectedSentNotification.targetType === 'all_teachers' && 'All Teachers'}
+                    {selectedSentNotification.targetType === 'all_parents' && 'All Parents'}
+                    {selectedSentNotification.targetType === 'all_classes' && 'All Classes'}
+                    {selectedSentNotification.targetType === 'selected_classes' && 'Selected Classes'}
+                    {selectedSentNotification.targetType === 'specific_students' && 'Specific Students'}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {selectedSentNotification.recipients} recipient{selectedSentNotification.recipients !== 1 ? 's' : ''}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground mb-2">Message</p>
+                  <p className="text-sm whitespace-pre-wrap">{selectedSentNotification.message}</p>
+                </div>
+                {selectedSentNotification.attachmentUrl && (
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground mb-2">Attachment</p>
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2 p-3 border rounded-lg bg-muted/50">
+                        <FileText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                        <span className="text-sm flex-1 truncate">{selectedSentNotification.attachmentName || 'Attachment'}</span>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={async () => {
+                            try {
+                              const response = await fetch(selectedSentNotification.attachmentUrl!);
+                              const blob = await response.blob();
+                              const blobUrl = window.URL.createObjectURL(blob);
+                              
+                              const link = document.createElement('a');
+                              link.href = blobUrl;
+                              link.download = selectedSentNotification.attachmentName || 'attachment';
+                              document.body.appendChild(link);
+                              link.click();
+                              
+                              document.body.removeChild(link);
+                              window.URL.revokeObjectURL(blobUrl);
+                              
+                              toast({
+                                title: "Success",
+                                description: "File download started",
+                              });
+                            } catch (error) {
+                              console.error('Error downloading file:', error);
+                              toast({
+                                title: "Error",
+                                description: "Failed to download file",
+                                variant: "destructive",
+                              });
+                            }
+                          }}
+                        >
+                          <Download className="w-4 h-4 mr-2" />
+                          Download
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setViewingSentAttachment(true)}
+                        >
+                          <ExternalLink className="w-4 h-4 mr-2" />
+                          View
+                        </Button>
+                      </div>
+                      
+                      {/* Inline viewer for images and PDFs */}
+                      {viewingSentAttachment && (
+                        <div className="border rounded-lg p-4 bg-muted/30">
+                          <div className="flex items-center justify-between mb-3">
+                            <p className="text-sm font-medium">Preview</p>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setViewingSentAttachment(false)}
+                            >
+                              <X className="w-4 h-4" />
+                            </Button>
+                          </div>
+                          {isImageFile(selectedSentNotification.attachmentUrl, selectedSentNotification.attachmentType) ? (
+                            <div className="flex justify-center">
+                              <img
+                                src={selectedSentNotification.attachmentUrl}
+                                alt={selectedSentNotification.attachmentName || 'Attachment'}
+                                className="max-w-full max-h-[500px] rounded-lg object-contain"
+                              />
+                            </div>
+                          ) : isPdfFile(selectedSentNotification.attachmentUrl, selectedSentNotification.attachmentType) ? (
+                            <div className="w-full h-[500px]">
+                              <iframe
+                                src={selectedSentNotification.attachmentUrl}
+                                className="w-full h-full rounded-lg border"
+                                title={selectedSentNotification.attachmentName || 'PDF Preview'}
+                              />
+                            </div>
+                          ) : (
+                            <div className="text-center py-8 text-muted-foreground">
+                              <FileText className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                              <p className="text-sm">Preview not available for this file type</p>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="mt-4"
+                                onClick={() => window.open(selectedSentNotification.attachmentUrl, '_blank')}
+                              >
+                                Open in New Tab
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+                <div className="flex items-center gap-4 text-xs text-muted-foreground pt-2 border-t">
+                  <span className="flex items-center gap-1">
+                    <Clock className="w-3 h-3" />
+                    {formatTimeAgo(selectedSentNotification.time || selectedSentNotification.createdAt)}
+                  </span>
+                  {selectedSentNotification.priority === "urgent" && (
+                    <Badge variant="destructive" className="text-xs">Urgent</Badge>
+                  )}
+                  <Badge variant="secondary" className="text-xs">
+                    {selectedSentNotification.status}
+                  </Badge>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
+        )}
       </div>
     </UnifiedLayout>
   );
