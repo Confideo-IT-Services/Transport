@@ -3,6 +3,8 @@ const { v4: uuidv4 } = require('uuid');
 const router = express.Router();
 const db = require('../config/database');
 const { authenticateToken, requireTeacher } = require('../middleware/auth');
+const { sendWhatsAppMessage, formatPhoneNumber } = require('../services/whatsappService');
+const templates = require('../config/whatsappTemplates');
 
 // Get all tests (filtered by teacher/school)
 router.get('/', authenticateToken, requireTeacher, async (req, res) => {
@@ -31,6 +33,7 @@ router.get('/', authenticateToken, requireTeacher, async (req, res) => {
       id: t.id,
       name: t.name,
       testTime: t.test_time,
+      testDate: t.test_date,
       classId: t.class_id,
       className: t.class_name ? `${t.class_name} ${t.class_section || ''}`.trim() : null,
       teacherId: t.teacher_id,
@@ -86,6 +89,7 @@ router.get('/:id', authenticateToken, requireTeacher, async (req, res) => {
       id: test.id,
       name: test.name,
       testTime: test.test_time,
+      testDate: test.test_date,
       classId: test.class_id,
       className: test.class_name ? `${test.class_name} ${test.class_section || ''}`.trim() : null,
       teacherId: test.teacher_id,
@@ -109,10 +113,10 @@ router.get('/:id', authenticateToken, requireTeacher, async (req, res) => {
 // Create test
 router.post('/', authenticateToken, requireTeacher, async (req, res) => {
   try {
-    const { name, testTime, classId, subjects } = req.body; // subjects: [{subjectId, maxMarks, syllabus}]
+    const { name, testTime, testDate, classId, subjects } = req.body; // subjects: [{subjectId, maxMarks, syllabus}]
 
-    if (!name || !testTime || !classId || !subjects || !Array.isArray(subjects) || subjects.length === 0) {
-      return res.status(400).json({ error: 'Name, test time, class, and at least one subject are required' });
+    if (!name || !testTime || !testDate || !classId || !subjects || !Array.isArray(subjects) || subjects.length === 0) {
+      return res.status(400).json({ error: 'Name, test time, test date, class, and at least one subject are required' });
     }
 
     const teacherId = req.user.id;
@@ -144,9 +148,9 @@ router.post('/', authenticateToken, requireTeacher, async (req, res) => {
       // Create test
       const testId = uuidv4();
       await db.query(
-        `INSERT INTO tests (id, name, test_time, class_id, teacher_id, school_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, NOW())`,
-        [testId, name, testTime, classId, teacherId, schoolId]
+        `INSERT INTO tests (id, name, test_time, test_date, class_id, teacher_id, school_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+        [testId, name, testTime, testDate, classId, teacherId, schoolId]
       );
 
       // Add test subjects
@@ -171,6 +175,73 @@ router.post('/', authenticateToken, requireTeacher, async (req, res) => {
   } catch (error) {
     console.error('Create test error:', error);
     res.status(500).json({ error: 'Failed to create test' });
+  }
+});
+
+// Update test
+router.put('/:id', authenticateToken, requireTeacher, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, testTime, testDate, subjects } = req.body;
+
+    // Verify test exists and user has access
+    const [tests] = await db.query('SELECT id, teacher_id, school_id FROM tests WHERE id = ?', [id]);
+    if (tests.length === 0) {
+      return res.status(404).json({ error: 'Test not found' });
+    }
+
+    const test = tests[0];
+    if (req.user.role === 'teacher' && test.teacher_id !== req.user.id) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    if (req.user.role === 'admin' && test.school_id !== req.user.schoolId) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    if (!name || !testTime || !testDate) {
+      return res.status(400).json({ error: 'Name, test time, and test date are required' });
+    }
+
+    // Start transaction
+    await db.query('START TRANSACTION');
+
+    try {
+      // Update test
+      await db.query(
+        `UPDATE tests 
+         SET name = ?, test_time = ?, test_date = ?, updated_at = NOW()
+         WHERE id = ?`,
+        [name, testTime, testDate, id]
+      );
+
+      // Update subjects if provided
+      if (subjects && Array.isArray(subjects) && subjects.length > 0) {
+        // Delete existing test subjects
+        await db.query('DELETE FROM test_subjects WHERE test_id = ?', [id]);
+
+        // Add new test subjects
+        for (const subject of subjects) {
+          if (!subject.subjectId || !subject.maxMarks) {
+            continue;
+          }
+          const testSubjectId = uuidv4();
+          await db.query(
+            `INSERT INTO test_subjects (id, test_id, subject_id, max_marks, syllabus, created_at)
+             VALUES (?, ?, ?, ?, ?, NOW())`,
+            [testSubjectId, id, subject.subjectId, subject.maxMarks, subject.syllabus || null]
+          );
+        }
+      }
+
+      await db.query('COMMIT');
+      res.json({ success: true, message: 'Test updated successfully' });
+    } catch (error) {
+      await db.query('ROLLBACK');
+      throw error;
+    }
+  } catch (error) {
+    console.error('Update test error:', error);
+    res.status(500).json({ error: 'Failed to update test' });
   }
 });
 
@@ -298,6 +369,187 @@ router.get('/:id/results', authenticateToken, requireTeacher, async (req, res) =
   } catch (error) {
     console.error('Get test results error:', error);
     res.status(500).json({ error: 'Failed to fetch test results' });
+  }
+});
+
+// Send test details to all parents
+router.post('/:id/send-to-all', authenticateToken, requireTeacher, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Verify test exists and user has access
+    const [tests] = await db.query(
+      `SELECT t.*, c.name as class_name, c.section as class_section
+       FROM tests t
+       LEFT JOIN classes c ON t.class_id = c.id
+       WHERE t.id = ?`,
+      [id]
+    );
+
+    if (tests.length === 0) {
+      return res.status(404).json({ error: 'Test not found' });
+    }
+
+    const test = tests[0];
+
+    // Verify access
+    if (req.user.role === 'teacher' && test.teacher_id !== req.user.id) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    if (req.user.role === 'admin' && test.school_id !== req.user.schoolId) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    // Get school name
+    const [schools] = await db.query(
+      'SELECT name FROM schools WHERE id = ?',
+      [test.school_id]
+    );
+    const schoolName = schools.length > 0 ? schools[0].name : 'School';
+
+    // Get test subjects with syllabus
+    const [testSubjects] = await db.query(
+      `SELECT ts.*, s.name as subject_name
+       FROM test_subjects ts
+       JOIN subjects s ON ts.subject_id = s.id
+       WHERE ts.test_id = ?
+       ORDER BY s.name`,
+      [id]
+    );
+
+    if (testSubjects.length === 0) {
+      return res.status(400).json({ error: 'Test has no subjects' });
+    }
+
+    // Format syllabus list
+    const syllabusList = testSubjects
+      .map(ts => `${ts.subject_name} (${ts.max_marks} marks)${ts.syllabus ? ` - ${ts.syllabus}` : ''}`)
+      .join(', ');
+
+    // Format test date
+    const testDateFormatted = test.test_date
+      ? new Date(test.test_date).toLocaleDateString('en-IN', {
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric'
+        })
+      : 'Not specified';
+
+    // Format class name
+    const className = test.class_name
+      ? `${test.class_name}${test.class_section ? ` ${test.class_section}` : ''}`.trim()
+      : 'Class';
+
+    // Get all students in the class with parent information
+    const [students] = await db.query(
+      `SELECT s.id, s.name, s.parent_phone, s.parent_name
+       FROM students s
+       WHERE s.class_id = ?
+       AND s.status = 'approved'
+       AND s.parent_phone IS NOT NULL
+       AND s.parent_phone != ''`,
+      [test.class_id]
+    );
+
+    if (students.length === 0) {
+      return res.status(404).json({
+        error: 'No students with valid parent phone numbers found for this class'
+      });
+    }
+
+    // Send messages to all parents
+    const results = {
+      total: students.length,
+      successful: 0,
+      failed: 0,
+      errors: []
+    };
+
+    for (const student of students) {
+      const formattedPhone = formatPhoneNumber(student.parent_phone);
+
+      if (!formattedPhone) {
+        results.failed++;
+        results.errors.push({
+          student: student.name,
+          phone: student.parent_phone,
+          error: 'Invalid phone number format'
+        });
+        continue;
+      }
+
+      // Build template parameters
+      const templateParams = [
+        student.parent_name || student.name, // {{1}} Parent name
+        test.name,                           // {{2}} Test name
+        testDateFormatted,                   // {{3}} Test date
+        className,                           // {{4}} Class name
+        test.test_time || 'Not specified',   // {{5}} Duration
+        syllabusList,                        // {{6}} Syllabus
+        student.name,                        // {{7}} Student name
+        schoolName                           // {{8}} School name
+      ];
+
+      // Send template message
+      const result = await sendWhatsAppMessage(
+        formattedPhone,
+        'test', // Message type from config
+        templateParams
+      );
+
+      if (result.success && (result.queueId || result.messageId)) {
+        const queueId = result.queueId || result.messageId;
+        try {
+          await db.query(
+            `INSERT INTO whatsapp_messages 
+             (id, queue_id, message_id, recipient_phone, recipient_name, template_name, 
+              message_type, status, related_type, related_id, school_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              uuidv4(),
+              queueId,
+              result.messageId || null,
+              formattedPhone,
+              student.name,
+              templates.test.templateName,
+              'test',
+              result.messageStatus || 'queued',
+              'test_details',
+              id,
+              test.school_id
+            ]
+          );
+        } catch (logError) {
+          console.error('Failed to log WhatsApp message for test:', logError);
+        }
+        results.successful++;
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`✅ Successfully sent test details to ${student.name} (${formattedPhone}) - Message ID: ${queueId}`);
+        }
+      } else {
+        results.failed++;
+        results.errors.push({
+          student: student.name,
+          phone: formattedPhone,
+          error: result.error || 'Unknown error'
+        });
+        console.error(`❌ Failed to send test details to ${student.name} (${formattedPhone}): ${result.error}`);
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Test details sent: ${results.successful} successful, ${results.failed} failed`,
+      results
+    });
+
+  } catch (error) {
+    console.error('Send test details to all parents error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to send test details',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
 

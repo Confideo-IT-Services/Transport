@@ -36,6 +36,28 @@ const uploadJson = multer({
   },
 });
 
+// Configure multer for notification attachments
+const uploadNotificationFile = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+  fileFilter: (req, file, cb) => {
+    // Allow common file types
+    const allowedTypes = [
+      'image/jpeg', 'image/jpg', 'image/png', 'image/gif',
+      'application/pdf',
+      'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'text/plain', 'text/csv'
+    ];
+    
+    if (allowedTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('File type not allowed. Allowed types: Images, PDF, Word, Excel, Text files'), false);
+    }
+  },
+});
+
 // Upload student photo to S3
 router.post('/photo', uploadImages.single('photo'), async (req, res) => {
   try {
@@ -297,6 +319,82 @@ router.post('/id-layout', uploadJson.single('layout'), async (req, res) => {
     console.error('❌ Layout upload error:', error);
     res.status(500).json({ 
       error: 'Failed to upload layout',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+// Upload notification attachment
+router.post('/notification-attachment', uploadNotificationFile.single('attachment'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    if (!BUCKET_NAME) {
+      return res.status(500).json({ error: 'S3 bucket not configured' });
+    }
+
+    console.log('📤 Processing notification attachment upload:', {
+      originalName: req.file.originalname,
+      mimetype: req.file.mimetype,
+      size: req.file.size
+    });
+
+    // Generate unique filename - store in media/notifications/ folder
+    const fileExtension = req.file.originalname.split('.').pop() || 'bin';
+    const fileName = `media/notifications/${uuidv4()}.${fileExtension}`;
+    const contentType = req.file.mimetype;
+
+    // Upload to S3
+    let command;
+    try {
+      command = new PutObjectCommand({
+        Bucket: BUCKET_NAME,
+        Key: fileName,
+        Body: req.file.buffer,
+        ContentType: contentType,
+        ACL: 'public-read',
+      });
+      await s3Client.send(command);
+    } catch (aclError) {
+      if (aclError.name === 'AccessControlListNotSupported' || aclError.code === 'NotImplemented') {
+        console.log('⚠️  ACL not supported, uploading without ACL');
+        command = new PutObjectCommand({
+          Bucket: BUCKET_NAME,
+          Key: fileName,
+          Body: req.file.buffer,
+          ContentType: contentType,
+        });
+        await s3Client.send(command);
+      } else {
+        throw aclError;
+      }
+    }
+
+    // Construct S3 URL
+    const region = process.env.AWS_REGION || 'us-east-1';
+    let fileUrl;
+    if (region === 'us-east-1') {
+      fileUrl = `https://${BUCKET_NAME}.s3.amazonaws.com/${fileName}`;
+    } else {
+      fileUrl = `https://${BUCKET_NAME}.s3.${region}.amazonaws.com/${fileName}`;
+    }
+
+    console.log('✅ Notification attachment uploaded to S3:', fileUrl);
+
+    res.json({
+      success: true,
+      fileUrl: fileUrl,
+      fileName: fileName,
+      originalName: req.file.originalname,
+      fileType: req.file.mimetype,
+      fileSize: req.file.size
+    });
+  } catch (error) {
+    console.error('❌ Notification attachment upload error:', error);
+    res.status(500).json({ 
+      error: 'Failed to upload attachment',
       details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }

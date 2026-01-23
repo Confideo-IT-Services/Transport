@@ -213,7 +213,63 @@ router.post('/', authenticateToken, requireSuperAdmin, async (req, res) => {
   }
 });
 
-// Update school
+// Update own school (School Admin can update their school)
+router.put('/my-school', authenticateToken, async (req, res) => {
+  try {
+    const userRole = req.user.role;
+    const schoolId = req.user.schoolId;
+
+    if (userRole !== 'admin') {
+      return res.status(403).json({ error: 'Access denied. Admin role required' });
+    }
+
+    if (!schoolId) {
+      return res.status(400).json({ error: 'School ID not found' });
+    }
+
+    const { name, type, location, address, phone, email } = req.body;
+
+    const updates = [];
+    const values = [];
+
+    if (name) { updates.push('name = ?'); values.push(name); }
+    if (type) { updates.push('type = ?'); values.push(type); }
+    if (location !== undefined) { updates.push('location = ?'); values.push(location || null); }
+    if (address !== undefined) { updates.push('address = ?'); values.push(address || null); }
+    if (phone !== undefined) { updates.push('phone = ?'); values.push(phone || null); }
+    if (email) { 
+      // Check if email already exists for another school
+      const [existing] = await db.query(
+        'SELECT id FROM schools WHERE email = ? AND id != ?',
+        [email, schoolId]
+      );
+      if (existing.length > 0) {
+        return res.status(400).json({ error: 'School email already exists' });
+      }
+      updates.push('email = ?'); 
+      values.push(email); 
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+
+    values.push(schoolId);
+    const [result] = await db.query(
+      `UPDATE schools SET ${updates.join(', ')} WHERE id = ?`,
+      values
+    );
+
+    console.log('✅ School updated by admin:', { schoolId, affectedRows: result.affectedRows });
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Update school error:', error);
+    res.status(500).json({ error: 'Failed to update school' });
+  }
+});
+
+// Update school (Super Admin only)
 router.put('/:id', authenticateToken, requireSuperAdmin, async (req, res) => {
   try {
     const { id } = req.params;

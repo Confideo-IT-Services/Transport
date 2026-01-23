@@ -1,4 +1,5 @@
 const axios = require('axios');
+const templates = require('../config/whatsappTemplates');
 
 /**
  * Send WhatsApp template message using Meta WhatsApp Cloud API (via 1automations.com)
@@ -9,7 +10,7 @@ const axios = require('axios');
  * 
  * @param {string} phoneNumber - Phone number with country code (no +)
  * @param {string} templateName - Approved template name (convent_pulse_hw)
- * @param {string} languageCode - Language code (en_US)
+ * @param {string} languageCode - Language code (en)
  * @param {Array<string>} templateParams - Array of 5 parameter values
  * @returns {Promise<Object>} API response
  */
@@ -32,9 +33,8 @@ async function sendWhatsAppTemplateMessage(phoneNumber, templateName, languageCo
       throw new Error('Template name is required');
     }
 
-    if (templateParams.length !== 5) {
-      throw new Error('Template requires exactly 5 parameters');
-    }
+    // Parameter count validation removed - different templates have different counts
+    // Validation is now done in sendWhatsAppMessage() based on template config
 
     // Format phone number (ensure it has country code, no +)
     let formattedPhone = phoneNumber.replace(/\D/g, '');
@@ -47,15 +47,16 @@ async function sendWhatsAppTemplateMessage(phoneNumber, templateName, languageCo
     // Primary endpoint: https://crmapi.1automations.com/api/meta/v19.0/{PHONE_NUMBER_ID}/messages
     const endpoint = `${apiBaseUrl}/${apiVersion}/${phoneNumberId}/messages`;
 
-    // Build payload exactly as per Meta's WhatsApp Cloud API format
+    // Build payload exactly as per Meta's WhatsApp Cloud API format (via 1automations.com)
     const payload = {
-      messaging_product: "whatsapp",
       to: formattedPhone,
+      recipient_type: "individual",
       type: "template",
       template: {
         name: templateName,
         language: {
-          code: languageCode || "en_US"
+          policy: "deterministic",
+          code: languageCode || "en"
         },
         components: [
           {
@@ -147,6 +148,8 @@ async function sendWhatsAppTemplateMessage(phoneNumber, templateName, languageCo
       return {
         success: true,
         messageId: messageId,
+        queueId: messageId, // Use messageId as queueId for Meta format (for database logging)
+        messageStatus: 'sent', // Meta format typically means message is sent
         data: response.data
       };
     }
@@ -218,6 +221,48 @@ async function sendWhatsAppTemplateMessage(phoneNumber, templateName, languageCo
 }
 
 /**
+ * Send WhatsApp message using template type from config
+ * @param {string} phoneNumber - Phone number with country code
+ * @param {string} messageType - Type from templates config (e.g., 'homework', 'attendance')
+ * @param {Array<string>} templateParams - Parameters for the template
+ * @param {Object} options - Additional options (templateName override, language override, etc.)
+ * @returns {Promise<Object>} API response
+ */
+async function sendWhatsAppMessage(phoneNumber, messageType, templateParams = [], options = {}) {
+  try {
+    // Get template configuration
+    const templateConfig = templates[messageType];
+    
+    if (!templateConfig) {
+      throw new Error(`Template type '${messageType}' not found in configuration. Available types: ${Object.keys(templates).join(', ')}`);
+    }
+
+    // Get template name (use override if provided, otherwise from config)
+    const templateName = options.templateName || templateConfig.templateName;
+    const language = options.language || templateConfig.language || process.env.WAZZAP_TEMPLATE_LANGUAGE || 'en';
+    
+    // Validate parameter count
+    if (templateParams.length !== templateConfig.paramCount) {
+      throw new Error(
+        `Template '${messageType}' requires ${templateConfig.paramCount} parameters, ` +
+        `but ${templateParams.length} were provided. Parameters: ${JSON.stringify(templateParams)}`
+      );
+    }
+
+    // Use the existing function with the resolved template name
+    return await sendWhatsAppTemplateMessage(phoneNumber, templateName, language, templateParams);
+
+  } catch (error) {
+    console.error('WhatsApp Message Error:', error.message);
+    return {
+      success: false,
+      error: error.message,
+      errorCode: 'TEMPLATE_CONFIG_ERROR'
+    };
+  }
+}
+
+/**
  * Format phone number for WhatsApp (add country code if missing)
  */
 function formatPhoneNumber(phone) {
@@ -234,8 +279,100 @@ function formatPhoneNumber(phone) {
   return cleaned;
 }
 
+/**
+ * Check WhatsApp message status using queue_id or message_id
+ * Note: 1automations.com may not have a direct status endpoint
+ * This function attempts multiple endpoint formats
+ * @param {string} messageId - Queue ID or Message ID from send response
+ * @returns {Promise<Object>} Status information
+ */
+async function checkWhatsAppMessageStatus(messageId) {
+  try {
+    const accessToken = process.env.WAZZAP_API_KEY;
+    const phoneNumberId = process.env.WAZZAP_PHONE_NUMBER_ID;
+    const apiBaseUrl = process.env.WAZZAP_API_URL || 'https://crmapi.1automations.com/api/meta';
+    const apiVersion = process.env.WAZZAP_API_VERSION || 'v19.0';
+
+    if (!accessToken || !phoneNumberId || !messageId) {
+      throw new Error('Missing required configuration or message ID');
+    }
+
+    // Try different endpoint formats (1automations.com may have different structure)
+    const endpoints = [
+      `${apiBaseUrl}/${apiVersion}/${phoneNumberId}/messages/${messageId}`, // Standard Meta format
+      `${apiBaseUrl}/${apiVersion}/messages/${messageId}`, // Alternative format
+      `${apiBaseUrl}/messages/${messageId}/status`, // 1automations.com specific
+      `${apiBaseUrl}/status/${messageId}` // Another possible format
+    ];
+
+    let lastError = null;
+    for (const endpoint of endpoints) {
+      try {
+        const response = await axios.get(endpoint, {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+          },
+          timeout: 5000
+        });
+
+        if (response.data) {
+          // Parse different response formats
+          const status = response.data.status || 
+                       response.data.message_status || 
+                       response.data.message?.message_status ||
+                       response.data.data?.status ||
+                       'unknown';
+          
+          return {
+            success: true,
+            messageId: messageId,
+            status: status,
+            timestamp: response.data.timestamp || response.data.updated_at || new Date().toISOString(),
+            data: response.data
+          };
+        }
+      } catch (err) {
+        // If 404, try next endpoint; if other error, log and continue
+        if (err.response?.status !== 404) {
+          if (process.env.NODE_ENV === 'development') {
+            console.warn(`Status check endpoint failed: ${endpoint}`, err.message);
+          }
+        }
+        lastError = err;
+        continue;
+      }
+    }
+
+    // If all endpoints failed, return error
+    // Note: 1automations.com might not support status checking via API
+    // In that case, status updates would come via webhooks
+    return {
+      success: false,
+      error: 'Status check endpoint not available. Status updates may come via webhooks.',
+      errorCode: 'ENDPOINT_NOT_FOUND'
+    };
+
+  } catch (error) {
+    console.error('WhatsApp Status Check Error:', {
+      message: error.message,
+      status: error.response?.status,
+      data: error.response?.data
+    });
+
+    return {
+      success: false,
+      error: error.response?.data?.error?.message || error.message || 'Failed to check message status',
+      errorCode: error.response?.data?.error?.code,
+      statusCode: error.response?.status
+    };
+  }
+}
+
 module.exports = {
-  sendWhatsAppTemplateMessage,
-  formatPhoneNumber
+  sendWhatsAppMessage, // New multi-template function
+  sendWhatsAppTemplateMessage, // Old function for backward compatibility
+  formatPhoneNumber,
+  checkWhatsAppMessageStatus
 };
 

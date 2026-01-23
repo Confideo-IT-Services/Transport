@@ -154,8 +154,13 @@ export default function ReportsModule() {
   const [newTest, setNewTest] = useState({
     name: "",
     testTime: "",
+    testDate: "",
     subjects: [] as Array<{ subjectId: string; maxMarks: number; syllabus: string }>,
   });
+
+  // Edit Test State
+  const [editingTest, setEditingTest] = useState<any | null>(null);
+  const [showEditTest, setShowEditTest] = useState(false);
   
   // Add Marks State
   const [studentSubjectMarks, setStudentSubjectMarks] = useState<{ [studentId: string]: { [subjectId: string]: number } }>({});
@@ -735,10 +740,10 @@ export default function ReportsModule() {
 
   // Create new test
   const handleCreateTest = async () => {
-    if (!newTest.name || !newTest.testTime || !selectedClassId || newTest.subjects.length === 0) {
+    if (!newTest.name || !newTest.testTime || !newTest.testDate || !selectedClassId || newTest.subjects.length === 0) {
       toast({
         title: "Missing Information",
-        description: "Please fill test name, test time, and add at least one subject.",
+        description: "Please fill test name, test time, test date, and add at least one subject.",
         variant: "destructive",
       });
       return;
@@ -748,13 +753,14 @@ export default function ReportsModule() {
       const result = await testsApi.create({
         name: newTest.name,
         testTime: newTest.testTime,
+        testDate: newTest.testDate,
         classId: selectedClassId,
         subjects: newTest.subjects
       });
 
       toast({ title: "Test Created", description: `${newTest.name} has been created successfully.` });
       setShowCreateTest(false);
-      setNewTest({ name: "", testTime: "", subjects: [] });
+      setNewTest({ name: "", testTime: "", testDate: "", subjects: [] });
       
       // Reload tests
       const testsData = await testsApi.getAll();
@@ -765,6 +771,67 @@ export default function ReportsModule() {
       toast({
         title: "Error",
         description: error?.response?.data?.error || "Failed to create test",
+        variant: "destructive"
+      });
+    }
+  };
+
+  // Handle edit test
+  const handleEditTest = async (test: any) => {
+    try {
+      const testDetails = await testsApi.getById(test.id);
+      setEditingTest({
+        ...testDetails,
+        subjects: testDetails.subjects || []
+      });
+      setShowEditTest(true);
+    } catch (error: any) {
+      console.error('Error loading test for edit:', error);
+      toast({
+        title: "Error",
+        description: "Failed to load test details",
+        variant: "destructive"
+      });
+    }
+  };
+
+  // Update test
+  const handleUpdateTest = async () => {
+    if (!editingTest || !editingTest.name || !editingTest.testTime || !editingTest.testDate) {
+      toast({
+        title: "Missing Information",
+        description: "Please fill test name, test time, and test date.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      await testsApi.update(editingTest.id, {
+        name: editingTest.name,
+        testTime: editingTest.testTime,
+        testDate: editingTest.testDate,
+        subjects: editingTest.subjects
+      });
+
+      toast({ title: "Test Updated", description: `${editingTest.name} has been updated successfully.` });
+      setShowEditTest(false);
+      setEditingTest(null);
+      
+      // Reload tests
+      const testsData = await testsApi.getAll();
+      const filteredTests = testsData.filter((t: any) => t.classId === selectedClassId);
+      setTests(filteredTests);
+      
+      // Reload test details if it's the same test
+      if (testDetails && testDetails.id === editingTest.id) {
+        await loadTestDetails(editingTest.id);
+      }
+    } catch (error: any) {
+      console.error('Error updating test:', error);
+      toast({
+        title: "Error",
+        description: error?.response?.data?.error || "Failed to update test",
         variant: "destructive"
       });
     }
@@ -797,6 +864,35 @@ export default function ReportsModule() {
       ...prev,
       subjects: prev.subjects.filter((_, i) => i !== index)
     }));
+  };
+
+  // Add subject to editing test
+  const handleAddSubjectToEditingTest = (subjectId: string) => {
+    if (!editingTest) return;
+    const subject = availableSubjects.find((s: any) => s.id === subjectId);
+    if (!subject) return;
+
+    setEditingTest({
+      ...editingTest,
+      subjects: [...editingTest.subjects, { subjectId, maxMarks: 100, syllabus: "" }]
+    });
+  };
+
+  // Update subject in editing test
+  const handleUpdateSubjectInEditingTest = (index: number, field: string, value: any) => {
+    if (!editingTest) return;
+    const updatedSubjects = [...editingTest.subjects];
+    updatedSubjects[index] = { ...updatedSubjects[index], [field]: value };
+    setEditingTest({ ...editingTest, subjects: updatedSubjects });
+  };
+
+  // Remove subject from editing test
+  const handleRemoveSubjectFromEditingTest = (index: number) => {
+    if (!editingTest) return;
+    setEditingTest({
+      ...editingTest,
+      subjects: editingTest.subjects.filter((_, i) => i !== index)
+    });
   };
 
   // Save marks for test
@@ -858,41 +954,40 @@ export default function ReportsModule() {
       return;
     }
 
+    // Confirm before sending
+    if (!confirm(`Are you sure you want to send test details for "${test.name}" to ALL parents?`)) {
+      return;
+    }
+
     try {
-      const studentsData = await studentsApi.getByClass(test.classId);
-      if (!studentsData || studentsData.length === 0) {
+      const result = await testsApi.sendToAllParents(test.id);
+
+      if (result.success) {
         toast({
-          title: "No Students",
-          description: "No students found in this class",
+          title: "Success",
+          description: `✅ ${result.results.successful} out of ${result.results.total} parents received the test details!`,
+        });
+
+        if (result.results.failed > 0) {
+          console.warn('Some messages failed:', result.results.errors);
+          toast({
+            title: "Warning",
+            description: `⚠️ ${result.results.failed} messages failed. Check console for details.`,
+            variant: "destructive",
+          });
+        }
+      } else {
+        toast({
+          title: "Error",
+          description: "Failed to send test details",
           variant: "destructive"
         });
-        return;
       }
-
-      const subjectDetails = test.subjects.map((s: any) => 
-        `${s.subjectName} (${s.maxMarks} marks)${s.syllabus ? `\nSyllabus: ${s.syllabus}` : ''}`
-      ).join("\n\n");
-
-      studentsData.forEach((student: any) => {
-        if (student.parentPhone || student.parent_phone) {
-          const phone = student.parentPhone || student.parent_phone;
-          const message = encodeURIComponent(
-            `📝 *${test.name}*\n\n` +
-            `Test Time: ${test.testTime}\n` +
-            `Class: ${test.className}\n\n` +
-            `📚 *Subjects:*\n${subjectDetails}\n\n` +
-            `Please ensure your child is prepared! 📖`
-          );
-          window.open(`https://wa.me/91${phone}?text=${message}`, "_blank");
-        }
-      });
-
-      toast({ title: "Test Details Sent", description: `Test details sent to all parents.` });
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error sending test details:', error);
       toast({
         title: "Error",
-        description: "Failed to send test details",
+        description: error?.response?.data?.error || error?.message || "Failed to send WhatsApp messages",
         variant: "destructive"
       });
     }
@@ -1204,6 +1299,14 @@ export default function ReportsModule() {
                       />
                     </div>
                     <div className="space-y-2">
+                      <Label>Test Date *</Label>
+                      <Input 
+                        type="date"
+                        value={newTest.testDate} 
+                        onChange={(e) => setNewTest({ ...newTest, testDate: e.target.value })} 
+                      />
+                    </div>
+                    <div className="space-y-2">
                       <Label>Select Subjects *</Label>
                       <Select onValueChange={handleAddSubjectToNewTest}>
                         <SelectTrigger>
@@ -1271,6 +1374,107 @@ export default function ReportsModule() {
                 </DialogContent>
               </Dialog>
               )}
+
+            {/* Edit Test Dialog */}
+            {editingTest && (
+              <Dialog open={showEditTest} onOpenChange={setShowEditTest}>
+                <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                  <DialogHeader>
+                    <DialogTitle>Edit Test</DialogTitle>
+                  </DialogHeader>
+                  <div className="space-y-4 mt-4">
+                    <div className="space-y-2">
+                      <Label>Test Name *</Label>
+                      <Input 
+                        placeholder="e.g., Unit Test 1" 
+                        value={editingTest.name} 
+                        onChange={(e) => setEditingTest({ ...editingTest, name: e.target.value })} 
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Test Time *</Label>
+                      <Input 
+                        placeholder="e.g., 2 hours, 90 minutes" 
+                        value={editingTest.testTime} 
+                        onChange={(e) => setEditingTest({ ...editingTest, testTime: e.target.value })} 
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Test Date *</Label>
+                      <Input 
+                        type="date"
+                        value={editingTest.testDate ? new Date(editingTest.testDate).toISOString().split('T')[0] : ''} 
+                        onChange={(e) => setEditingTest({ ...editingTest, testDate: e.target.value })} 
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Select Subjects *</Label>
+                      <Select onValueChange={handleAddSubjectToEditingTest}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select a subject" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {availableSubjects
+                            .filter((s: any) => !editingTest.subjects.find((ts: any) => ts.subjectId === s.id))
+                            .map((subject: any) => (
+                              <SelectItem key={subject.id} value={subject.id}>
+                                {subject.name}
+                              </SelectItem>
+                            ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {editingTest.subjects.length > 0 && (
+                      <div className="space-y-2">
+                        <Label>Test Subjects</Label>
+                        <div className="space-y-3 border rounded-lg p-4">
+                          {editingTest.subjects.map((subject: any, index: number) => {
+                            const subjectData = availableSubjects.find((s: any) => s.id === subject.subjectId);
+                            return (
+                              <div key={index} className="space-y-2 p-3 bg-muted/50 rounded-lg">
+                                <div className="flex items-center justify-between">
+                                  <span className="font-medium">{subjectData?.name || subject.subjectName || 'Unknown'}</span>
+                                  <Button 
+                                    variant="ghost" 
+                                    size="sm"
+                                    onClick={() => handleRemoveSubjectFromEditingTest(index)}
+                                  >
+                                    <X className="w-4 h-4" />
+                                  </Button>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div className="space-y-1">
+                                    <Label className="text-xs">Max Marks</Label>
+                                    <Input
+                                      type="number"
+                                      min="1"
+                                      value={subject.maxMarks}
+                                      onChange={(e) => handleUpdateSubjectInEditingTest(index, 'maxMarks', parseInt(e.target.value) || 100)}
+                                    />
+                                  </div>
+                                </div>
+                                <div className="space-y-1">
+                                  <Label className="text-xs">Syllabus</Label>
+                                  <textarea
+                                    className="w-full min-h-[80px] px-3 py-2 text-sm border rounded-md resize-none"
+                                    placeholder="Enter syllabus for this subject..."
+                                    value={subject.syllabus || ''}
+                                    onChange={(e) => handleUpdateSubjectInEditingTest(index, 'syllabus', e.target.value)}
+                                  />
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                    <Button onClick={handleUpdateTest} className="w-full">
+                      Update Test
+                    </Button>
+                  </div>
+                </DialogContent>
+              </Dialog>
+            )}
             </div>
 
             {/* Tests List */}
@@ -1289,22 +1493,41 @@ export default function ReportsModule() {
             ) : (
               <div className="grid gap-3">
                 {tests.map((test) => (
-                  <Card key={test.id} className="cursor-pointer hover:bg-muted/50 transition-colors"
-                    onClick={() => loadTestDetails(test.id)}>
+                  <Card key={test.id} className="hover:bg-muted/50 transition-colors">
                     <CardHeader>
                       <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
+                        <div 
+                          className="flex items-center gap-3 flex-1 cursor-pointer"
+                          onClick={() => loadTestDetails(test.id)}
+                        >
                           <div className="w-10 h-10 rounded-lg bg-blue-100 flex items-center justify-center">
                             <BookOpen className="w-5 h-5 text-blue-600" />
                           </div>
                           <div>
                             <CardTitle className="text-base">{test.name}</CardTitle>
                             <p className="text-sm text-muted-foreground">
-                              {test.className} • {test.testTime} • {test.subjectCount} {test.subjectCount === 1 ? 'subject' : 'subjects'}
+                              {test.className} • {test.testTime} {test.testDate ? `• ${new Date(test.testDate).toLocaleDateString()}` : ''} • {test.subjectCount} {test.subjectCount === 1 ? 'subject' : 'subjects'}
                             </p>
                           </div>
                         </div>
-                        <ChevronDown className="w-5 h-5 text-muted-foreground" />
+                        <div className="flex items-center gap-2">
+                          {!isAdmin && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleEditTest(test);
+                              }}
+                            >
+                              <Pencil className="w-4 h-4" />
+                            </Button>
+                          )}
+                          <ChevronDown 
+                            className="w-5 h-5 text-muted-foreground cursor-pointer" 
+                            onClick={() => loadTestDetails(test.id)}
+                          />
+                        </div>
                       </div>
                     </CardHeader>
                   </Card>
@@ -1320,12 +1543,22 @@ export default function ReportsModule() {
                     <div>
                       <CardTitle>{testDetails.name}</CardTitle>
                       <p className="text-sm text-muted-foreground mt-1">
-                        {testDetails.className} • Test Time: {testDetails.testTime}
+                        {testDetails.className} • Test Time: {testDetails.testTime} {testDetails.testDate ? `• Date: ${new Date(testDetails.testDate).toLocaleDateString()}` : ''}
                       </p>
                     </div>
-                    <Button variant="outline" onClick={() => setTestDetails(null)}>
-                      <X className="w-4 h-4 mr-2" />Close
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      {!isAdmin && (
+                        <Button
+                          variant="outline"
+                          onClick={() => handleEditTest(testDetails)}
+                        >
+                          <Pencil className="w-4 h-4 mr-2" />Edit
+                        </Button>
+                      )}
+                      <Button variant="outline" onClick={() => setTestDetails(null)}>
+                        <X className="w-4 h-4 mr-2" />Close
+                      </Button>
+                    </div>
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -1396,7 +1629,7 @@ export default function ReportsModule() {
                           <div>
                             <CardTitle className="text-base">{test.name}</CardTitle>
                             <p className="text-sm text-muted-foreground">
-                              {test.className} • {test.testTime} • {test.subjectCount} {test.subjectCount === 1 ? 'subject' : 'subjects'}
+                              {test.className} • {test.testTime} {test.testDate ? `• ${new Date(test.testDate).toLocaleDateString()}` : ''} • {test.subjectCount} {test.subjectCount === 1 ? 'subject' : 'subjects'}
                             </p>
                           </div>
                         </div>

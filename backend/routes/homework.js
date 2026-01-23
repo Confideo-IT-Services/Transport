@@ -340,7 +340,7 @@ router.post('/:id/completions/bulk', authenticateToken, requireTeacher, async (r
   }
 });
 
-const { sendWhatsAppTemplateMessage, formatPhoneNumber } = require('../services/whatsappService');
+const { sendWhatsAppMessage, sendWhatsAppTemplateMessage, formatPhoneNumber } = require('../services/whatsappService');
 
 // TEST ENDPOINT - Test WhatsApp API with single message (remove after testing)
 router.post('/test-whatsapp', authenticateToken, requireTeacher, async (req, res) => {
@@ -352,7 +352,7 @@ router.post('/test-whatsapp', authenticateToken, requireTeacher, async (req, res
     }
 
     const templateName = process.env.WAZZAP_TEMPLATE_NAME;
-    const templateLanguage = process.env.WAZZAP_TEMPLATE_LANGUAGE || 'en_US';
+    const templateLanguage = process.env.WAZZAP_TEMPLATE_LANGUAGE || 'en';
     
     // Test with sample data matching your template
     const testParams = [
@@ -398,7 +398,7 @@ router.post('/send-to-all', authenticateToken, requireTeacher, async (req, res) 
 
     // Get template configuration
     const templateName = process.env.WAZZAP_TEMPLATE_NAME;
-    const templateLanguage = process.env.WAZZAP_TEMPLATE_LANGUAGE || 'en_US';
+    const templateLanguage = process.env.WAZZAP_TEMPLATE_LANGUAGE || 'en';
 
     if (!templateName) {
       return res.status(500).json({ 
@@ -523,13 +523,68 @@ router.post('/send-to-all', authenticateToken, requireTeacher, async (req, res) 
         templateParams
       );
 
-      if (result.success) {
+      if (result.success && (result.queueId || result.messageId)) {
+        // Use queueId if available, otherwise use messageId (for Meta format responses)
+        const queueId = result.queueId || result.messageId;
+        
+        // Log successful message to database
+        try {
+          await db.query(
+            `INSERT INTO whatsapp_messages 
+             (id, queue_id, message_id, recipient_phone, recipient_name, template_name, 
+              message_type, status, related_type, related_id, school_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              uuidv4(),
+              queueId,
+              result.messageId || null,
+              formattedPhone,
+              student.name,
+              templateName,
+              'template',
+              result.messageStatus || 'sent',
+              'homework',
+              date, // Store the date as related_id for homework
+              schoolId
+            ]
+          );
+        } catch (logError) {
+          console.error('Failed to log WhatsApp message:', logError);
+          // Don't fail the whole operation if logging fails
+        }
+
         results.successful++;
         // Log only failures in production, all in development
         if (process.env.NODE_ENV === 'development') {
-          console.log(`✅ Successfully sent to ${student.name} (${formattedPhone}) - Queue ID: ${result.queueId || result.messageId}`);
+          console.log(`✅ Successfully sent to ${student.name} (${formattedPhone}) - Message ID: ${queueId}`);
         }
       } else {
+        // Log failed message
+        try {
+          await db.query(
+            `INSERT INTO whatsapp_messages 
+             (id, queue_id, recipient_phone, recipient_name, template_name, 
+              message_type, status, error_message, error_code, related_type, related_id, school_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              uuidv4(),
+              result.queueId || `failed_${Date.now()}`,
+              formattedPhone,
+              student.name,
+              templateName,
+              'template',
+              'failed',
+              result.error || 'Unknown error',
+              result.errorCode || null,
+              'homework',
+              date,
+              schoolId
+            ]
+          );
+        } catch (logError) {
+          console.error('Failed to log failed WhatsApp message:', logError);
+        }
+
         results.failed++;
         // Always log errors
         console.error(`❌ Failed to send to ${student.name} (${formattedPhone}):`, result.error);

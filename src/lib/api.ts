@@ -7,9 +7,16 @@ export interface User {
   name: string;
   email?: string;
   username?: string;
+  phone?: string;
   role: 'superadmin' | 'admin' | 'teacher';
   schoolId?: string;
   schoolName?: string;
+  schoolCode?: string;
+  schoolType?: string;
+  schoolLocation?: string;
+  schoolAddress?: string;
+  schoolPhone?: string;
+  schoolEmail?: string;
   className?: string;
 }
 
@@ -138,6 +145,29 @@ export const authApi = {
   verifyToken: async (): Promise<User> => {
     return apiRequest<User>('/auth/verify');
   },
+
+  // Update own profile
+  updateProfile: async (data: {
+    name?: string;
+    email?: string;
+    phone?: string; // For teachers only
+  }): Promise<{ success: boolean; user: User }> => {
+    return apiRequest('/auth/profile', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
+  // Change password
+  changePassword: async (data: {
+    currentPassword: string;
+    newPassword: string;
+  }): Promise<{ success: boolean; message: string }> => {
+    return apiRequest('/auth/change-password', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
 };
 
 // ============ SCHOOLS API (SuperAdmin) ============
@@ -178,6 +208,20 @@ export const schoolsApi = {
   deactivate: async (id: string): Promise<{ success: boolean }> => {
     return apiRequest(`/schools/${id}/deactivate`, {
       method: 'POST',
+    });
+  },
+
+  updateMySchool: async (data: {
+    name?: string;
+    type?: string;
+    location?: string;
+    address?: string;
+    phone?: string;
+    email?: string;
+  }): Promise<{ success: boolean }> => {
+    return apiRequest('/schools/my-school', {
+      method: 'PUT',
+      body: JSON.stringify(data),
     });
   },
 };
@@ -561,6 +605,34 @@ export const uploadApi = {
     
     return response.json();
   },
+
+  uploadNotificationAttachment: async (file: File): Promise<{
+    success: boolean;
+    fileUrl: string;
+    fileName: string;
+    originalName: string;
+    fileType: string;
+    fileSize: number;
+  }> => {
+    const formData = new FormData();
+    formData.append('attachment', file);
+    
+    const token = getToken();
+    const response = await fetch(`${API_BASE_URL}/upload/notification-attachment`, {
+      method: 'POST',
+      headers: token ? {
+        'Authorization': `Bearer ${token}`
+      } : {},
+      body: formData,
+    });
+    
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Upload failed' }));
+      throw new Error(error.error || 'Failed to upload attachment');
+    }
+    
+    return response.json();
+  },
 };
 
 // ============ TIMETABLE API ============
@@ -633,6 +705,27 @@ export const attendanceApi = {
     const query = params.toString() ? `?${params.toString()}` : '';
     return apiRequest<any[]>(`/attendance/stats/monthly${query}`);
   },
+
+  // Send attendance reports to all parents
+  sendToAll: async (data: {
+    month: number; // 1-12
+    year: number;
+    classId?: string; // Optional
+  }): Promise<{
+    success: boolean;
+    message: string;
+    results: {
+      total: number;
+      successful: number;
+      failed: number;
+      errors: Array<{ student: string; phone: string; error: string }>;
+    };
+  }> => {
+    return apiRequest('/attendance/send-to-all', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
 };
 
 export const homeworkApi = {
@@ -694,15 +787,14 @@ export const homeworkApi = {
     });
   },
 
-  // Send homework to all parents for a specific date using templates
+  // Send homework to all parents for a specific date
   sendToAllParents: async (date: string): Promise<{
     success: boolean;
-    message: string;
     results: {
       total: number;
       successful: number;
       failed: number;
-      errors: Array<{ student: string; phone?: string; error: string; errorCode?: number }>;
+      errors: Array<{ phone: string; error: string }>;
     };
   }> => {
     return apiRequest('/homework/send-to-all', {
@@ -854,6 +946,7 @@ export const testsApi = {
   create: async (data: {
     name: string;
     testTime: string;
+    testDate: string;
     classId: string;
     subjects: Array<{
       subjectId: string;
@@ -863,6 +956,22 @@ export const testsApi = {
   }): Promise<{ success: boolean; testId: string }> => {
     return apiRequest('/tests', {
       method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  update: async (testId: string, data: {
+    name: string;
+    testTime: string;
+    testDate: string;
+    subjects?: Array<{
+      subjectId: string;
+      maxMarks: number;
+      syllabus: string;
+    }>;
+  }): Promise<{ success: boolean; message: string }> => {
+    return apiRequest(`/tests/${testId}`, {
+      method: 'PUT',
       body: JSON.stringify(data),
     });
   },
@@ -880,6 +989,21 @@ export const testsApi = {
 
   getResults: async (testId: string): Promise<any[]> => {
     return apiRequest<any[]>(`/tests/${testId}/results`);
+  },
+
+  sendToAllParents: async (testId: string): Promise<{
+    success: boolean;
+    message: string;
+    results: {
+      total: number;
+      successful: number;
+      failed: number;
+      errors: Array<{ student: string; phone: string; error: string }>;
+    };
+  }> => {
+    return apiRequest(`/tests/${testId}/send-to-all`, {
+      method: 'POST',
+    });
   },
 };
 
@@ -1051,84 +1175,6 @@ export const feesApi = {
   },
 };
 
-// ============ NOTIFICATIONS API ============
-export interface Notification {
-  id: string;
-  title: string;
-  message: string;
-  sender: string;
-  priority: 'normal' | 'urgent';
-  time: string;
-  read: boolean;
-  readAt?: string;
-}
-
-export interface SentNotification {
-  id: string;
-  title: string;
-  recipients: string;
-  time: string;
-  status: 'draft' | 'sent' | 'failed';
-}
-
-export interface NotificationTemplate {
-  id: string;
-  name: string;
-  title: string;
-  message: string;
-}
-
-export const notificationsApi = {
-  // Get inbox notifications
-  getInbox: async (): Promise<Notification[]> => {
-    return apiRequest<Notification[]>('/notifications');
-  },
-
-  // Get sent notifications
-  getSent: async (): Promise<SentNotification[]> => {
-    return apiRequest<SentNotification[]>('/notifications/sent');
-  },
-
-  // Get templates
-  getTemplates: async (): Promise<NotificationTemplate[]> => {
-    return apiRequest<NotificationTemplate[]>('/notifications/templates');
-  },
-
-  // Create template
-  createTemplate: async (data: {
-    name: string;
-    title: string;
-    message: string;
-  }): Promise<{ success: boolean; id: string }> => {
-    return apiRequest('/notifications/templates', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-  },
-
-  // Send notification
-  send: async (data: {
-    title: string;
-    message: string;
-    targetType: 'all_classes' | 'selected_classes' | 'all_teachers' | 'all_parents' | 'specific_students';
-    targetClasses?: string[];
-    targetStudents?: string[];
-    priority?: 'normal' | 'urgent';
-  }): Promise<{ success: boolean; message: string; notificationId: string; sentCount: number }> => {
-    return apiRequest('/notifications', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-  },
-
-  // Mark as read
-  markAsRead: async (notificationId: string): Promise<{ success: boolean }> => {
-    return apiRequest(`/notifications/${notificationId}/read`, {
-      method: 'PUT',
-    });
-  },
-};
-
 // ============ ID CARD TEMPLATES API ============
 export interface IDCardTemplate {
   id: string;
@@ -1268,5 +1314,84 @@ export const idCardGenerationApi = {
     template: IDCardTemplate;
   }> => {
     return apiRequest(`/id-cards/preview/${studentId}/${templateId}`);
+  },
+};
+
+// ============ NOTIFICATIONS API ============
+export interface Notification {
+  id: string;
+  title: string;
+  message: string;
+  senderName: string;
+  senderRole: 'admin' | 'teacher';
+  priority: 'normal' | 'urgent';
+  read: boolean;
+  readAt?: string;
+  createdAt: string;
+  attachmentUrl?: string;
+  attachmentName?: string;
+  attachmentType?: string;
+  time?: string; // For backward compatibility
+  sender?: string; // For backward compatibility
+}
+
+export interface SentNotification {
+  id: string;
+  title: string;
+  message: string;
+  targetType: 'all_classes' | 'selected_classes' | 'all_teachers' | 'all_parents' | 'specific_students';
+  targetClasses?: string[];
+  priority: 'normal' | 'urgent';
+  status: 'draft' | 'sent' | 'failed';
+  recipients: number;
+  time: string;
+  createdAt?: string;
+  attachmentUrl?: string;
+  attachmentName?: string;
+  attachmentType?: string;
+}
+
+export interface NotificationTemplate {
+  id: string;
+  title: string;
+  message: string;
+  targetType: 'all_classes' | 'selected_classes' | 'all_teachers' | 'all_parents' | 'specific_students';
+  createdAt: string;
+}
+
+export const notificationsApi = {
+  getInbox: async (): Promise<Notification[]> => {
+    return apiRequest<Notification[]>('/notifications/inbox');
+  },
+
+  getSent: async (): Promise<SentNotification[]> => {
+    return apiRequest<SentNotification[]>('/notifications/sent');
+  },
+
+  getTemplates: async (): Promise<NotificationTemplate[]> => {
+    return apiRequest<NotificationTemplate[]>('/notifications/templates');
+  },
+
+  send: async (data: {
+    title: string;
+    message: string;
+    targetType: 'all_classes' | 'selected_classes' | 'all_teachers' | 'all_parents' | 'specific_students';
+    targetClasses?: string[];
+    targetStudents?: string[];
+    priority?: 'normal' | 'urgent';
+    attachmentUrl?: string;
+    attachmentName?: string;
+    attachmentType?: string;
+  }): Promise<{ success: boolean; message: string; notificationId: string }> => {
+    return apiRequest('/notifications', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  markAsRead: async (notificationId: string): Promise<{ success: boolean }> => {
+    return apiRequest(`/notifications/${notificationId}/read`, {
+      method: 'POST',
+    });
   },
 };

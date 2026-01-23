@@ -30,6 +30,7 @@ const idCardTemplatesRoutes = require('./routes/idCardTemplates');
 const idCardGenerationRoutes = require('./routes/idCardGeneration');
 const otpRoutes = require('./routes/otp');
 const notificationsRoutes = require('./routes/notifications');
+const whatsappRoutes = require('./routes/whatsapp');
 
 // Use routes
 app.use('/api/auth', authRoutes);
@@ -50,6 +51,12 @@ app.use('/api/id-templates', idCardTemplatesRoutes);
 app.use('/api/id-cards', idCardGenerationRoutes);
 app.use('/api/otp', otpRoutes);
 app.use('/api/notifications', notificationsRoutes);
+app.use('/api/whatsapp', whatsappRoutes);
+
+// Import background jobs (optional)
+if (process.env.ENABLE_WHATSAPP_STATUS_CHECK === 'true') {
+  require('./jobs/checkWhatsAppStatus');
+}
 
 // Health check
 app.get('/api/health', (req, res) => {

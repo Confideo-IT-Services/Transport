@@ -2,65 +2,51 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const router = express.Router();
 const db = require('../config/database');
-const { authenticateToken, requireAdmin, requireTeacher } = require('../middleware/auth');
+const { authenticateToken, requireTeacher } = require('../middleware/auth');
 
-// Get all notifications for current user (inbox)
-router.get('/', authenticateToken, async (req, res) => {
+// Get inbox notifications
+router.get('/inbox', authenticateToken, requireTeacher, async (req, res) => {
   try {
-    const userId = req.user.id;
-    const userRole = req.user.role;
-    const schoolId = req.user.schoolId;
+    let query;
+    const params = [];
 
-    let query, params;
-
-    if (userRole === 'teacher') {
-      // Teachers see notifications sent to them
+    if (req.user.role === 'teacher') {
+      // For teachers: show notifications where they are recipients, exclude their own sent notifications
       query = `
-        SELECT DISTINCT
-          n.id,
-          n.title,
-          n.message,
-          n.priority,
-          n.target_type,
-          n.created_at,
-          u.name as sender_name,
-          COALESCE(nr.is_read, FALSE) as is_read,
-          nr.read_at
+        SELECT n.*, u.name as sender_name, u.role as sender_role,
+               nr.is_read, nr.read_at
         FROM notifications n
-        INNER JOIN notification_recipients nr ON n.id = nr.notification_id
-        INNER JOIN users u ON n.sender_id = u.id
-        WHERE n.school_id = ?
-          AND nr.recipient_type = 'teacher'
+        JOIN notification_recipients nr ON n.id = nr.notification_id
+        JOIN users u ON n.sender_id = u.id
+        WHERE n.sender_id != ?
+          AND nr.recipient_type = ? 
           AND nr.recipient_id = ?
+        GROUP BY n.id
         ORDER BY n.created_at DESC
-        LIMIT 50
       `;
-      params = [schoolId, userId];
-    } else if (userRole === 'admin') {
-      // Admins see unique notifications sent to teachers (no duplicates)
+      params.push(req.user.id, 'teacher', req.user.id);
+    } else if (req.user.role === 'admin') {
+      // For admin: show notifications sent to teachers in their school, exclude their own sent notifications
+      // Check if admin has read status via LEFT JOIN
       query = `
-        SELECT DISTINCT
-          n.id,
-          n.title,
-          n.message,
-          n.priority,
-          n.target_type,
-          n.created_at,
-          u.name as sender_name,
-          FALSE as is_read,
-          NULL as read_at
+        SELECT n.*, u.name as sender_name, u.role as sender_role,
+               COALESCE(admin_nr.is_read, 0) as is_read,
+               admin_nr.read_at
         FROM notifications n
-        INNER JOIN notification_recipients nr ON n.id = nr.notification_id
-        INNER JOIN users u ON n.sender_id = u.id
-        WHERE n.school_id = ?
+        JOIN notification_recipients nr ON n.id = nr.notification_id
+        JOIN users u ON n.sender_id = u.id
+        LEFT JOIN notification_recipients admin_nr ON n.id = admin_nr.notification_id 
+          AND admin_nr.recipient_id = ?
+          AND admin_nr.recipient_type = 'teacher'
+        WHERE n.sender_id != ?
+          AND n.school_id = ?
           AND nr.recipient_type = 'teacher'
-        GROUP BY n.id, n.title, n.message, n.priority, n.target_type, n.created_at, u.name
+        GROUP BY n.id
         ORDER BY n.created_at DESC
-        LIMIT 50
       `;
-      params = [schoolId];
+      params.push(req.user.id, req.user.id, req.user.schoolId);
     } else {
-      return res.json([]);
+      return res.status(403).json({ error: 'Access denied' });
     }
 
     const [notifications] = await db.query(query, params);
@@ -70,269 +56,304 @@ router.get('/', authenticateToken, async (req, res) => {
       title: n.title,
       message: n.message,
       sender: n.sender_name,
+      senderRole: n.sender_role,
       priority: n.priority,
+      read: n.is_read === 0 || n.is_read === false ? false : true,
+      readAt: n.read_at,
       time: n.created_at,
-      read: n.is_read || false,
-      readAt: n.read_at
+      attachmentUrl: n.attachment_url,
+      attachmentName: n.attachment_name,
+      attachmentType: n.attachment_type
     })));
   } catch (error) {
-    console.error('Get notifications error:', error);
+    console.error('Get inbox notifications error:', error);
     res.status(500).json({ error: 'Failed to fetch notifications' });
   }
 });
 
-// Get sent notifications (notifications sent by current user)
-router.get('/sent', authenticateToken, async (req, res) => {
+// Get sent notifications
+router.get('/sent', authenticateToken, requireTeacher, async (req, res) => {
   try {
-    const userId = req.user.id;
-    const schoolId = req.user.schoolId;
-
-    const [notifications] = await db.query(`
-      SELECT 
-        n.id,
-        n.title,
-        n.target_type,
-        n.target_classes,
-        n.target_students,
-        n.sent_count,
-        n.status,
-        n.created_at,
-        COUNT(DISTINCT nr.id) as recipient_count
+    let query = `
+      SELECT n.*, 
+             COUNT(DISTINCT nr.id) as recipient_count
       FROM notifications n
       LEFT JOIN notification_recipients nr ON n.id = nr.notification_id
-      WHERE n.school_id = ? AND n.sender_id = ?
-      GROUP BY n.id
-      ORDER BY n.created_at DESC
-      LIMIT 50
-    `, [schoolId, userId]);
+      WHERE n.sender_id = ?
+    `;
+    const params = [req.user.id];
 
-    res.json(notifications.map(n => {
-      let recipients = '';
-      if (n.target_type === 'all_classes') {
-        recipients = 'All Parents';
-      } else if (n.target_type === 'all_teachers') {
-        recipients = 'All Teachers';
-      } else if (n.target_type === 'selected_classes') {
-        recipients = `${n.recipient_count} Parents`;
-      } else if (n.target_type === 'specific_students') {
-        recipients = `${n.recipient_count} Parent(s)`;
-      } else {
-        recipients = `${n.recipient_count} Recipient(s)`;
-      }
+    if (req.user.role === 'admin') {
+      query += ' AND n.school_id = ?';
+      params.push(req.user.schoolId);
+    }
 
-      return {
-        id: n.id,
-        title: n.title,
-        recipients: recipients,
-        time: n.created_at,
-        status: n.status
-      };
-    }));
+    query += ' GROUP BY n.id ORDER BY n.created_at DESC';
+
+    const [notifications] = await db.query(query, params);
+
+    res.json(notifications.map(n => ({
+      id: n.id,
+      title: n.title,
+      message: n.message,
+      targetType: n.target_type,
+      priority: n.priority,
+      status: n.status,
+      recipients: n.recipient_count || 0,
+      time: n.created_at,
+      attachmentUrl: n.attachment_url,
+      attachmentName: n.attachment_name,
+      attachmentType: n.attachment_type
+    })));
   } catch (error) {
     console.error('Get sent notifications error:', error);
     res.status(500).json({ error: 'Failed to fetch sent notifications' });
   }
 });
 
-// Get notification templates
-router.get('/templates', authenticateToken, requireAdmin, async (req, res) => {
+// Get templates (admin only)
+router.get('/templates', authenticateToken, requireTeacher, async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Access denied' });
+    }
 
-    const [templates] = await db.query(`
-      SELECT id, name, title, message
-      FROM notification_templates
-      WHERE school_id = ?
-      ORDER BY name ASC
-    `, [schoolId]);
+    const [templates] = await db.query(
+      'SELECT * FROM notification_templates WHERE school_id = ? ORDER BY created_at DESC',
+      [req.user.schoolId]
+    );
 
-    res.json(templates);
+    res.json(templates.map(t => ({
+      id: t.id,
+      name: t.name,
+      title: t.title,
+      message: t.message,
+      targetType: t.target_type,
+      createdAt: t.created_at
+    })));
   } catch (error) {
     console.error('Get templates error:', error);
     res.status(500).json({ error: 'Failed to fetch templates' });
   }
 });
 
-// Create notification template
-router.post('/templates', authenticateToken, requireAdmin, async (req, res) => {
-  try {
-    const { name, title, message } = req.body;
-    const schoolId = req.user.schoolId;
-    const userId = req.user.id;
-
-    if (!name || !title || !message) {
-      return res.status(400).json({ error: 'Name, title, and message are required' });
-    }
-
-    const templateId = uuidv4();
-    await db.query(`
-      INSERT INTO notification_templates (id, school_id, name, title, message, created_by)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `, [templateId, schoolId, name, title, message, userId]);
-
-    res.status(201).json({ success: true, id: templateId });
-  } catch (error) {
-    console.error('Create template error:', error);
-    res.status(500).json({ error: 'Failed to create template' });
-  }
-});
-
 // Send notification
-router.post('/', authenticateToken, async (req, res) => {
+router.post('/', authenticateToken, requireTeacher, async (req, res) => {
   try {
-    const { title, message, targetType, targetClasses, targetStudents, priority } = req.body;
-    const userId = req.user.id;
-    const userRole = req.user.role;
-    const schoolId = req.user.schoolId;
+    const { 
+      title, 
+      message, 
+      targetType, 
+      targetClasses, 
+      targetStudents,
+      priority,
+      attachmentUrl,
+      attachmentName,
+      attachmentType
+    } = req.body;
 
     if (!title || !message || !targetType) {
       return res.status(400).json({ error: 'Title, message, and target type are required' });
     }
 
     const notificationId = uuidv4();
-    const notificationPriority = priority || 'normal';
+    const schoolId = req.user.schoolId;
+    const senderId = req.user.id;
+    const senderRole = req.user.role;
 
-    // Insert notification
-    await db.query(`
-      INSERT INTO notifications (
-        id, school_id, sender_id, sender_role, title, message,
-        target_type, target_classes, target_students, priority, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'sent')
-    `, [
-      notificationId,
-      schoolId,
-      userId,
-      userRole,
-      title,
-      message,
-      targetType,
-      targetClasses ? JSON.stringify(targetClasses) : null,
-      targetStudents ? JSON.stringify(targetStudents) : null,
-      notificationPriority
-    ]);
+    // Start transaction
+    await db.query('START TRANSACTION');
 
-    // Create recipients based on target type
-    let recipients = [];
-    let sentCount = 0;
-
-    if (targetType === 'all_teachers') {
-      // Get all teachers in the school
-      const [teachers] = await db.query(`
-        SELECT id FROM teachers WHERE school_id = ? AND is_active = TRUE
-      `, [schoolId]);
-
-      recipients = teachers.map(t => ({
-        notificationId,
-        recipientType: 'teacher',
-        recipientId: t.id,
-        studentId: null
-      }));
-    } else if (targetType === 'all_classes' || targetType === 'selected_classes') {
-      // Get students from selected classes (or all classes)
-      let classIds = [];
-      if (targetType === 'selected_classes' && targetClasses && targetClasses.length > 0) {
-        classIds = targetClasses;
-      } else {
-        // All classes
-        const [allClasses] = await db.query(`
-          SELECT id FROM classes WHERE school_id = ?
-        `, [schoolId]);
-        classIds = allClasses.map(c => c.id);
-      }
-
-      if (classIds.length > 0) {
-        const [students] = await db.query(`
-          SELECT id FROM students 
-          WHERE class_id IN (${classIds.map(() => '?').join(',')}) 
-          AND status = 'approved'
-          AND parent_phone IS NOT NULL
-          AND parent_phone != ''
-        `, classIds);
-
-        recipients = students.map(s => ({
+    try {
+      // Create notification
+      await db.query(
+        `INSERT INTO notifications 
+         (id, school_id, sender_id, sender_role, title, message, target_type, 
+          target_classes, target_students, priority, attachment_url, attachment_name, attachment_type, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'sent')`,
+        [
           notificationId,
+          schoolId,
+          senderId,
+          senderRole,
+          title,
+          message,
+          targetType,
+          targetClasses ? JSON.stringify(targetClasses) : null,
+          targetStudents ? JSON.stringify(targetStudents) : null,
+          priority || 'normal',
+          attachmentUrl || null,
+          attachmentName || null,
+          attachmentType || null
+        ]
+      );
+
+      // Determine recipients based on target type
+      let recipients = [];
+
+      if (targetType === 'all_teachers') {
+        const [teachers] = await db.query(
+          'SELECT id FROM teachers WHERE school_id = ?',
+          [schoolId]
+        );
+        recipients = teachers.map(t => ({
+          recipientType: 'teacher',
+          recipientId: t.id,
+          studentId: null
+        }));
+      } else if (targetType === 'all_classes' || targetType === 'all_parents') {
+        // Get all students (for their parents)
+        let studentsQuery = 'SELECT id FROM students WHERE school_id = ? AND status = "approved"';
+        const studentsParams = [schoolId];
+
+        if (targetClasses && targetClasses.length > 0) {
+          studentsQuery += ' AND class_id IN (?)';
+          studentsParams.push(targetClasses);
+        }
+
+        const [students] = await db.query(studentsQuery, studentsParams);
+        recipients = students.map(s => ({
           recipientType: 'parent',
-          recipientId: s.id, // For parents, recipient_id is student_id
+          recipientId: s.id, // parent_id is stored as student_id for parents
           studentId: s.id
         }));
+      } else if (targetType === 'selected_classes') {
+        if (!targetClasses || targetClasses.length === 0) {
+          throw new Error('Target classes required for selected_classes');
+        }
+        const [students] = await db.query(
+          'SELECT id FROM students WHERE class_id IN (?) AND status = "approved"',
+          [targetClasses]
+        );
+        recipients = students.map(s => ({
+          recipientType: 'parent',
+          recipientId: s.id,
+          studentId: s.id
+        }));
+      } else if (targetType === 'specific_students') {
+        if (!targetStudents || targetStudents.length === 0) {
+          throw new Error('Target students required for specific_students');
+        }
+        recipients = targetStudents.map(studentId => ({
+          recipientType: 'parent',
+          recipientId: studentId,
+          studentId: studentId
+        }));
       }
-    } else if (targetType === 'specific_students' && targetStudents && targetStudents.length > 0) {
-      // Get specific students
-      const [students] = await db.query(`
-        SELECT id FROM students 
-        WHERE id IN (${targetStudents.map(() => '?').join(',')}) 
-        AND school_id = ?
-        AND status = 'approved'
-        AND parent_phone IS NOT NULL
-        AND parent_phone != ''
-      `, [...targetStudents, schoolId]);
 
-      recipients = students.map(s => ({
-        notificationId,
-        recipientType: 'parent',
-        recipientId: s.id,
-        studentId: s.id
-      }));
-    }
-
-    // Insert recipients
-    if (recipients.length > 0) {
-      // Insert recipients one by one to avoid SQL injection
+      // Create recipient records
       for (const recipient of recipients) {
-        await db.query(`
-          INSERT INTO notification_recipients 
-          (id, notification_id, recipient_type, recipient_id, student_id, is_read, read_at, created_at)
-          VALUES (?, ?, ?, ?, ?, FALSE, NULL, NOW())
-        `, [
-          uuidv4(),
-          recipient.notificationId,
-          recipient.recipientType,
-          recipient.recipientId,
-          recipient.studentId
-        ]);
+        await db.query(
+          `INSERT INTO notification_recipients 
+           (id, notification_id, recipient_type, recipient_id, student_id)
+           VALUES (?, ?, ?, ?, ?)`,
+          [
+            uuidv4(),
+            notificationId,
+            recipient.recipientType,
+            recipient.recipientId,
+            recipient.studentId
+          ]
+        );
       }
 
-      sentCount = recipients.length;
+      // Update sent count
+      await db.query(
+        'UPDATE notifications SET sent_count = ? WHERE id = ?',
+        [recipients.length, notificationId]
+      );
 
-      // Update sent_count
-      await db.query(`
-        UPDATE notifications SET sent_count = ? WHERE id = ?
-      `, [sentCount, notificationId]);
+      await db.query('COMMIT');
+
+      res.status(201).json({
+        success: true,
+        message: `Notification sent to ${recipients.length} recipients`,
+        notificationId
+      });
+    } catch (error) {
+      await db.query('ROLLBACK');
+      throw error;
     }
-
-    res.json({
-      success: true,
-      message: `Notification sent to ${sentCount} recipient(s)`,
-      notificationId,
-      sentCount
-    });
   } catch (error) {
     console.error('Send notification error:', error);
-    res.status(500).json({ error: 'Failed to send notification', details: error.message });
+    res.status(500).json({ 
+      error: 'Failed to send notification',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
 
 // Mark notification as read
-router.put('/:id/read', authenticateToken, async (req, res) => {
+router.post('/:id/read', authenticateToken, requireTeacher, async (req, res) => {
   try {
     const { id } = req.params;
-    const userId = req.user.id;
-    const userRole = req.user.role;
 
-    let query = `
-      UPDATE notification_recipients 
-      SET is_read = TRUE, read_at = NOW()
-      WHERE notification_id = ? AND recipient_type = ? AND recipient_id = ?
-    `;
+    if (req.user.role === 'teacher') {
+      // For teachers: update existing recipient record
+      const [result] = await db.query(
+        `UPDATE notification_recipients 
+         SET is_read = TRUE, read_at = NOW() 
+         WHERE notification_id = ? 
+           AND recipient_type = ? 
+           AND recipient_id = ?`,
+        [id, 'teacher', req.user.id]
+      );
 
-    await db.query(query, [id, userRole === 'teacher' ? 'teacher' : 'parent', userId]);
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ error: 'Notification recipient record not found' });
+      }
+    } else if (req.user.role === 'admin') {
+      // For admin: verify notification exists and is in their school
+      const [notifications] = await db.query(
+        'SELECT id, school_id, target_type FROM notifications WHERE id = ? AND school_id = ?',
+        [id, req.user.schoolId]
+      );
+
+      if (notifications.length === 0) {
+        return res.status(404).json({ error: 'Notification not found' });
+      }
+
+      const notification = notifications[0];
+
+      // Check if admin recipient record exists (created when they previously marked as read)
+      const [existing] = await db.query(
+        `SELECT id FROM notification_recipients 
+         WHERE notification_id = ? 
+           AND recipient_id = ? 
+           AND recipient_type = 'teacher'`,
+        [id, req.user.id]
+      );
+
+      if (existing.length > 0) {
+        // Update existing record
+        await db.query(
+          `UPDATE notification_recipients 
+           SET is_read = TRUE, read_at = NOW() 
+           WHERE notification_id = ? 
+             AND recipient_id = ? 
+             AND recipient_type = 'teacher'`,
+          [id, req.user.id]
+        );
+      } else {
+        // Create recipient record for admin (for notifications they can view)
+        // We use recipient_type='teacher' since the notification was sent to teachers
+        // and recipient_id=admin.id to track admin's read status
+        await db.query(
+          `INSERT INTO notification_recipients 
+           (id, notification_id, recipient_type, recipient_id, student_id, is_read, read_at)
+           VALUES (?, ?, ?, ?, ?, TRUE, NOW())`,
+          [uuidv4(), id, 'teacher', req.user.id, null]
+        );
+      }
+    } else {
+      return res.status(403).json({ error: 'Access denied' });
+    }
 
     res.json({ success: true });
   } catch (error) {
-    console.error('Mark read error:', error);
+    console.error('Mark as read error:', error);
     res.status(500).json({ error: 'Failed to mark notification as read' });
   }
 });
 
 module.exports = router;
-

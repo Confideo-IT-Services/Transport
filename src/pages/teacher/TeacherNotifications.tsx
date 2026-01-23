@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Send, Bell, AlertTriangle, Clock, Users, User, UserX, Calendar, Loader2 } from "lucide-react";
+import { Send, Bell, AlertTriangle, Clock, Users, User, UserX, Calendar, Loader2, FileText, X } from "lucide-react";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -16,7 +16,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
-import { notificationsApi, studentsApi, classesApi, SentNotification } from "@/lib/api";
+import { notificationsApi, studentsApi, classesApi, uploadApi, SentNotification } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 
 const notificationTemplates = [
@@ -57,6 +57,14 @@ export default function TeacherNotifications() {
   const [recentNotifications, setRecentNotifications] = useState<SentNotification[]>([]);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [attachmentUrl, setAttachmentUrl] = useState<string | null>(null);
+  const [uploadingFile, setUploadingFile] = useState(false);
+  const [attachmentInfo, setAttachmentInfo] = useState<{
+    name: string;
+    url: string;
+    type: string;
+  } | null>(null);
 
   useEffect(() => {
     fetchData();
@@ -140,6 +148,44 @@ export default function TeacherNotifications() {
     return date.toLocaleDateString();
   };
 
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error("File size must be less than 10MB");
+      return;
+    }
+
+    try {
+      setUploadingFile(true);
+      setSelectedFile(file);
+      
+      const result = await uploadApi.uploadNotificationAttachment(file);
+      
+      setAttachmentUrl(result.fileUrl);
+      setAttachmentInfo({
+        name: result.originalName,
+        url: result.fileUrl,
+        type: result.fileType
+      });
+      
+      toast.success("File uploaded successfully");
+    } catch (error: any) {
+      console.error('Error uploading file:', error);
+      toast.error(error.message || "Failed to upload file");
+      setSelectedFile(null);
+    } finally {
+      setUploadingFile(false);
+    }
+  };
+
+  const handleRemoveFile = () => {
+    setSelectedFile(null);
+    setAttachmentUrl(null);
+    setAttachmentInfo(null);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -178,7 +224,10 @@ export default function TeacherNotifications() {
         message,
         targetType: targetType === 'all_classes' ? 'all_classes' : 'specific_students',
         targetStudents,
-        priority
+        priority,
+        attachmentUrl: attachmentUrl || undefined,
+        attachmentName: attachmentInfo?.name || undefined,
+        attachmentType: attachmentInfo?.type || undefined,
       });
 
       toast.success(result.message);
@@ -187,6 +236,9 @@ export default function TeacherNotifications() {
       setSelectedStudentIds([]);
       setRecipientType("all");
       setNotificationType("custom");
+      setSelectedFile(null);
+      setAttachmentUrl(null);
+      setAttachmentInfo(null);
       
       // Refresh data
       await fetchData();
@@ -276,6 +328,43 @@ export default function TeacherNotifications() {
                   value={message}
                   onChange={(e) => setMessage(e.target.value)}
                 />
+              </div>
+
+              {/* Attachment */}
+              <div className="space-y-2">
+                <Label>Attachment (Optional)</Label>
+                {!attachmentInfo ? (
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="file"
+                      accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.txt,.csv"
+                      onChange={handleFileSelect}
+                      disabled={uploadingFile}
+                      className="flex-1"
+                    />
+                    {uploadingFile && (
+                      <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between p-3 border rounded-lg bg-muted/50">
+                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                      <FileText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                      <span className="text-sm truncate">{attachmentInfo.name}</span>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleRemoveFile}
+                    >
+                      <X className="w-4 h-4" />
+                    </Button>
+                  </div>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  Supported: Images, PDF, Word, Excel, Text files (Max 10MB)
+                </p>
               </div>
 
               {/* Recipients */}
