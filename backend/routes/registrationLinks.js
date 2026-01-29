@@ -10,20 +10,16 @@ function generateLinkCode() {
 }
 
 // Create registration link
+// Body: name (optional), linkType: 'class'|'all_classes'|'teacher'|'others', classId (optional), teacherId (optional), section (optional), fieldConfig, expiresAt
 router.post('/', authenticateToken, requireAdmin, async (req, res) => {
   const connection = await db.getConnection();
   
   try {
     await connection.beginTransaction();
 
-    const { classId, section, fieldConfig, expiresAt } = req.body;
+    const { name, linkType, classId, teacherId, section, fieldConfig, expiresAt } = req.body;
     const schoolId = req.user.schoolId;
-
-    if (!classId || !section) {
-      await connection.rollback();
-      connection.release();
-      return res.status(400).json({ error: 'Class ID and section are required' });
-    }
+    const type = linkType || 'class';
 
     if (!schoolId) {
       await connection.rollback();
@@ -31,19 +27,53 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'School ID is required' });
     }
 
-    // Verify class belongs to school
-    const [classes] = await connection.query(
-      'SELECT id, name FROM classes WHERE id = ? AND school_id = ?',
-      [classId, schoolId]
-    );
-
-    if (classes.length === 0) {
+    if (!['class', 'all_classes', 'teacher', 'others'].includes(type)) {
       await connection.rollback();
       connection.release();
-      return res.status(404).json({ error: 'Class not found' });
+      return res.status(400).json({ error: 'Invalid linkType. Use: class, all_classes, teacher, others' });
     }
 
-    // Generate unique link code
+    const linkName = (name && typeof name === 'string') ? name.trim() : '';
+    if (!linkName) {
+      await connection.rollback();
+      connection.release();
+      return res.status(400).json({ error: 'Link name is required' });
+    }
+
+    let finalClassId = null;
+    let finalSection = section || '';
+
+    if (type === 'class') {
+      if (!classId) {
+        await connection.rollback();
+        connection.release();
+        return res.status(400).json({ error: 'Class is required for this link type' });
+      }
+      const [classes] = await connection.query(
+        'SELECT id, name, section FROM classes WHERE id = ? AND school_id = ?',
+        [classId, schoolId]
+      );
+      if (classes.length === 0) {
+        await connection.rollback();
+        connection.release();
+        return res.status(404).json({ error: 'Class not found' });
+      }
+      finalClassId = classId;
+      finalSection = classes[0].section || finalSection;
+    }
+
+    if (type === 'teacher' && teacherId) {
+      const [teachers] = await connection.query(
+        'SELECT id FROM teachers WHERE id = ? AND school_id = ?',
+        [teacherId, schoolId]
+      );
+      if (teachers.length === 0) {
+        await connection.rollback();
+        connection.release();
+        return res.status(404).json({ error: 'Teacher not found' });
+      }
+    }
+
     let linkCode = generateLinkCode();
     let isUnique = false;
     let attempts = 0;
@@ -53,13 +83,8 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
         'SELECT id FROM registration_links WHERE link_code = ?',
         [linkCode]
       );
-      
-      if (existing.length === 0) {
-        isUnique = true;
-      } else {
-        linkCode = generateLinkCode();
-        attempts++;
-      }
+      if (existing.length === 0) isUnique = true;
+      else { linkCode = generateLinkCode(); attempts++; }
     }
 
     if (!isUnique) {
@@ -68,18 +93,20 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
       return res.status(500).json({ error: 'Failed to generate unique link code' });
     }
 
-    // Insert registration link
     const linkId = uuidv4();
     const expiresAtDate = expiresAt ? new Date(expiresAt) : null;
 
     await connection.query(
       `INSERT INTO registration_links 
-       (id, school_id, class_id, link_code, field_config, expires_at, is_active, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, TRUE, NOW())`,
+       (id, school_id, name, link_type, teacher_id, class_id, link_code, field_config, expires_at, is_active, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, NOW())`,
       [
         linkId,
         schoolId,
-        classId,
+        linkName,
+        type,
+        type === 'teacher' ? teacherId : null,
+        finalClassId,
         linkCode,
         JSON.stringify(fieldConfig || []),
         expiresAtDate
@@ -89,31 +116,30 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
     await connection.commit();
     connection.release();
 
-    // Generate the registration URL
     const baseUrl = process.env.FRONTEND_URL || 'http://localhost:8080';
     const registrationUrl = `${baseUrl}/register?code=${linkCode}`;
 
-    console.log('✅ Registration link created:', { linkId, linkCode, classId, section, schoolId });
+    console.log('✅ Registration link created:', { linkId, linkCode, linkType: type, classId: finalClassId, teacherId: type === 'teacher' ? teacherId : null, schoolId });
 
     res.status(201).json({
       success: true,
       id: linkId,
       linkCode,
       link: registrationUrl,
+      name: name && String(name).trim() ? String(name).trim() : null,
+      linkType: type,
+      classId: finalClassId,
+      teacherId: type === 'teacher' ? teacherId : null,
       fieldConfig: fieldConfig || [],
       expiresAt: expiresAtDate,
       createdAt: new Date().toISOString()
     });
   } catch (error) {
-    await connection.rollback();
-    connection.release();
+    if (connection) {
+      await connection.rollback();
+      connection.release();
+    }
     console.error('❌ Create registration link error:', error);
-    console.error('Error details:', {
-      code: error.code,
-      errno: error.errno,
-      sqlState: error.sqlState,
-      sqlMessage: error.sqlMessage
-    });
     res.status(500).json({ 
       error: 'Failed to create registration link',
       details: error.message 
@@ -132,11 +158,11 @@ router.get('/', authenticateToken, requireAdmin, async (req, res) => {
 
     console.log('🔍 Fetching registration links for school:', schoolId);
 
-    // Use LEFT JOIN to handle cases where class might be deleted
     const [links] = await db.query(
-      `SELECT rl.*, c.name as class_name, c.section as class_section
+      `SELECT rl.*, c.name as class_name, c.section as class_section, t.name as teacher_name
        FROM registration_links rl
        LEFT JOIN classes c ON rl.class_id = c.id
+       LEFT JOIN teachers t ON rl.teacher_id = t.id
        WHERE rl.school_id = ?
        ORDER BY rl.created_at DESC`,
       [schoolId]
@@ -145,27 +171,25 @@ router.get('/', authenticateToken, requireAdmin, async (req, res) => {
     console.log('✅ Found registration links:', links.length);
 
     const formattedLinks = links.map(link => {
-      // Safely parse field_config
       let fieldConfig = [];
       try {
         if (link.field_config) {
-          if (typeof link.field_config === 'string') {
-            fieldConfig = JSON.parse(link.field_config);
-          } else {
-            fieldConfig = link.field_config;
-          }
+          fieldConfig = typeof link.field_config === 'string' ? JSON.parse(link.field_config) : link.field_config;
         }
       } catch (parseError) {
         console.error('❌ Error parsing field_config for link:', link.id, parseError);
-        fieldConfig = [];
       }
 
       return {
         id: link.id,
         linkCode: link.link_code,
+        name: link.name || null,
+        linkType: link.link_type || 'class',
         classId: link.class_id,
-        className: link.class_name || 'Unknown Class',
+        className: link.class_name || null,
         classSection: link.class_section || '',
+        teacherId: link.teacher_id || null,
+        teacherName: link.teacher_name || null,
         fieldConfig: fieldConfig,
         expiresAt: link.expires_at,
         isActive: link.is_active,
@@ -199,9 +223,10 @@ router.get('/:id', authenticateToken, requireAdmin, async (req, res) => {
     const schoolId = req.user.schoolId;
 
     const [links] = await db.query(
-      `SELECT rl.*, c.name as class_name, c.section as class_section
+      `SELECT rl.*, c.name as class_name, c.section as class_section, t.name as teacher_name
        FROM registration_links rl
-       JOIN classes c ON rl.class_id = c.id
+       LEFT JOIN classes c ON rl.class_id = c.id
+       LEFT JOIN teachers t ON rl.teacher_id = t.id
        WHERE rl.id = ? AND rl.school_id = ?`,
       [id, schoolId]
     );
@@ -211,13 +236,21 @@ router.get('/:id', authenticateToken, requireAdmin, async (req, res) => {
     }
 
     const link = links[0];
+    let fieldConfig = [];
+    try {
+      if (link.field_config) fieldConfig = typeof link.field_config === 'string' ? JSON.parse(link.field_config) : link.field_config;
+    } catch (_) {}
     res.json({
       id: link.id,
       linkCode: link.link_code,
+      name: link.name || null,
+      linkType: link.link_type || 'class',
       classId: link.class_id,
-      className: link.class_name,
-      classSection: link.class_section,
-      fieldConfig: link.field_config ? JSON.parse(link.field_config) : [],
+      className: link.class_name || null,
+      classSection: link.class_section || '',
+      teacherId: link.teacher_id || null,
+      teacherName: link.teacher_name || null,
+      fieldConfig,
       expiresAt: link.expires_at,
       isActive: link.is_active,
       createdAt: link.created_at,
@@ -250,51 +283,64 @@ router.get('/code/:code', async (req, res) => {
     }
 
     const link = links[0];
+    const linkType = link.link_type || 'class';
 
-    // Then get the class details separately
-    const [classes] = await db.query(
-      'SELECT id, name, section FROM classes WHERE id = ?',
-      [link.class_id]
-    );
+    let className = null;
+    let classSection = null;
+    let teacherName = null;
 
-    if (classes.length === 0) {
-      console.error('❌ Class not found for registration link:', { linkId: link.id, classId: link.class_id });
-      return res.status(404).json({ error: 'Class associated with this link not found' });
+    if (link.class_id) {
+      const [classes] = await db.query(
+        'SELECT id, name, section FROM classes WHERE id = ?',
+        [link.class_id]
+      );
+      if (classes.length > 0) {
+        className = classes[0].name;
+        classSection = classes[0].section || '';
+      }
+    }
+    if (link.teacher_id) {
+      const [teachers] = await db.query(
+        'SELECT id, name FROM teachers WHERE id = ?',
+        [link.teacher_id]
+      );
+      if (teachers.length > 0) teacherName = teachers[0].name;
     }
 
-    const classData = classes[0];
-
-    // Parse field_config safely
     let fieldConfig = [];
     try {
       if (link.field_config) {
-        if (typeof link.field_config === 'string') {
-          fieldConfig = JSON.parse(link.field_config);
-        } else {
-          fieldConfig = link.field_config;
-        }
+        fieldConfig = typeof link.field_config === 'string' ? JSON.parse(link.field_config) : link.field_config;
       }
     } catch (parseError) {
       console.error('❌ Error parsing field_config:', parseError);
-      fieldConfig = [];
     }
 
-    console.log('✅ Registration link found:', { 
-      linkId: link.id, 
-      classId: link.class_id, 
-      className: classData.name,
-      classSection: classData.section,
-      fieldCount: fieldConfig.length 
-    });
+    // For all_classes links, return list of classes so students can select class and section
+    let classesList = [];
+    if ((linkType === 'all_classes' || !link.class_id) && link.school_id) {
+      const [classesRows] = await db.query(
+        'SELECT id, name, section FROM classes WHERE school_id = ? ORDER BY name, section',
+        [link.school_id]
+      );
+      classesList = classesRows || [];
+    }
+
+    console.log('✅ Registration link found:', { linkId: link.id, linkType, classId: link.class_id, teacherId: link.teacher_id, fieldCount: fieldConfig.length });
 
     res.json({
       id: link.id,
       linkCode: link.link_code,
-      classId: link.class_id,
-      className: classData.name,
-      classSection: classData.section,
-      fieldConfig: fieldConfig,
-      expiresAt: link.expires_at
+      name: link.name || null,
+      linkType,
+      classId: link.class_id || null,
+      className,
+      classSection: classSection || '',
+      teacherId: link.teacher_id || null,
+      teacherName,
+      fieldConfig,
+      expiresAt: link.expires_at,
+      classes: classesList
     });
   } catch (error) {
     console.error('❌ Get registration link by code error:', error);

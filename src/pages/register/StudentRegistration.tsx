@@ -37,11 +37,15 @@ export default function StudentRegistration() {
   
   const [isLoading, setIsLoading] = useState(true);
   const [linkData, setLinkData] = useState<{
-    classId: string;
-    className: string;
-    classSection: string;
+    name?: string | null;
+    linkType?: string;
+    classId: string | null;
+    className: string | null;
+    classSection: string | null;
     fieldConfig: FormField[];
+    classes?: { id: string; name: string; section: string }[];
   } | null>(null);
+  const [selectedClassId, setSelectedClassId] = useState<string>("");
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [photoFile, setPhotoFile] = useState<File | null>(null);
@@ -86,11 +90,15 @@ export default function StudentRegistration() {
       try {
         const data = await registrationLinksApi.getByCode(code);
         setLinkData({
-          classId: data.classId,
-          className: data.className,
-          classSection: data.classSection,
+          name: data.name ?? null,
+          linkType: data.linkType,
+          classId: data.classId ?? null,
+          className: data.className ?? null,
+          classSection: data.classSection ?? null,
           fieldConfig: data.fieldConfig || [],
+          classes: data.classes || [],
         });
+        setSelectedClassId("");
       } catch (error: any) {
         console.error('Error fetching registration link:', error);
         toast.error(error?.message || "Invalid or expired registration link");
@@ -373,7 +381,15 @@ export default function StudentRegistration() {
       toast.error(`Please fill required fields: ${missingFields.join(", ")}`);
       return;
     }
-    
+
+    // For all_classes links, student must select class and section
+    const isAllClasses = linkData.linkType === 'all_classes';
+    const effectiveClassId = isAllClasses ? selectedClassId : linkData.classId;
+    if (!effectiveClassId) {
+      toast.error("Please select class and section");
+      return;
+    }
+
     // Check OTP verification if required
     const primaryPhoneField = linkData.fieldConfig.find(
       (f) => f.fieldType === 'tel' && f.requires_otp === true && f.is_primary_identity === true
@@ -396,7 +412,7 @@ export default function StudentRegistration() {
       // Map form data to backend format
       const studentData: any = {
         registrationCode: code, // Send code to get schoolId from backend
-        classId: linkData.classId,
+        classId: effectiveClassId,
         name: formData.studentName || formData.name || '',
         studentName: formData.studentName || formData.name || '', // Support both field names
         rollNo: formData.rollNo || '',
@@ -762,22 +778,52 @@ export default function StudentRegistration() {
           <div className="w-16 h-16 bg-primary rounded-2xl flex items-center justify-center mx-auto mb-4">
             <GraduationCap className="w-8 h-8 text-primary-foreground" />
           </div>
-          <h1 className="text-3xl font-bold text-foreground">Student Registration</h1>
+          <h1 className="text-3xl font-bold text-foreground">{linkData.name?.trim() || "Student Registration"}</h1>
           <p className="text-muted-foreground mt-2">Fill in the details to register</p>
-          {linkData.className && linkData.classSection && (
+          {linkData.linkType === 'class' && linkData.className && (
             <span className="inline-block mt-2 px-3 py-1 bg-primary/10 text-primary text-sm rounded-full">
-              Registering for: {linkData.className} - Section {linkData.classSection}
+              Registering for: {linkData.className}{linkData.classSection ? ` - Section ${linkData.classSection}` : ""}
             </span>
           )}
         </div>
 
         <form onSubmit={handleSubmit}>
+          {/* Class and Section selection - only when link was generated for "All classes" */}
+          {linkData.linkType === 'all_classes' && linkData.classes && linkData.classes.length > 0 && (
+            <Card className="mb-6">
+              <CardHeader>
+                <CardTitle className="text-lg">Class and Section</CardTitle>
+                <CardDescription>Select the class and section you are registering for</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  <Label>Class and Section <span className="text-destructive">*</span></Label>
+                  <Select
+                    value={selectedClassId}
+                    onValueChange={setSelectedClassId}
+                    required
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select class and section" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {linkData.classes.map((cls) => (
+                        <SelectItem key={cls.id} value={cls.id}>
+                          {cls.name}{cls.section ? ` - Section ${cls.section}` : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </CardContent>
+            </Card>
+          )}
           {/* Student Photo */}
           {showPhoto && (
             <Card className="mb-6">
               <CardHeader>
                 <CardTitle className="text-lg">
-                  Student Photo {photoMandatory && <span className="text-destructive">*</span>}
+                  Photo {photoMandatory && <span className="text-destructive">*</span>}
                 </CardTitle>
                 <CardDescription>Take a photo using camera or upload from device</CardDescription>
               </CardHeader>
@@ -871,7 +917,14 @@ export default function StudentRegistration() {
             <Button type="button" variant="outline" onClick={() => navigate("/")} disabled={isUploadingPhoto}>
               Cancel
             </Button>
-            <Button type="submit" size="lg" disabled={isUploadingPhoto}>
+            <Button
+              type="submit"
+              size="lg"
+              disabled={
+                isUploadingPhoto ||
+                (linkData.linkType === 'all_classes' && !selectedClassId)
+              }
+            >
               {isUploadingPhoto ? "Uploading Photo..." : "Submit Registration"}
             </Button>
           </div>

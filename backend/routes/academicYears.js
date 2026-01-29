@@ -128,11 +128,19 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
   }
 });
 
+// Normalize date to YYYY-MM-DD for MySQL DATE column
+function normalizeDate(value) {
+  if (value == null || value === '') return undefined;
+  const str = String(value).trim();
+  if (str.length >= 10) return str.slice(0, 10);
+  return str;
+}
+
 // Update academic year (School Admin only)
 router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, startDate, endDate, status } = req.body;
+    let { name, startDate, endDate, status } = req.body;
 
     const schoolId = req.user.schoolId;
     if (!schoolId) {
@@ -149,13 +157,45 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
       return res.status(404).json({ error: 'Academic year not found or access denied' });
     }
 
+    // Normalize dates to YYYY-MM-DD for MySQL
+    if (startDate !== undefined) startDate = normalizeDate(startDate);
+    if (endDate !== undefined) endDate = normalizeDate(endDate);
+
+    // Validate dates if both provided
+    if (startDate !== undefined && endDate !== undefined) {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+        return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD.' });
+      }
+      if (end <= start) {
+        return res.status(400).json({ error: 'End date must be after start date.' });
+      }
+    }
+
+    // Validate name length (DB column is VARCHAR(20))
+    if (name !== undefined && typeof name === 'string' && name.trim().length > 20) {
+      return res.status(400).json({ error: 'Academic year name must be 20 characters or less.' });
+    }
+
+    // If changing name, check for duplicate (same name, same school, different id)
+    if (name !== undefined && name !== '') {
+      const [existing] = await db.query(
+        'SELECT id FROM academic_years WHERE name = ? AND school_id = ? AND id != ?',
+        [name.trim(), schoolId, id]
+      );
+      if (existing.length > 0) {
+        return res.status(400).json({ error: 'Academic year with this name already exists for your school.' });
+      }
+    }
+
     // Build update query dynamically
     const updates = [];
     const params = [];
 
     if (name !== undefined) {
       updates.push('name = ?');
-      params.push(name);
+      params.push(typeof name === 'string' ? name.trim() : name);
     }
 
     if (startDate !== undefined) {
@@ -196,7 +236,15 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
 
     res.json({ success: true });
   } catch (error) {
-    console.error('Update academic year error:', error);
+    console.error('Update academic year error:', error.message, error.code);
+    // Handle MySQL duplicate key
+    if (error.code === 'ER_DUP_ENTRY') {
+      return res.status(400).json({ error: 'Academic year with this name already exists for your school.' });
+    }
+    // Handle invalid date or other DB errors
+    if (error.code === 'ER_TRUNCATED_WRONG_VALUE' || error.code === 'ER_WRONG_VALUE_COUNT') {
+      return res.status(400).json({ error: 'Invalid data format. Check dates (YYYY-MM-DD) and try again.' });
+    }
     res.status(500).json({ error: 'Failed to update academic year' });
   }
 });

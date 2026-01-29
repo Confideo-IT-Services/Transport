@@ -46,7 +46,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { 
-  Download, 
   TrendingUp, 
   Users, 
   IndianRupee, 
@@ -1067,10 +1066,6 @@ export default function ReportsModule() {
                 ))}
               </SelectContent>
             </Select>
-            <Button variant="outline">
-              <Download className="w-4 h-4 mr-2" />
-              Export All
-            </Button>
           </div>
         </div>
 

@@ -42,6 +42,28 @@ router.get('/', authenticateToken, requireTeacher, async (req, res) => {
   }
 });
 
+// Get all school classes for dropdowns (e.g. change section) - admin and teacher
+router.get('/for-dropdown', authenticateToken, async (req, res) => {
+  try {
+    const schoolId = req.user.schoolId;
+    if (!schoolId) {
+      return res.status(403).json({ error: 'School context required' });
+    }
+    const [classes] = await db.query(
+      'SELECT id, name, section FROM classes WHERE school_id = ? ORDER BY name, section',
+      [schoolId]
+    );
+    res.json(classes.map(c => ({
+      id: c.id,
+      name: c.name,
+      section: c.section || ''
+    })));
+  } catch (error) {
+    console.error('Get classes for dropdown error:', error);
+    res.status(500).json({ error: 'Failed to fetch classes' });
+  }
+});
+
 // Get students in a class (accessible to both admin and teacher)
 router.get('/:id/students', authenticateToken, async (req, res) => {
   try {

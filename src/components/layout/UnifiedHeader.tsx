@@ -1,5 +1,4 @@
-import { Bell, Search } from "lucide-react";
-import { Input } from "@/components/ui/input";
+import { Bell } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Badge } from "@/components/ui/badge";
 import { useNavigate, useLocation } from "react-router-dom";
@@ -47,16 +46,7 @@ export function UnifiedHeader() {
   };
 
   return (
-    <header className="sticky top-0 z-30 h-16 bg-card border-b border-border flex items-center justify-between px-6">
-      {/* Search */}
-      <div className="relative w-80">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-        <Input 
-          placeholder="Search students, classes, reports..." 
-          className="pl-10 bg-muted/50 border-0 focus-visible:ring-1"
-        />
-      </div>
-
+    <header className="sticky top-0 z-30 h-16 bg-card border-b border-border flex items-center justify-end px-6">
       {/* Right side */}
       <div className="flex items-center gap-4">
         {/* Notifications */}

@@ -122,13 +122,19 @@ router.post('/', async (req, res) => {
     // If registrationCode is provided, get schoolId and classId from registration link
     if (registrationCode) {
       const [links] = await db.query(
-        'SELECT school_id, class_id, field_config FROM registration_links WHERE link_code = ? AND is_active = TRUE AND (expires_at IS NULL OR expires_at > NOW())',
+        'SELECT school_id, class_id, link_type, field_config FROM registration_links WHERE link_code = ? AND is_active = TRUE AND (expires_at IS NULL OR expires_at > NOW())',
         [registrationCode]
       );
       if (links.length > 0) {
         finalSchoolId = links[0].school_id;
-        finalClassId = links[0].class_id;
-        console.log('✅ Registration link found:', { registrationCode, schoolId: finalSchoolId, classId: finalClassId });
+        // For all_classes links, use classId from request body (student selected in form)
+        const linkType = links[0].link_type || 'class';
+        if (linkType === 'all_classes' && classId) {
+          finalClassId = classId;
+        } else {
+          finalClassId = links[0].class_id;
+        }
+        console.log('✅ Registration link found:', { registrationCode, schoolId: finalSchoolId, classId: finalClassId, linkType });
         
         // Check if OTP verification is required
         let fieldConfig = [];
@@ -314,6 +320,117 @@ router.post('/', async (req, res) => {
       sqlMessage: error.sqlMessage
     });
     res.status(500).json({ error: 'Failed to create student' });
+  }
+});
+
+// Bulk import students (admin only)
+router.post('/bulk', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const schoolId = req.user.schoolId;
+    if (!schoolId) return res.status(400).json({ error: 'School ID not found' });
+
+    const { importType, selectedClassId, rows } = req.body;
+    if (!rows || !Array.isArray(rows) || rows.length === 0) {
+      return res.status(400).json({ error: 'No rows to import' });
+    }
+
+    const validImportTypes = ['all_classes', 'particular_class', 'teacher'];
+    const type = validImportTypes.includes(importType) ? importType : 'all_classes';
+
+    let fixedClassId = null;
+    if (type === 'particular_class' && selectedClassId) {
+      const [cls] = await db.query('SELECT id FROM classes WHERE id = ? AND school_id = ?', [selectedClassId, schoolId]);
+      if (cls.length === 0) return res.status(400).json({ error: 'Selected class not found' });
+      fixedClassId = selectedClassId;
+    }
+
+    const [classesList] = await db.query('SELECT id, name, section FROM classes WHERE school_id = ?', [schoolId]);
+    const classMap = {};
+    classesList.forEach(c => {
+      const key = `${(c.name || '').toString().trim()}|${(c.section || '').toString().trim()}`;
+      if (!classMap[key]) classMap[key] = c.id;
+    });
+
+    const normalizeClass = (v) => (v != null ? String(v).trim() : '');
+    const created = [];
+    const errors = [];
+    let admissionCounter = 1;
+    const admissionPrefix = `BULK-${new Date().getFullYear()}-`;
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rowNum = i + 2;
+      const name = row.name != null ? String(row.name).trim() : (row.studentName != null ? String(row.studentName).trim() : '');
+      if (!name) {
+        errors.push({ row: rowNum, message: 'Name is required' });
+        continue;
+      }
+
+      let classId = fixedClassId;
+      if (!classId) {
+        const className = normalizeClass(row.class);
+        const section = normalizeClass(row.section);
+        if (!className) {
+          errors.push({ row: rowNum, message: 'Class is required for All Classes import' });
+          continue;
+        }
+        const key = `${className}|${section}`;
+        classId = classMap[key];
+        if (!classId) {
+          errors.push({ row: rowNum, message: `Class/Section not found: ${className}${section ? ' - ' + section : ''}` });
+          continue;
+        }
+      }
+
+      let admissionNumber = row.admissionNumber != null ? String(row.admissionNumber).trim() : '';
+      if (!admissionNumber) {
+        do {
+          admissionNumber = admissionPrefix + String(admissionCounter).padStart(3, '0');
+          admissionCounter++;
+        } while (await db.query('SELECT id FROM students WHERE admission_number = ? AND school_id = ?', [admissionNumber, schoolId]).then(([r]) => r.length > 0));
+      } else {
+        const [existing] = await db.query('SELECT id FROM students WHERE admission_number = ? AND school_id = ?', [admissionNumber, schoolId]);
+        if (existing.length > 0) {
+          errors.push({ row: rowNum, message: 'Admission number already exists' });
+          continue;
+        }
+      }
+
+      const studentId = uuidv4();
+      const finalParentName = row.fatherName || row.parentName || null;
+      const finalParentPhone = row.fatherPhone || row.parentPhone || null;
+      const finalParentEmail = row.fatherEmail || row.parentEmail || null;
+      const submittedData = {
+        name,
+        rollNo: row.rollNo != null ? String(row.rollNo) : null,
+        dateOfBirth: row.dateOfBirth != null ? String(row.dateOfBirth) : null,
+        gender: row.gender != null ? String(row.gender) : null,
+        bloodGroup: row.bloodGroup != null ? String(row.bloodGroup) : null,
+        address: row.address != null ? String(row.address) : null,
+        fatherName: row.fatherName != null ? String(row.fatherName) : null,
+        motherName: row.motherName != null ? String(row.motherName) : null,
+        admissionNumber,
+        ...row,
+      };
+
+      try {
+        await db.query(
+          `INSERT INTO students (id, name, roll_no, class_id, school_id, parent_phone, parent_email, parent_name, address, date_of_birth, gender, blood_group, registration_code, submitted_data, admission_number, status, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'BULK', ?, ?, 'approved', NOW())`,
+          [studentId, name, row.rollNo != null ? String(row.rollNo) : null, classId, schoolId, finalParentPhone, finalParentEmail, finalParentName,
+            row.address != null ? String(row.address) : null, row.dateOfBirth != null ? String(row.dateOfBirth) : null, row.gender != null ? String(row.gender) : null, row.bloodGroup != null ? String(row.bloodGroup) : null,
+            JSON.stringify(submittedData), admissionNumber]
+        );
+        created.push({ row: rowNum, studentId, name });
+      } catch (err) {
+        errors.push({ row: rowNum, message: err.message || 'Failed to create student' });
+      }
+    }
+
+    res.json({ created: created.length, failed: errors.length, errors, createdIds: created.map(c => c.studentId) });
+  } catch (error) {
+    console.error('Bulk import error:', error);
+    res.status(500).json({ error: error.message || 'Bulk import failed' });
   }
 });
 
@@ -624,7 +741,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
     }
 
     const {
-      name, rollNo, address, dateOfBirth, gender, bloodGroup,
+      name, rollNo, classId, address, dateOfBirth, gender, bloodGroup,
       fatherName, fatherPhone, fatherEmail, fatherOccupation,
       motherName, motherPhone, motherOccupation,
       emergencyContact, previousSchool, medicalConditions,
@@ -660,6 +777,19 @@ router.put('/:id', authenticateToken, async (req, res) => {
     // Build update query dynamically
     const updates = [];
     const values = [];
+
+    // classId (change section) - validate class belongs to school
+    if (classId !== undefined) {
+      const [classRows] = await db.query(
+        'SELECT id FROM classes WHERE id = ? AND school_id = ?',
+        [classId, schoolId]
+      );
+      if (classRows.length === 0) {
+        return res.status(400).json({ error: 'Invalid class or class does not belong to your school' });
+      }
+      updates.push('class_id = ?');
+      values.push(classId);
+    }
 
     if (name !== undefined) { updates.push('name = ?'); values.push(name); }
     if (rollNo !== undefined) { updates.push('roll_no = ?'); values.push(rollNo); }

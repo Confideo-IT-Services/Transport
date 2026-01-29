@@ -58,6 +58,7 @@ export default function MyStudents() {
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [schoolClassesForDropdown, setSchoolClassesForDropdown] = useState<{ id: string; name: string; section: string }[]>([]);
   
   // Edit form state
   const [editForm, setEditForm] = useState<any>({});
@@ -95,11 +96,20 @@ export default function MyStudents() {
     setIsViewOpen(true);
   };
 
-  const handleEdit = (student: Student) => {
+  const handleEdit = async (student: Student) => {
     setSelectedStudent(student);
-    // Initialize edit form with student data
+    // Load all school classes for section dropdown (teacher can change section)
+    try {
+      const classesList = await classesApi.getForDropdown();
+      setSchoolClassesForDropdown(classesList || []);
+    } catch {
+      setSchoolClassesForDropdown([]);
+    }
+    // Current class is teacher's class (all students in My Students are in this class)
+    const currentClassId = teacherClass?.id || '';
     const submittedData = student.submittedData || {};
     setEditForm({
+      classId: currentClassId,
       name: student.name || '',
       rollNo: student.rollNo || '',
       address: student.address || submittedData.address || '',
@@ -369,6 +379,28 @@ export default function MyStudents() {
           </DialogHeader>
           {selectedStudent && (
             <div className="space-y-4 py-4">
+              {/* Class and Section (change section) */}
+              {schoolClassesForDropdown.length > 0 && (
+                <div className="space-y-2">
+                  <Label>Class and Section</Label>
+                  <Select
+                    value={editForm.classId || ''}
+                    onValueChange={(value) => setEditForm({ ...editForm, classId: value })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select class and section" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {schoolClassesForDropdown.map((cls) => (
+                        <SelectItem key={cls.id} value={cls.id}>
+                          {cls.name}{cls.section ? ` - Section ${cls.section}` : ''}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">Change the student&apos;s class/section here</p>
+                </div>
+              )}
               {/* Basic Info */}
               <div className="grid grid-cols-2 gap-4">
                 <div>

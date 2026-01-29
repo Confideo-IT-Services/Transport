@@ -45,7 +45,6 @@ import {
   ClipboardCheck, 
   Calendar as CalendarIcon, 
   Clock, 
-  Download, 
   CheckCircle2, 
   XCircle, 
   AlertCircle,
@@ -875,12 +874,6 @@ export default function AttendanceModule() {
                 ? "View and manage attendance for all teachers and classes"
                 : "Mark student attendance and track your own attendance"}
             </p>
-          </div>
-          <div className="flex items-center gap-3">
-            <Button variant="outline">
-              <Download className="w-4 h-4 mr-2" />
-              Export Report
-            </Button>
           </div>
         </div>
 

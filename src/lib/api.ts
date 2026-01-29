@@ -292,6 +292,11 @@ export const classesApi = {
     return apiRequest<any[]>('/classes');
   },
 
+  /** All school classes for dropdowns (e.g. change section) - admin and teacher */
+  getForDropdown: async (): Promise<{ id: string; name: string; section: string }[]> => {
+    return apiRequest<any[]>('/classes/for-dropdown');
+  },
+
   create: async (data: {
     name: string;
     section?: string;
@@ -417,6 +422,17 @@ export const studentsApi = {
     });
   },
 
+  bulkImport: async (data: {
+    importType: 'all_classes' | 'particular_class' | 'teacher';
+    selectedClassId?: string;
+    rows: Array<Record<string, any>>;
+  }): Promise<{ created: number; failed: number; errors: Array<{ row: number; message: string }>; createdIds: string[] }> => {
+    return apiRequest('/students/bulk', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
   approve: async (id: string | number): Promise<{ success: boolean; admissionNumber?: string }> => {
     return apiRequest(`/students/${id}/approve`, {
       method: 'POST',
@@ -472,8 +488,11 @@ export const studentsApi = {
 
 export const registrationLinksApi = {
   create: async (data: {
-    classId: string;
-    section: string;
+    name?: string;
+    linkType?: 'class' | 'all_classes' | 'teacher' | 'others';
+    classId?: string;
+    teacherId?: string;
+    section?: string;
     fieldConfig: any[];
     expiresAt?: string;
   }): Promise<{
@@ -1109,7 +1128,8 @@ export const feesApi = {
   },
 
   updateFeeStructure: async (data: {
-    classId: string;
+    className?: string;
+    classId?: string;
     academicYearId?: string;
     totalFee: number;
     tuitionFee?: number;
