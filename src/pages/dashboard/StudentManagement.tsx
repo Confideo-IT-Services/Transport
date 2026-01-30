@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Search, Check, X, Eye, Filter, Link2, Copy, Plus, Settings, Camera, Upload, ArrowRight, ArrowLeft } from "lucide-react";
+import { Search, Check, X, Eye, Filter, Link2, Copy, Plus, Settings, Camera, Upload, ArrowRight, ArrowLeft, Download } from "lucide-react";
 import * as XLSX from "xlsx";
 import {
   Select,
@@ -26,7 +26,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
-import { studentsApi, classesApi, registrationLinksApi, teachersApi } from "@/lib/api";
+import { studentsApi, classesApi, registrationLinksApi, teachersApi, academicYearsApi } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 
 interface FieldConfig {
@@ -386,16 +386,38 @@ export default function StudentManagement() {
   const [linksCount, setLinksCount] = useState(0);
   const [searchTerm, setSearchTerm] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [academicYears, setAcademicYears] = useState<{ id: string; name: string; status: string }[]>([]);
+  const [selectedAcademicYearId, setSelectedAcademicYearId] = useState<string | null>(null);
+  const [activeYearId, setActiveYearId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const loadYears = async () => {
+      try {
+        const [years, active] = await Promise.all([
+          academicYearsApi.getAll().catch(() => []),
+          academicYearsApi.getActive().catch(() => null)
+        ]);
+        setAcademicYears(years || []);
+        if (active?.id) {
+          setActiveYearId(active.id);
+          setSelectedAcademicYearId((prev) => prev ?? active.id);
+        } else if ((years || []).length > 0) setSelectedAcademicYearId((prev) => prev ?? (years || [])[0].id);
+      } catch {
+        setAcademicYears([]);
+      }
+    };
+    loadYears();
+  }, []);
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [selectedAcademicYearId]);
 
   const loadData = async () => {
     setIsLoading(true);
     try {
       const [studentsData, classesData, linksData] = await Promise.all([
-        studentsApi.getAll().catch(() => []),
+        studentsApi.getAll(selectedAcademicYearId || undefined).catch(() => []),
         classesApi.getAll().catch(() => []),
         registrationLinksApi.getAll().catch(() => [])
       ]);
@@ -426,7 +448,7 @@ export default function StudentManagement() {
   const [bulkExcelHeaders, setBulkExcelHeaders] = useState<string[]>([]);
   const [bulkExcelRows, setBulkExcelRows] = useState<any[]>([]);
   const [bulkColumnMapping, setBulkColumnMapping] = useState<Record<string, string>>({});
-  const [bulkImportType, setBulkImportType] = useState<'all_classes' | 'particular_class' | 'teacher'>('all_classes');
+  const [bulkImportType, setBulkImportType] = useState<'all_classes' | 'particular_class'>('all_classes');
   const [bulkSelectedClassId, setBulkSelectedClassId] = useState("");
   const [bulkImportResult, setBulkImportResult] = useState<{ created: number; failed: number; errors: Array<{ row: number; message: string }> } | null>(null);
   const [bulkImporting, setBulkImporting] = useState(false);
@@ -437,6 +459,9 @@ export default function StudentManagement() {
   const [teachers, setTeachers] = useState<{ id: string; name: string }[]>([]);
   const [generatedLink, setGeneratedLink] = useState("");
   const [fieldConfigs, setFieldConfigs] = useState<FieldConfig[]>(defaultFields);
+
+  const selectedYear = selectedAcademicYearId ? academicYears.find((y) => y.id === selectedAcademicYearId) : null;
+  const isReadOnlyYear = !!selectedYear && selectedYear.status !== "active";
 
   useEffect(() => {
     if (showLinkDialog) {
@@ -692,22 +717,49 @@ export default function StudentManagement() {
   return (
     <UnifiedLayout>
       <div className="space-y-6">
+        {/* Academic year filter */}
+        {academicYears.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2">
+            <Label className="text-muted-foreground">Academic year</Label>
+            <Select
+              value={selectedAcademicYearId ?? ""}
+              onValueChange={(v) => setSelectedAcademicYearId(v || null)}
+            >
+              <SelectTrigger className="w-48">
+                <SelectValue placeholder="Select year" />
+              </SelectTrigger>
+              <SelectContent>
+                {academicYears.map((y) => (
+                  <SelectItem key={y.id} value={y.id}>
+                    {y.name}{y.status === "active" ? " (Current)" : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {selectedAcademicYearId && academicYears.find((y) => y.id === selectedAcademicYearId)?.status !== "active" && (
+              <span className="text-sm text-amber-600 font-medium">Read-only — viewing previous year data</span>
+            )}
+          </div>
+        )}
+
         {/* Page Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold text-foreground">Student Management</h1>
             <p className="text-muted-foreground mt-1">Manage student registrations and approvals.</p>
           </div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" onClick={() => setShowBulkImportDialog(true)}>
-              <Upload className="w-4 h-4 mr-2" />
-              Bulk Import
-            </Button>
-            <Button onClick={() => setShowLinkDialog(true)}>
-              <Link2 className="w-4 h-4 mr-2" />
-              Generate Registration Link
-            </Button>
-          </div>
+          {(!selectedAcademicYearId || academicYears.find((y) => y.id === selectedAcademicYearId)?.status === "active") && (
+            <div className="flex items-center gap-2">
+              <Button variant="outline" onClick={() => setShowBulkImportDialog(true)}>
+                <Upload className="w-4 h-4 mr-2" />
+                Bulk Import
+              </Button>
+              <Button onClick={() => setShowLinkDialog(true)}>
+                <Link2 className="w-4 h-4 mr-2" />
+                Generate Registration Link
+              </Button>
+            </div>
+          )}
         </div>
 
         {/* Stats */}
@@ -829,22 +881,26 @@ export default function StudentManagement() {
                           >
                             <Eye className="w-4 h-4" />
                           </Button>
-                          <Button 
-                            variant="ghost" 
-                            size="icon" 
-                            className="text-success hover:text-success hover:bg-success/10"
-                            onClick={() => handleApprove(student.id)}
-                          >
-                            <Check className="w-4 h-4" />
-                          </Button>
-                          <Button 
-                            variant="ghost" 
-                            size="icon" 
-                            className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                            onClick={() => handleReject(student.id)}
-                          >
-                            <X className="w-4 h-4" />
-                          </Button>
+                          {!isReadOnlyYear && (
+                            <>
+                              <Button 
+                                variant="ghost" 
+                                size="icon" 
+                                className="text-success hover:text-success hover:bg-success/10"
+                                onClick={() => handleApprove(student.id)}
+                              >
+                                <Check className="w-4 h-4" />
+                              </Button>
+                              <Button 
+                                variant="ghost" 
+                                size="icon" 
+                                className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                                onClick={() => handleReject(student.id)}
+                              >
+                                <X className="w-4 h-4" />
+                              </Button>
+                            </>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -922,7 +978,7 @@ export default function StudentManagement() {
                       </td>
                       <td className="p-4 text-muted-foreground">{student.parentPhone}</td>
                       <td className="p-4">
-                        {user?.role === 'admin' ? (
+                        {user?.role === 'admin' && !isReadOnlyYear ? (
                           <Select
                             value={student.tcStatus || 'none'}
                             onValueChange={(value) => handleUpdateTcStatus(student.id, value as 'none' | 'applied' | 'issued')}
@@ -952,7 +1008,7 @@ export default function StudentManagement() {
                           >
                             <Eye className="w-4 h-4" />
                           </Button>
-                          {user?.role === 'admin' && (
+                          {user?.role === 'admin' && !isReadOnlyYear && (
                             <Button
                               variant="ghost"
                               size="icon"
@@ -1114,7 +1170,7 @@ export default function StudentManagement() {
               <DialogTitle>Bulk Import Students</DialogTitle>
               <DialogDescription>
                 {bulkStep === 1 && "Upload an Excel file (.xlsx). First row should be column headers."}
-                {bulkStep === 2 && "Choose how to assign classes: All Classes (use Class/Section from file), or one class for all."}
+                {bulkStep === 2 && "Is this data for all school students (class/section from file) or one particular class and section?"}
                 {bulkStep === 3 && "Map each Excel column to a system field."}
                 {bulkStep === 4 && "Preview mapped data and import."}
                 {bulkStep === 5 && "Import complete."}
@@ -1174,22 +1230,21 @@ export default function StudentManagement() {
               {bulkStep === 2 && (
                 <div className="space-y-4">
                   <Label>Import type</Label>
-                  <Select value={bulkImportType} onValueChange={(v: 'all_classes' | 'particular_class' | 'teacher') => setBulkImportType(v)}>
+                  <Select value={bulkImportType} onValueChange={(v: 'all_classes' | 'particular_class') => setBulkImportType(v)}>
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="all_classes">All Classes (Class + Section from Excel per row)</SelectItem>
-                      <SelectItem value="particular_class">Particular Class & Section (assign one class to all rows)</SelectItem>
-                      <SelectItem value="teacher">Teacher&apos;s form (same as particular class for now)</SelectItem>
+                      <SelectItem value="all_classes">All school students (all classes form)</SelectItem>
+                      <SelectItem value="particular_class">Particular class and section form</SelectItem>
                     </SelectContent>
                   </Select>
-                  {(bulkImportType === "particular_class" || bulkImportType === "teacher") && (
+                  {bulkImportType === "particular_class" && (
                     <>
-                      <Label>Select class</Label>
+                      <Label>Select class and section</Label>
                       <Select value={bulkSelectedClassId} onValueChange={setBulkSelectedClassId}>
                         <SelectTrigger>
-                          <SelectValue placeholder="Select class" />
+                          <SelectValue placeholder="Select class and section" />
                         </SelectTrigger>
                         <SelectContent>
                           {classes.map((c) => (
@@ -1277,13 +1332,73 @@ export default function StudentManagement() {
                     <div className="px-4 py-2 rounded-lg bg-destructive/20 text-destructive font-semibold">{bulkImportResult.failed} failed</div>
                   </div>
                   {bulkImportResult.errors.length > 0 && (
-                    <div className="space-y-2">
-                      <Label>Errors</Label>
-                      <ul className="list-disc list-inside text-sm text-muted-foreground max-h-40 overflow-y-auto">
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <Label>Failed rows (details below)</Label>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            const escapeCsv = (v: unknown) => {
+                              const s = v != null ? String(v) : "";
+                              if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+                              return s;
+                            };
+                            const headers = bulkExcelHeaders.length > 0 ? bulkExcelHeaders : (bulkExcelRows[0] ? Object.keys(bulkExcelRows[0]) : []);
+                            const failedRowIndices = bulkImportResult!.errors.map((e) => e.row - 2);
+                            const rows = failedRowIndices
+                              .filter((i) => i >= 0 && i < bulkExcelRows.length)
+                              .map((i) => bulkExcelRows[i]);
+                            const headerLine = headers.map(escapeCsv).join(",");
+                            const dataLines = rows.map((row) => headers.map((h) => escapeCsv(row[h])).join(","));
+                            const csv = [headerLine, ...dataLines].join("\r\n");
+                            const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement("a");
+                            a.href = url;
+                            a.download = `failed-import-rows-${new Date().toISOString().slice(0, 10)}.csv`;
+                            a.click();
+                            URL.revokeObjectURL(url);
+                            toast.success("Failed rows downloaded as CSV");
+                          }}
+                        >
+                          <Download className="w-4 h-4 mr-2" />
+                          Download failed rows as CSV
+                        </Button>
+                      </div>
+                      <ul className="list-disc list-inside text-sm text-muted-foreground">
                         {bulkImportResult.errors.map((e, i) => (
                           <li key={i}>Row {e.row}: {e.message}</li>
                         ))}
                       </ul>
+                      <div className="border rounded-lg overflow-x-auto max-h-48 overflow-y-auto">
+                        <table className="w-full text-sm">
+                          <thead className="bg-muted/50 sticky top-0">
+                            <tr>
+                              <th className="p-2 text-left font-medium w-12">Row</th>
+                              <th className="p-2 text-left font-medium w-32">Error</th>
+                              {bulkExcelHeaders.map((h) => (
+                                <th key={h} className="p-2 text-left font-medium">{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {bulkImportResult.errors.map((e, i) => {
+                              const rowIndex = e.row - 2;
+                              const row = rowIndex >= 0 && rowIndex < bulkExcelRows.length ? bulkExcelRows[rowIndex] : {};
+                              return (
+                                <tr key={i} className="border-t">
+                                  <td className="p-2">{e.row}</td>
+                                  <td className="p-2 text-destructive text-xs">{e.message}</td>
+                                  {bulkExcelHeaders.map((h) => (
+                                    <td key={h} className="p-2">{String(row[h] ?? "")}</td>
+                                  ))}
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1302,7 +1417,7 @@ export default function StudentManagement() {
                   <Button
                     disabled={
                       bulkStep === 1 && bulkExcelRows.length === 0 ||
-                      bulkStep === 2 && (bulkImportType !== "all_classes" && !bulkSelectedClassId)
+                      bulkStep === 2 && bulkImportType === "particular_class" && !bulkSelectedClassId
                     }
                     onClick={async () => {
                       if (bulkStep === 4) {
@@ -1317,7 +1432,7 @@ export default function StudentManagement() {
                         try {
                           const res = await studentsApi.bulkImport({
                             importType: bulkImportType,
-                            selectedClassId: bulkImportType !== "all_classes" ? bulkSelectedClassId || undefined : undefined,
+                            selectedClassId: bulkImportType === "particular_class" ? bulkSelectedClassId || undefined : undefined,
                             rows: mappedRows,
                           });
                           setBulkImportResult({ created: res.created, failed: res.failed, errors: res.errors });

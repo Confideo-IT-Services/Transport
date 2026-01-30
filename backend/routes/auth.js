@@ -195,6 +195,7 @@ router.post('/teacher/login', async (req, res) => {
         role: 'teacher',
         schoolId: teacher.school_id,
         schoolName: teacher.school_name,
+        classId: teacher.class_id || null,
         className: teacher.class_name ? `${teacher.class_name} ${teacher.class_section || ''}`.trim() : null
       }
     });
@@ -235,6 +236,7 @@ router.get('/verify', authenticateToken, async (req, res) => {
         role: 'teacher',
         schoolId: teacher.school_id,
         schoolName: teacher.school_name,
+        classId: teacher.class_id || null,
         className: teacher.class_name ? `${teacher.class_name} ${teacher.class_section || ''}`.trim() : null
       });
     } else {

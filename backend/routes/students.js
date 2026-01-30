@@ -4,11 +4,134 @@ const router = express.Router();
 const db = require('../config/database');
 const { authenticateToken, requireAdmin, requireTeacher } = require('../middleware/auth');
 
-// Get all students (filtered by school)
+// Helper: map DB student row (with class_name, class_section) to API response
+function mapStudentToResponse(s) {
+  const submittedData = s.submitted_data != null && typeof s.submitted_data === 'string'
+    ? (() => { try { return JSON.parse(s.submitted_data); } catch (e) { return null; } })()
+    : s.submitted_data;
+  return {
+    id: s.id,
+    name: s.name,
+    rollNo: s.roll_no,
+    classId: s.class_id,
+    className: s.class_name ? `${s.class_name} ${s.class_section || ''}`.trim() : null,
+    class: s.class_name || '',
+    section: s.class_section || '',
+    parentPhone: s.parent_phone,
+    parentEmail: s.parent_email,
+    parentName: s.parent_name,
+    address: s.address,
+    dateOfBirth: s.date_of_birth,
+    gender: s.gender,
+    bloodGroup: s.blood_group,
+    photoUrl: s.photo_url,
+    avatar: s.photo_url || '',
+    status: s.status,
+    tcStatus: s.tc_status || 'none',
+    admissionNumber: s.admission_number || null,
+    createdAt: s.created_at,
+    submittedAt: s.created_at,
+    registrationCode: s.registration_code || null,
+    submittedData: submittedData,
+    fatherName: submittedData?.fatherName ?? null,
+    motherName: submittedData?.motherName ?? null,
+  };
+}
+
+// Get all students (filtered by school); optional academicYearId for year filter
 router.get('/', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const schoolId = req.user.schoolId;
-    
+    const academicYearId = req.query.academicYearId || null;
+
+    if (academicYearId) {
+      try {
+        const [enrollments] = await db.query(
+          `SELECT e.id as enrollment_id, e.student_id, e.academic_year_id, e.class_id, e.roll_no,
+                  s.id, s.name, s.parent_phone, s.parent_email, s.parent_name, s.address, s.date_of_birth,
+                  s.gender, s.blood_group, s.photo_url, s.status, s.tc_status, s.admission_number,
+                  s.registration_code, s.submitted_data, s.created_at,
+                  c.name as class_name, c.section as class_section
+           FROM student_enrollments e
+           JOIN students s ON s.id = e.student_id AND s.school_id = ?
+           LEFT JOIN classes c ON c.id = e.class_id
+           WHERE e.school_id = ? AND e.academic_year_id = ?
+           ORDER BY c.name, c.section, e.roll_no, s.name`,
+          [schoolId, schoolId, academicYearId]
+        );
+        if (enrollments.length === 0) {
+          const [activeYear] = await db.query(
+            'SELECT id FROM academic_years WHERE school_id = ? AND status = ? LIMIT 1',
+            [schoolId, 'active']
+          );
+          if (activeYear.length > 0 && activeYear[0].id === academicYearId) {
+            const [allStudents] = await db.query(
+              `SELECT s.*, c.name as class_name, c.section as class_section
+               FROM students s LEFT JOIN classes c ON s.class_id = c.id WHERE s.school_id = ?`,
+              [schoolId]
+            );
+            for (const st of allStudents) {
+              try {
+                await db.query(
+                  `INSERT INTO student_enrollments (id, student_id, academic_year_id, class_id, roll_no, school_id)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON DUPLICATE KEY UPDATE class_id = VALUES(class_id), roll_no = VALUES(roll_no)`,
+                  [uuidv4(), st.id, academicYearId, st.class_id, st.roll_no, schoolId]
+                );
+              } catch (e) { /* ignore duplicate */ }
+            }
+            const [after] = await db.query(
+              `SELECT e.student_id, e.class_id, e.roll_no, s.id, s.name, s.parent_phone, s.parent_email, s.parent_name,
+                      s.address, s.date_of_birth, s.gender, s.blood_group, s.photo_url, s.status, s.tc_status,
+                      s.admission_number, s.registration_code, s.submitted_data, s.created_at,
+                      c.name as class_name, c.section as class_section
+               FROM student_enrollments e
+               JOIN students s ON s.id = e.student_id
+               LEFT JOIN classes c ON c.id = e.class_id
+               WHERE e.school_id = ? AND e.academic_year_id = ?`,
+              [schoolId, academicYearId]
+            );
+            const [pendingRows] = await db.query(
+              `SELECT s.*, c.name as class_name, c.section as class_section
+               FROM students s LEFT JOIN classes c ON s.class_id = c.id
+               WHERE s.school_id = ? AND s.status = 'pending'
+               ORDER BY s.created_at DESC`,
+              [schoolId]
+            );
+            const enrolledIds = new Set(after.map((r) => r.id || r.student_id));
+            const pendingOnly = pendingRows.filter((r) => !enrolledIds.has(r.id));
+            const combined = [...pendingOnly, ...after];
+            return res.json(combined.map(s => mapStudentToResponse(s)));
+          }
+          const [pendingRows] = await db.query(
+            `SELECT s.*, c.name as class_name, c.section as class_section
+             FROM students s LEFT JOIN classes c ON s.class_id = c.id
+             WHERE s.school_id = ? AND s.status = 'pending'
+             ORDER BY s.created_at DESC`,
+            [schoolId]
+          );
+          return res.json(pendingRows.map(s => mapStudentToResponse(s)));
+        }
+        const [pendingRows] = await db.query(
+          `SELECT s.*, c.name as class_name, c.section as class_section
+           FROM students s LEFT JOIN classes c ON s.class_id = c.id
+           WHERE s.school_id = ? AND s.status = 'pending'
+           ORDER BY s.created_at DESC`,
+          [schoolId]
+        );
+        const enrolledIds = new Set(enrollments.map((r) => r.id || r.student_id));
+        const pendingOnly = pendingRows.filter((r) => !enrolledIds.has(r.id));
+        const combined = [...pendingOnly, ...enrollments];
+        return res.json(combined.map(s => mapStudentToResponse(s)));
+      } catch (err) {
+        if (err.code === 'ER_NO_SUCH_TABLE' && err.message && err.message.includes('student_enrollments')) {
+          // Table not created yet; fall back to all students
+        } else {
+          throw err;
+        }
+      }
+    }
+
     const [students] = await db.query(`
       SELECT s.*, c.name as class_name, c.section as class_section
       FROM students s
@@ -16,47 +139,7 @@ router.get('/', authenticateToken, requireAdmin, async (req, res) => {
       WHERE s.school_id = ?
       ORDER BY s.created_at DESC
     `, [schoolId]);
-    
-    // Parse submitted_data JSON if it exists
-    students.forEach(s => {
-      if (s.submitted_data && typeof s.submitted_data === 'string') {
-        try {
-          s.submitted_data = JSON.parse(s.submitted_data);
-        } catch (e) {
-          console.error('Error parsing submitted_data:', e);
-          s.submitted_data = null;
-        }
-      }
-    });
-
-    res.json(students.map(s => ({
-      id: s.id,
-      name: s.name,
-      rollNo: s.roll_no,
-      classId: s.class_id,
-      className: s.class_name ? `${s.class_name} ${s.class_section || ''}`.trim() : null,
-      class: s.class_name || '',
-      section: s.class_section || '',
-      parentPhone: s.parent_phone,
-      parentEmail: s.parent_email,
-      parentName: s.parent_name,
-      address: s.address,
-      dateOfBirth: s.date_of_birth,
-      gender: s.gender,
-      bloodGroup: s.blood_group,
-      photoUrl: s.photo_url,
-      avatar: s.photo_url || '',
-      status: s.status,
-      tcStatus: s.tc_status || 'none',
-      admissionNumber: s.admission_number || null,
-      createdAt: s.created_at,
-      submittedAt: s.created_at,
-      registrationCode: s.registration_code || null,
-      submittedData: s.submitted_data ? (typeof s.submitted_data === 'string' ? JSON.parse(s.submitted_data) : s.submitted_data) : null,
-      // Map to old interface for compatibility
-      fatherName: s.submitted_data ? (typeof s.submitted_data === 'string' ? JSON.parse(s.submitted_data) : s.submitted_data).fatherName : null,
-      motherName: s.submitted_data ? (typeof s.submitted_data === 'string' ? JSON.parse(s.submitted_data) : s.submitted_data).motherName : null,
-    })));
+    res.json(students.map(s => mapStudentToResponse(s)));
   } catch (error) {
     console.error('Get students error:', error);
     res.status(500).json({ error: 'Failed to fetch students' });
@@ -347,15 +430,31 @@ router.post('/bulk', authenticateToken, requireAdmin, async (req, res) => {
     const [classesList] = await db.query('SELECT id, name, section FROM classes WHERE school_id = ?', [schoolId]);
     const classMap = {};
     classesList.forEach(c => {
-      const key = `${(c.name || '').toString().trim()}|${(c.section || '').toString().trim()}`;
+      const key = `${(c.name || '').toString().trim()}|${(c.section || '').toString().trim()}`.toLowerCase();
       if (!classMap[key]) classMap[key] = c.id;
     });
 
     const normalizeClass = (v) => (v != null ? String(v).trim() : '');
+    // Build list of possible class name variants so "1" and "Class 1" (and "Grade 1") all match
+    const classNamesToTry = (name) => {
+      const n = (name || '').trim();
+      if (!n) return [];
+      const set = new Set([n]);
+      if (!/^Class\s+/i.test(n)) set.add('Class ' + n);
+      if (!/^Grade\s+/i.test(n)) set.add('Grade ' + n);
+      if (/^Class\s+/i.test(n)) set.add(n.replace(/^Class\s+/i, '').trim());
+      if (/^Grade\s+/i.test(n)) set.add(n.replace(/^Grade\s+/i, '').trim());
+      return [...set];
+    };
     const created = [];
     const errors = [];
     let admissionCounter = 1;
     const admissionPrefix = `BULK-${new Date().getFullYear()}-`;
+    let activeYearId = null;
+    try {
+      const [ay] = await db.query('SELECT id FROM academic_years WHERE school_id = ? AND status = ? LIMIT 1', [schoolId, 'active']);
+      if (ay.length > 0) activeYearId = ay[0].id;
+    } catch (e) { /* ignore */ }
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
@@ -374,8 +473,14 @@ router.post('/bulk', authenticateToken, requireAdmin, async (req, res) => {
           errors.push({ row: rowNum, message: 'Class is required for All Classes import' });
           continue;
         }
-        const key = `${className}|${section}`;
-        classId = classMap[key];
+        const candidates = classNamesToTry(className);
+        for (const candidate of candidates) {
+          const key = `${candidate}|${section}`.toLowerCase();
+          if (classMap[key]) {
+            classId = classMap[key];
+            break;
+          }
+        }
         if (!classId) {
           errors.push({ row: rowNum, message: `Class/Section not found: ${className}${section ? ' - ' + section : ''}` });
           continue;
@@ -421,6 +526,15 @@ router.post('/bulk', authenticateToken, requireAdmin, async (req, res) => {
             row.address != null ? String(row.address) : null, row.dateOfBirth != null ? String(row.dateOfBirth) : null, row.gender != null ? String(row.gender) : null, row.bloodGroup != null ? String(row.bloodGroup) : null,
             JSON.stringify(submittedData), admissionNumber]
         );
+        if (activeYearId) {
+          try {
+            await db.query(
+              `INSERT INTO student_enrollments (id, student_id, academic_year_id, class_id, roll_no, school_id)
+               VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE class_id = VALUES(class_id), roll_no = VALUES(roll_no)`,
+              [uuidv4(), studentId, activeYearId, classId, row.rollNo != null ? String(row.rollNo) : null, schoolId]
+            );
+          } catch (e) { /* ignore */ }
+        }
         created.push({ row: rowNum, studentId, name });
       } catch (err) {
         errors.push({ row: rowNum, message: err.message || 'Failed to create student' });
@@ -546,6 +660,25 @@ router.post('/:id/approve', authenticateToken, requireAdmin, async (req, res) =>
     }
 
     console.log('✅ Student approved:', { id, admissionNumber, affectedRows: result.affectedRows });
+
+    try {
+      const [activeYear] = await db.query(
+        'SELECT id FROM academic_years WHERE school_id = ? AND status = ? LIMIT 1',
+        [schoolId, 'active']
+      );
+      if (activeYear.length > 0) {
+        const [st] = await db.query('SELECT roll_no FROM students WHERE id = ?', [id]);
+        const rollNo = st && st[0] ? st[0].roll_no : null;
+        await db.query(
+          `INSERT INTO student_enrollments (id, student_id, academic_year_id, class_id, roll_no, school_id)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE class_id = VALUES(class_id), roll_no = VALUES(roll_no)`,
+          [uuidv4(), id, activeYear[0].id, studentClassId, rollNo, schoolId]
+        );
+      }
+    } catch (enrollErr) {
+      if (enrollErr.code !== 'ER_NO_SUCH_TABLE') console.error('Enrollment insert on approve:', enrollErr);
+    }
 
     // If fee structure exists for this class, create fee record for the student
     try {
@@ -696,6 +829,17 @@ router.patch('/:id/tc-status', authenticateToken, requireAdmin, async (req, res)
       'UPDATE students SET tc_status = ? WHERE id = ?',
       [tcStatus, id]
     );
+    if (tcStatus === 'issued') {
+      try {
+        const [ay] = await db.query('SELECT id FROM academic_years WHERE school_id = ? AND status = ? LIMIT 1', [schoolId, 'active']);
+        if (ay.length > 0) {
+          await db.query(
+            'UPDATE student_enrollments SET left_at = NOW(), tc_issued_at = NOW() WHERE student_id = ? AND academic_year_id = ?',
+            [id, ay[0].id]
+          );
+        }
+      } catch (e) { if (e.code !== 'ER_NO_SUCH_TABLE') console.error('Enrollment TC update:', e); }
+    }
 
     console.log('✅ TC status updated:', { studentId: id, tcStatus });
 
@@ -746,6 +890,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
       motherName, motherPhone, motherOccupation,
       emergencyContact, previousSchool, medicalConditions,
       parentPhone, parentEmail, parentName,
+      photoUrl,
       extra_fields // NEW: Handle extra_fields for ID cards
     } = req.body;
 
@@ -800,7 +945,8 @@ router.put('/:id', authenticateToken, async (req, res) => {
     if (parentPhone !== undefined) { updates.push('parent_phone = ?'); values.push(parentPhone || null); }
     if (parentEmail !== undefined) { updates.push('parent_email = ?'); values.push(parentEmail || null); }
     if (parentName !== undefined) { updates.push('parent_name = ?'); values.push(parentName || null); }
-    
+    if (photoUrl !== undefined) { updates.push('photo_url = ?'); values.push(photoUrl || null); }
+
     // Add extra_fields update (only if admin and provided)
     if (userRole === 'admin' && extra_fields !== undefined) {
       updates.push('extra_fields = ?');

@@ -434,6 +434,16 @@ router.post('/:id/promote-students', authenticateToken, requireAdmin, async (req
           'UPDATE students SET class_id = ?, updated_at = NOW() WHERE id = ?',
           [nextClass.id, student.id]
         );
+        try {
+          await db.query(
+            `INSERT INTO student_enrollments (id, student_id, academic_year_id, class_id, roll_no, school_id)
+             VALUES (?, ?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE class_id = VALUES(class_id), roll_no = VALUES(roll_no)`,
+            [uuidv4(), student.id, newAcademicYearId, nextClass.id, student.roll_no || null, schoolId]
+          );
+        } catch (enrollErr) {
+          if (enrollErr.code !== 'ER_NO_SUCH_TABLE') console.error('Enrollment on promote:', enrollErr);
+        }
 
         promoted++;
       } catch (error) {

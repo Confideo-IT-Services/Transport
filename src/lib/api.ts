@@ -17,6 +17,7 @@ export interface User {
   schoolAddress?: string;
   schoolPhone?: string;
   schoolEmail?: string;
+  classId?: string;
   className?: string;
 }
 
@@ -377,12 +378,14 @@ export const academicYearsApi = {
 // ============ STUDENTS API ============
 
 export const studentsApi = {
-  getAll: async (): Promise<any[]> => {
-    return apiRequest<any[]>('/students');
+  getAll: async (academicYearId?: string): Promise<any[]> => {
+    const params = academicYearId ? `?academicYearId=${encodeURIComponent(academicYearId)}` : '';
+    return apiRequest<any[]>(`/students${params}`);
   },
 
-  getByClass: async (classId: string): Promise<any[]> => {
-    return apiRequest<any[]>(`/classes/${classId}/students`);
+  getByClass: async (classId: string, academicYearId?: string): Promise<any[]> => {
+    const params = academicYearId ? `?academicYearId=${encodeURIComponent(academicYearId)}` : '';
+    return apiRequest<any[]>(`/classes/${classId}/students${params}`);
   },
 
   getPending: async (): Promise<any[]> => {
@@ -465,6 +468,7 @@ export const studentsApi = {
     parentPhone?: string;
     parentEmail?: string;
     parentName?: string;
+    photoUrl?: string;
     extra_fields?: Record<string, any>; // NEW: ID card extra fields
   }): Promise<{ success: boolean }> => {
     return apiRequest(`/students/${id}`, {
