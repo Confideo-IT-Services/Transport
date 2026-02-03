@@ -1,7 +1,7 @@
 {
   "name": "allpulse-backend",
   "version": "1.0.0",
-  "description": "AllPulse School Management System - Backend API",
+  "description": "ConventPulse School Management System - Backend API",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

@@ -3,7 +3,7 @@ const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const router = express.Router();
 const db = require('../config/database');
-const { authenticateToken, requireSuperAdmin } = require('../middleware/auth');
+const { authenticateToken, requireSuperAdmin, requireAdmin } = require('../middleware/auth');
 
 // Generate unique school code
 const generateSchoolCode = () => {
@@ -319,6 +319,227 @@ router.post('/:id/deactivate', authenticateToken, requireSuperAdmin, async (req,
   } catch (error) {
     console.error('Deactivate school error:', error);
     res.status(500).json({ error: 'Failed to deactivate school' });
+  }
+});
+
+// ============ WHATSAPP SETTINGS ROUTES ============
+
+// Get WhatsApp settings for a school (Admin can view their own school, Super Admin can view any)
+router.get('/:id/whatsapp-settings', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userRole = req.user.role;
+    const userSchoolId = req.user.schoolId;
+
+    // Check access: Admin can only view their own school, Super Admin can view any
+    if (userRole === 'admin' && userSchoolId !== id) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const [settings] = await db.query(
+      'SELECT * FROM school_settings WHERE school_id = ?',
+      [id]
+    );
+
+    if (settings.length === 0) {
+      // Return default settings if none exist
+      return res.json({
+        whatsappEnabled: false,
+        features: {
+          homework: false,
+          attendance: false,
+          fees: false,
+          notifications: false,
+          reports: false,
+          timetable: false
+        }
+      });
+    }
+
+    const setting = settings[0];
+    const features = setting.whatsapp_features 
+      ? (typeof setting.whatsapp_features === 'string' 
+          ? JSON.parse(setting.whatsapp_features) 
+          : setting.whatsapp_features)
+      : {
+          homework: false,
+          attendance: false,
+          fees: false,
+          notifications: false,
+          reports: false,
+          timetable: false
+        };
+
+    res.json({
+      whatsappEnabled: !!setting.whatsapp_enabled,
+      features: features
+    });
+  } catch (error) {
+    console.error('Get WhatsApp settings error:', error);
+    res.status(500).json({ error: 'Failed to fetch WhatsApp settings' });
+  }
+});
+
+// Update WhatsApp settings for a school (Admin can update their own school, Super Admin can update any)
+router.put('/:id/whatsapp-settings', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userRole = req.user.role;
+    const userSchoolId = req.user.schoolId;
+
+    // Check access: Admin can only update their own school, Super Admin can update any
+    if (userRole === 'admin' && userSchoolId !== id) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const { whatsappEnabled, features } = req.body;
+
+    // Validate features object
+    const validFeatures = {
+      homework: features?.homework === true,
+      attendance: features?.attendance === true,
+      fees: features?.fees === true,
+      notifications: features?.notifications === true,
+      reports: features?.reports === true,
+      timetable: features?.timetable === true
+    };
+
+    // Check if settings exist
+    const [existing] = await db.query(
+      'SELECT id FROM school_settings WHERE school_id = ?',
+      [id]
+    );
+
+    if (existing.length === 0) {
+      // Create new settings
+      const settingsId = uuidv4();
+      await db.query(
+        `INSERT INTO school_settings (id, school_id, whatsapp_enabled, whatsapp_features, created_at, updated_at)
+         VALUES (?, ?, ?, ?, NOW(), NOW())`,
+        [settingsId, id, !!whatsappEnabled, JSON.stringify(validFeatures)]
+      );
+      console.log('✅ WhatsApp settings created for school:', id);
+    } else {
+      // Update existing settings
+      await db.query(
+        `UPDATE school_settings 
+         SET whatsapp_enabled = ?, whatsapp_features = ?, updated_at = NOW()
+         WHERE school_id = ?`,
+        [!!whatsappEnabled, JSON.stringify(validFeatures), id]
+      );
+      console.log('✅ WhatsApp settings updated for school:', id);
+    }
+
+    res.json({ 
+      success: true,
+      whatsappEnabled: !!whatsappEnabled,
+      features: validFeatures
+    });
+  } catch (error) {
+    console.error('Update WhatsApp settings error:', error);
+    res.status(500).json({ error: 'Failed to update WhatsApp settings' });
+  }
+});
+
+// Get WhatsApp settings for current user's school (convenience endpoint)
+router.get('/my-school/whatsapp-settings', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const schoolId = req.user.schoolId;
+    if (!schoolId) {
+      return res.status(400).json({ error: 'School ID not found' });
+    }
+
+    const [settings] = await db.query(
+      'SELECT * FROM school_settings WHERE school_id = ?',
+      [schoolId]
+    );
+
+    if (settings.length === 0) {
+      return res.json({
+        whatsappEnabled: false,
+        features: {
+          homework: false,
+          attendance: false,
+          fees: false,
+          notifications: false,
+          reports: false,
+          timetable: false
+        }
+      });
+    }
+
+    const setting = settings[0];
+    const features = setting.whatsapp_features 
+      ? (typeof setting.whatsapp_features === 'string' 
+          ? JSON.parse(setting.whatsapp_features) 
+          : setting.whatsapp_features)
+      : {
+          homework: false,
+          attendance: false,
+          fees: false,
+          notifications: false,
+          reports: false,
+          timetable: false
+        };
+
+    res.json({
+      whatsappEnabled: !!setting.whatsapp_enabled,
+      features: features
+    });
+  } catch (error) {
+    console.error('Get my school WhatsApp settings error:', error);
+    res.status(500).json({ error: 'Failed to fetch WhatsApp settings' });
+  }
+});
+
+// Update WhatsApp settings for current user's school (convenience endpoint)
+router.put('/my-school/whatsapp-settings', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const schoolId = req.user.schoolId;
+    if (!schoolId) {
+      return res.status(400).json({ error: 'School ID not found' });
+    }
+
+    const { whatsappEnabled, features } = req.body;
+
+    const validFeatures = {
+      homework: features?.homework === true,
+      attendance: features?.attendance === true,
+      fees: features?.fees === true,
+      notifications: features?.notifications === true,
+      reports: features?.reports === true,
+      timetable: features?.timetable === true
+    };
+
+    const [existing] = await db.query(
+      'SELECT id FROM school_settings WHERE school_id = ?',
+      [schoolId]
+    );
+
+    if (existing.length === 0) {
+      const settingsId = uuidv4();
+      await db.query(
+        `INSERT INTO school_settings (id, school_id, whatsapp_enabled, whatsapp_features, created_at, updated_at)
+         VALUES (?, ?, ?, ?, NOW(), NOW())`,
+        [settingsId, schoolId, !!whatsappEnabled, JSON.stringify(validFeatures)]
+      );
+    } else {
+      await db.query(
+        `UPDATE school_settings 
+         SET whatsapp_enabled = ?, whatsapp_features = ?, updated_at = NOW()
+         WHERE school_id = ?`,
+        [!!whatsappEnabled, JSON.stringify(validFeatures), schoolId]
+      );
+    }
+
+    res.json({ 
+      success: true,
+      whatsappEnabled: !!whatsappEnabled,
+      features: validFeatures
+    });
+  } catch (error) {
+    console.error('Update my school WhatsApp settings error:', error);
+    res.status(500).json({ error: 'Failed to update WhatsApp settings' });
   }
 });
 

@@ -12,8 +12,8 @@ import { toast } from "sonner";
 
 export default function PlatformSettings() {
   const navigate = useNavigate();
-  const [platformName, setPlatformName] = useState("AllPulse");
-  const [supportEmail, setSupportEmail] = useState("support@allpulse.com");
+  const [platformName, setPlatformName] = useState("ConventPulse");
+  const [supportEmail, setSupportEmail] = useState("support@conventpulse.com");
   const [maintenanceMode, setMaintenanceMode] = useState(false);
   const [allowRegistration, setAllowRegistration] = useState(true);
   const [emailNotifications, setEmailNotifications] = useState(true);

@@ -6,10 +6,11 @@ import { useAuth } from "@/contexts/AuthContext";
 
 interface UnifiedLayoutProps {
   children: ReactNode;
+  role?: "admin" | "teacher" | "parent";
 }
 
-export function UnifiedLayout({ children }: UnifiedLayoutProps) {
-  const { isAuthenticated, isLoading } = useAuth();
+export function UnifiedLayout({ children, role }: UnifiedLayoutProps) {
+  const { isAuthenticated, isLoading, user } = useAuth();
 
   // Wait for authentication check to complete before redirecting
   if (isLoading) {
@@ -24,7 +25,19 @@ export function UnifiedLayout({ children }: UnifiedLayoutProps) {
   }
 
   if (!isAuthenticated) {
-    return <Navigate to="/login" replace />;
+    // Redirect to appropriate login page based on role
+    const loginPath = role === "parent" ? "/parent/login" : "/login";
+    return <Navigate to={loginPath} replace />;
+  }
+
+  // Verify user role matches expected role
+  if (role && user?.role !== role) {
+    // Redirect to appropriate dashboard
+    if (user?.role === "parent") {
+      return <Navigate to="/parent/dashboard" replace />;
+    } else if (user?.role === "admin" || user?.role === "teacher") {
+      return <Navigate to="/dashboard" replace />;
+    }
   }
 
   return (

@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { authApi, getToken, setToken, removeToken, User } from "@/lib/api";
 
-export type UserRole = "superadmin" | "admin" | "teacher";
+export type UserRole = "superadmin" | "admin" | "teacher" | "parent";
 
 export type { User };
 
@@ -11,7 +11,9 @@ interface AuthContextType {
   login: (credentials: { 
     email?: string; 
     username?: string; 
-    password: string; 
+    password?: string;
+    phone?: string;
+    otp?: string;
     role: UserRole 
   }) => Promise<void>;
   logout: () => void;
@@ -34,7 +36,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // Check if it's a demo token (starts with "demo-token-")
           if (token.startsWith('demo-token-')) {
             // For demo tokens, just restore from localStorage
-            const savedUser = localStorage.getItem("allpulse_user");
+            const savedUser = localStorage.getItem("conventpulse_user");
             if (savedUser) {
               setUser(JSON.parse(savedUser));
             } else {
@@ -46,13 +48,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             const verifiedUser = await authApi.verifyToken();
             setUser(verifiedUser);
             // Update localStorage with fresh user data from backend
-            localStorage.setItem("allpulse_user", JSON.stringify(verifiedUser));
+            localStorage.setItem("conventpulse_user", JSON.stringify(verifiedUser));
           }
         } catch (error) {
           // Token invalid or expired, clean up
           console.error('Token verification failed:', error);
           removeToken();
-          localStorage.removeItem("allpulse_user");
+          localStorage.removeItem("conventpulse_user");
           setUser(null);
         }
       }
@@ -62,10 +64,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     checkAuth();
   }, []);
 
-  const login = async ({ email, username, password, role }: { 
+  const login = async ({ email, username, password, phone, otp, role }: { 
     email?: string; 
     username?: string; 
-    password: string; 
+    password?: string;
+    phone?: string;
+    otp?: string;
     role: UserRole 
   }) => {
     let response;
@@ -84,20 +88,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (!username) throw new Error('Username is required');
           response = await authApi.teacherLogin(username, password);
           break;
+        case 'parent':
+          if (!phone) throw new Error('Phone number is required');
+          response = await authApi.parentLogin(phone);
+          break;
         default:
           throw new Error('Invalid role');
       }
 
       setToken(response.token);
       setUser(response.user);
-      localStorage.setItem("allpulse_user", JSON.stringify(response.user));
+      localStorage.setItem("conventpulse_user", JSON.stringify(response.user));
     } catch (error) {
       // For demo mode, only use mock data for specific demo credentials
       console.log('API not available, checking for demo credentials');
       
       // Define demo credentials that match the UI demo buttons
       const DEMO_CREDENTIALS = {
-        superadmin: { email: "superadmin@allpulse.com", password: "demo123" },
+        superadmin: { email: "superadmin@conventpulse.com", password: "demo123" },
         admin: { email: "admin@school.edu", password: "demo123" },
         teacher: { username: "teacher", password: "demo123" },
       };
@@ -109,6 +117,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } else if (role === 'admin' && email === DEMO_CREDENTIALS.admin.email && password === DEMO_CREDENTIALS.admin.password) {
         isDemoAccount = true;
       } else if (role === 'teacher' && username === DEMO_CREDENTIALS.teacher.username && password === DEMO_CREDENTIALS.teacher.password) {
+        isDemoAccount = true;
+      } else if (role === 'parent' && phone && phone.replace(/\D/g, '') === '9876543210') {
+        // Demo parent account
         isDemoAccount = true;
       }
 
@@ -123,10 +134,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       // Only use demo mode for matching demo credentials
       const mockUsers: Record<string, User> = {
-        "superadmin@allpulse.com": {
+        "superadmin@conventpulse.com": {
           id: "1",
           name: "Platform Admin",
-          email: "superadmin@allpulse.com",
+          email: "superadmin@conventpulse.com",
           role: "superadmin",
         },
         "admin@school.edu": {
@@ -145,23 +156,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           schoolId: "school-1",
           schoolName: "Delhi Public School",
         },
+        "parent": {
+          id: "4",
+          name: "Parent User",
+          phone: "9876543210",
+          role: "parent",
+          schoolId: "school-1",
+          schoolName: "Delhi Public School",
+        },
       };
 
       // Get the correct demo user
       let foundUser: User | undefined;
       if (role === 'superadmin') {
-        foundUser = mockUsers["superadmin@allpulse.com"];
+        foundUser = mockUsers["superadmin@conventpulse.com"];
       } else if (role === 'admin') {
         foundUser = mockUsers["admin@school.edu"];
       } else if (role === 'teacher') {
         foundUser = mockUsers["teacher"];
+      } else if (role === 'parent') {
+        foundUser = mockUsers["parent"];
       }
 
       if (foundUser) {
         const mockToken = `demo-token-${Date.now()}`;
         setToken(mockToken);
         setUser(foundUser);
-        localStorage.setItem("allpulse_user", JSON.stringify(foundUser));
+        localStorage.setItem("conventpulse_user", JSON.stringify(foundUser));
       } else {
         throw new Error('Invalid credentials');
       }
@@ -171,7 +192,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = () => {
     setUser(null);
     removeToken();
-    localStorage.removeItem("allpulse_user");
+    localStorage.removeItem("conventpulse_user");
   };
 
   return (

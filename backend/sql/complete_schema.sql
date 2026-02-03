@@ -1,7 +1,7 @@
 -- ============================================================================
--- AllPulse School Management System - Complete Database Schema
+-- ConventPulse School Management System - Complete Database Schema
 -- ============================================================================
--- This file contains ALL database tables for the AllPulse system.
+-- This file contains ALL database tables for the ConventPulse system.
 -- All separate schema files and migrations have been consolidated here.
 --
 -- IMPORTANT: This schema matches EXACTLY what exists in your current database

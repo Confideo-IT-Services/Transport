@@ -181,7 +181,7 @@ export default function SchoolManagement() {
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
             <h1 className="page-title">School Management</h1>
-            <p className="text-muted-foreground mt-1">Create and manage schools on AllPulse.</p>
+            <p className="text-muted-foreground mt-1">Create and manage schools on ConventPulse.</p>
           </div>
           <Dialog open={isAddSchoolOpen} onOpenChange={setIsAddSchoolOpen}>
             <DialogTrigger asChild>

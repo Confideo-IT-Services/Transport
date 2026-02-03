@@ -14,7 +14,7 @@ async function fixSuperAdminPassword() {
   };
 
   // Get email and password from command line or use defaults
-  const email = process.argv[2] || 'superadmin@allpulse.com';
+  const email = process.argv[2] || 'superadmin@conventpulse.com';
   const newPassword = process.argv[3] || 'SuperAdmin@123';
 
   try {

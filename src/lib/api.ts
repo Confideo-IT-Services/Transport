@@ -8,7 +8,7 @@ export interface User {
   email?: string;
   username?: string;
   phone?: string;
-  role: 'superadmin' | 'admin' | 'teacher';
+  role: 'superadmin' | 'admin' | 'teacher' | 'parent';
   schoolId?: string;
   schoolName?: string;
   schoolCode?: string;
@@ -62,15 +62,15 @@ export interface SchoolAdmin {
 
 // Token management
 export const getToken = (): string | null => {
-  return localStorage.getItem('allpulse_token');
+  return localStorage.getItem('conventpulse_token');
 };
 
 export const setToken = (token: string): void => {
-  localStorage.setItem('allpulse_token', token);
+  localStorage.setItem('conventpulse_token', token);
 };
 
 export const removeToken = (): void => {
-  localStorage.removeItem('allpulse_token');
+  localStorage.removeItem('conventpulse_token');
 };
 
 // API Helper
@@ -142,6 +142,14 @@ export const authApi = {
     });
   },
 
+  // Parent Login (phone only)
+  parentLogin: async (phone: string): Promise<AuthResponse> => {
+    return apiRequest<AuthResponse>('/auth/parent/login', {
+      method: 'POST',
+      body: JSON.stringify({ phone }),
+    });
+  },
+
   // Verify Token
   verifyToken: async (): Promise<User> => {
     return apiRequest<User>('/auth/verify');
@@ -172,6 +180,18 @@ export const authApi = {
 };
 
 // ============ SCHOOLS API (SuperAdmin) ============
+
+export interface WhatsAppSettings {
+  whatsappEnabled: boolean;
+  features: {
+    homework: boolean;
+    attendance: boolean;
+    fees: boolean;
+    notifications: boolean;
+    reports: boolean;
+    timetable: boolean;
+  };
+}
 
 export const schoolsApi = {
   getAll: async (): Promise<School[]> => {
@@ -223,6 +243,27 @@ export const schoolsApi = {
     return apiRequest('/schools/my-school', {
       method: 'PUT',
       body: JSON.stringify(data),
+    });
+  },
+
+  // WhatsApp Settings
+  getWhatsAppSettings: async (schoolId?: string): Promise<WhatsAppSettings> => {
+    const endpoint = schoolId 
+      ? `/schools/${schoolId}/whatsapp-settings`
+      : '/schools/my-school/whatsapp-settings';
+    return apiRequest<WhatsAppSettings>(endpoint);
+  },
+
+  updateWhatsAppSettings: async (
+    settings: WhatsAppSettings,
+    schoolId?: string
+  ): Promise<{ success: boolean; whatsappEnabled: boolean; features: WhatsAppSettings['features'] }> => {
+    const endpoint = schoolId
+      ? `/schools/${schoolId}/whatsapp-settings`
+      : '/schools/my-school/whatsapp-settings';
+    return apiRequest(endpoint, {
+      method: 'PUT',
+      body: JSON.stringify(settings),
     });
   },
 };
@@ -1415,6 +1456,44 @@ export const notificationsApi = {
 
   markAsRead: async (notificationId: string): Promise<{ success: boolean }> => {
     return apiRequest(`/notifications/${notificationId}/read`, {
+      method: 'POST',
+    });
+  },
+};
+
+// ============ PARENTS API ============
+
+export const parentsApi = {
+  getChildren: async (): Promise<any[]> => {
+    return apiRequest<any[]>('/parents/children');
+  },
+  
+  getChildAttendance: async (studentId: string, startDate?: string, endDate?: string) => {
+    const params = new URLSearchParams();
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    const queryString = params.toString();
+    return apiRequest(`/parents/children/${studentId}/attendance${queryString ? '?' + queryString : ''}`);
+  },
+  
+  getChildHomework: async (studentId: string) => {
+    return apiRequest(`/parents/children/${studentId}/homework`);
+  },
+  
+  getChildNotifications: async (studentId: string) => {
+    return apiRequest(`/parents/children/${studentId}/notifications`);
+  },
+  
+  getChildFees: async (studentId: string) => {
+    return apiRequest(`/parents/children/${studentId}/fees`);
+  },
+  
+  getChildTestResults: async (studentId: string) => {
+    return apiRequest(`/parents/children/${studentId}/test-results`);
+  },
+  
+  markNotificationRead: async (notificationId: string) => {
+    return apiRequest(`/parents/notifications/${notificationId}/read`, {
       method: 'POST',
     });
   },

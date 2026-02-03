@@ -99,7 +99,7 @@ export default function StudentRegistration() {
           <div className="w-16 h-16 bg-primary rounded-2xl flex items-center justify-center mx-auto mb-4">
             <GraduationCap className="w-8 h-8 text-primary-foreground" />
           </div>
-          <h1 className="text-3xl font-bold text-foreground">AllPulse</h1>
+          <h1 className="text-3xl font-bold text-foreground">ConventPulse</h1>
           <p className="text-muted-foreground mt-2">Student Registration Form</p>
           {classId && (
             <span className="inline-block mt-2 px-3 py-1 bg-primary/10 text-primary text-sm rounded-full">

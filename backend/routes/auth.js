@@ -211,7 +211,36 @@ router.get('/verify', authenticateToken, async (req, res) => {
     const user = req.user;
     
     // Fetch fresh user data
-    if (user.role === 'teacher') {
+    if (user.role === 'parent') {
+      // For parents, get info from students table
+      const parentPhone = user.phone || user.id.replace('parent-', '');
+      const cleanedPhone = parentPhone.replace(/\D/g, '');
+      
+      const [students] = await db.query(
+        `SELECT DISTINCT s.school_id, s.parent_phone, s.parent_email, s.parent_name,
+                sch.name as school_name
+         FROM students s
+         JOIN schools sch ON s.school_id = sch.id
+         WHERE s.parent_phone = ? AND s.status = 'approved'
+         LIMIT 1`,
+        [cleanedPhone]
+      );
+      
+      if (students.length === 0) {
+        return res.status(404).json({ error: 'Parent not found' });
+      }
+      
+      const studentData = students[0];
+      res.json({
+        id: `parent-${cleanedPhone}`,
+        name: studentData.parent_name || 'Parent',
+        phone: cleanedPhone,
+        email: studentData.parent_email || null,
+        role: 'parent',
+        schoolId: studentData.school_id,
+        schoolName: studentData.school_name
+      });
+    } else if (user.role === 'teacher') {
       const [teachers] = await db.query(
         `SELECT t.*, s.name as school_name,
                 c.name as class_name, c.section as class_section
@@ -509,6 +538,65 @@ router.put('/change-password', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Change password error:', error);
     res.status(500).json({ error: 'Failed to change password' });
+  }
+});
+
+// Parent Login (phone only - no OTP for now)
+router.post('/parent/login', async (req, res) => {
+  try {
+    const { phone } = req.body;
+
+    if (!phone) {
+      return res.status(400).json({ error: 'Phone number is required' });
+    }
+
+    const cleanedPhone = phone.replace(/\D/g, '');
+
+    // Find student(s) with this parent phone
+    const [students] = await db.query(
+      `SELECT DISTINCT s.school_id, s.parent_phone, s.parent_email, s.parent_name,
+              sch.name as school_name
+       FROM students s
+       JOIN schools sch ON s.school_id = sch.id
+       WHERE s.parent_phone = ? AND s.status = 'approved'
+       LIMIT 1`,
+      [cleanedPhone]
+    );
+
+    if (students.length === 0) {
+      return res.status(401).json({ 
+        error: 'No student found with this parent phone number. Please contact the school.' 
+      });
+    }
+
+    const studentData = students[0];
+
+    // Generate token for parent
+    const token = generateToken({
+      id: `parent-${cleanedPhone}`,
+      phone: cleanedPhone,
+      role: 'parent',
+      school_id: studentData.school_id,
+      school_name: studentData.school_name
+    });
+
+    console.log('✅ Parent login successful:', { phone: cleanedPhone, schoolId: studentData.school_id });
+
+    res.json({
+      token,
+      user: {
+        id: `parent-${cleanedPhone}`,
+        name: studentData.parent_name || 'Parent',
+        phone: cleanedPhone,
+        email: studentData.parent_email || null,
+        role: 'parent',
+        schoolId: studentData.school_id,
+        schoolName: studentData.school_name
+      }
+    });
+  } catch (error) {
+    console.error('❌ Parent login error:', error);
+    res.status(500).json({ error: 'Login failed' });
   }
 });
 

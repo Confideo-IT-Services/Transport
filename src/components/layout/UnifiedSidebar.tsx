@@ -14,6 +14,8 @@ import {
   IndianRupee,
   School,
   Users,
+  FileText,
+  MessageSquare,
 } from "lucide-react";
 
 interface NavItem {
@@ -30,6 +32,36 @@ const navItems: NavItem[] = [
     href: "/dashboard", 
     icon: LayoutDashboard,
     roles: ["admin", "teacher"]
+  },
+  { 
+    label: "Attendance", 
+    href: "/parent/dashboard/attendance", 
+    icon: Calendar,
+    roles: ["parent"]
+  },
+  { 
+    label: "Homework", 
+    href: "/parent/dashboard/homework", 
+    icon: BookOpen,
+    roles: ["parent"]
+  },
+  { 
+    label: "Notifications", 
+    href: "/parent/dashboard/notifications", 
+    icon: Bell,
+    roles: ["parent"]
+  },
+  { 
+    label: "Fees", 
+    href: "/parent/dashboard/fees", 
+    icon: IndianRupee,
+    roles: ["parent"]
+  },
+  { 
+    label: "Test Results", 
+    href: "/parent/dashboard/results", 
+    icon: FileText,
+    roles: ["parent"]
   },
   { 
     label: "Academic Setup", 
@@ -98,6 +130,12 @@ const navItems: NavItem[] = [
     icon: User,
     roles: ["admin", "teacher"]
   },
+  { 
+    label: "WhatsApp Settings", 
+    href: "/dashboard/whatsapp-settings", 
+    icon: MessageSquare,
+    roles: ["admin"]
+  },
 ];
 
 export function UnifiedSidebar() {
@@ -116,9 +154,9 @@ export function UnifiedSidebar() {
           <GraduationCap className="w-6 h-6 text-primary-foreground" />
         </div>
         <div>
-          <h1 className="text-xl font-bold text-sidebar-foreground">AllPulse</h1>
+          <h1 className="text-xl font-bold text-sidebar-foreground">ConventPulse</h1>
           <p className="text-xs text-sidebar-foreground/60 capitalize">
-            {user?.role === "admin" ? "School Admin" : "Class Teacher"}
+            {user?.role === "admin" ? "School Admin" : user?.role === "teacher" ? "Class Teacher" : "Parent"}
           </p>
         </div>
       </div>
@@ -126,8 +164,15 @@ export function UnifiedSidebar() {
       {/* Navigation */}
       <nav className="flex-1 px-4 py-6 space-y-1 overflow-y-auto">
         {filteredNavItems.map((item) => {
-          const isActive = location.pathname === item.href || 
-            (item.href !== "/dashboard" && location.pathname.startsWith(item.href));
+          // For parent routes, check exact match or if it's a parent dashboard section
+          let isActive = false;
+          if (item.href.startsWith('/parent/dashboard')) {
+            isActive = location.pathname === item.href || 
+              (item.href === '/parent/dashboard/attendance' && location.pathname === '/parent/dashboard');
+          } else {
+            isActive = location.pathname === item.href || 
+              (item.href !== "/dashboard" && !item.href.startsWith('/parent') && location.pathname.startsWith(item.href));
+          }
           const isReadOnly = user && item.readOnly?.includes(user.role);
           
           return (

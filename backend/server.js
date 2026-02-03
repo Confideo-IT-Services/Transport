@@ -37,6 +37,7 @@ const idCardGenerationRoutes = require('./routes/idCardGeneration');
 const otpRoutes = require('./routes/otp');
 const notificationsRoutes = require('./routes/notifications');
 const whatsappRoutes = require('./routes/whatsapp');
+const parentRoutes = require('./routes/parents');
 
 // Use routes
 app.use('/api/auth', authRoutes);
@@ -58,6 +59,7 @@ app.use('/api/id-cards', idCardGenerationRoutes);
 app.use('/api/otp', otpRoutes);
 app.use('/api/notifications', notificationsRoutes);
 app.use('/api/whatsapp', whatsappRoutes);
+app.use('/api/parents', parentRoutes);
 
 // Import background jobs (optional)
 if (process.env.ENABLE_WHATSAPP_STATUS_CHECK === 'true') {
@@ -86,7 +88,7 @@ const PORT = process.env.PORT || 3000;
 const HOST = '0.0.0.0'; // Listen on all network interfaces
 
 app.listen(PORT, HOST, () => {
-  console.log(`🚀 AllPulse API Server running on port ${PORT}`);
+  console.log(`🚀 ConventPulse API Server running on port ${PORT}`);
   console.log(`📍 API Base URL (localhost): http://localhost:${PORT}/api`);
   console.log(`📍 API Base URL (network): http://192.168.0.33:${PORT}/api`);
   console.log(`🌐 Server accessible from all network interfaces`);

@@ -67,7 +67,7 @@ export default function StudentManagement() {
       return;
     }
     const baseUrl = window.location.origin;
-    const link = `${baseUrl}/register?class=${selectedClassForLink}&school=ALLPULSE001`;
+    const link = `${baseUrl}/register?class=${selectedClassForLink}&school=CONVENTPULSE001`;
     setGeneratedLink(link);
   };
 

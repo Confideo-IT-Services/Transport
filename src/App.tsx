@@ -11,6 +11,10 @@ import Login from "./pages/Login";
 import NotFound from "./pages/NotFound";
 import StudentRegistration from "./pages/register/StudentRegistration";
 
+// Parent pages
+import ParentLogin from "./pages/parent/ParentLogin";
+import ParentDashboard from "./pages/parent/ParentDashboard";
+
 // Unified Dashboard pages
 import UnifiedDashboard from "./pages/dashboard/UnifiedDashboard";
 import AcademicSetup from "./pages/dashboard/AcademicSetup";
@@ -25,6 +29,7 @@ import HomeworkModule from "./pages/dashboard/HomeworkModule";
 import StudentManagement from "./pages/dashboard/StudentManagement";
 import RegistrationLinksManagement from "./pages/dashboard/RegistrationLinksManagement";
 import MyStudents from "./pages/dashboard/MyStudents";
+import WhatsAppSettings from "./pages/dashboard/WhatsAppSettings";
 
 // Super Admin pages
 import SuperAdminDashboard from "./pages/superadmin/SuperAdminDashboard";
@@ -50,6 +55,11 @@ const App = () => (
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<StudentRegistration />} />
             
+            {/* Parent Routes */}
+            <Route path="/parent/login" element={<ParentLogin />} />
+            <Route path="/parent/dashboard" element={<ParentDashboard />} />
+            <Route path="/parent/dashboard/:section" element={<ParentDashboard />} />
+            
             {/* Unified Dashboard Routes (School Admin & Teacher) */}
             <Route path="/dashboard" element={<UnifiedDashboard />} />
             <Route path="/dashboard/academic" element={<AcademicSetup />} />
@@ -64,6 +74,7 @@ const App = () => (
             <Route path="/dashboard/students" element={<StudentManagement />} />
             <Route path="/dashboard/students/registration-links" element={<RegistrationLinksManagement />} />
             <Route path="/dashboard/my-students" element={<MyStudents />} />
+            <Route path="/dashboard/whatsapp-settings" element={<WhatsAppSettings />} />
             
             {/* Super Admin Routes */}
             <Route path="/superadmin/login" element={<SuperAdminLogin />} />

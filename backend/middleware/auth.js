@@ -22,9 +22,19 @@ const authenticateToken = (req, res, next) => {
     console.log('✅ Token verified:', {
       id: user.id,
       email: user.email,
+      phone: user.phone,
       role: user.role,
-      schoolId: user.schoolId
+      schoolId: user.schoolId,
+      school_id: user.school_id
     });
+    
+    // Normalize schoolId - ensure both formats are available
+    if (user.schoolId && !user.school_id) {
+      user.school_id = user.schoolId;
+    }
+    if (user.school_id && !user.schoolId) {
+      user.schoolId = user.school_id;
+    }
     
     req.user = user;
     next();
@@ -90,6 +100,14 @@ const requireTeacher = (req, res, next) => {
   next();
 };
 
+// Check if user is parent
+const requireParent = (req, res, next) => {
+  if (req.user.role !== 'parent') {
+    return res.status(403).json({ error: 'Parent access required' });
+  }
+  next();
+};
+
 // Generate JWT token
 const generateToken = (user) => {
   // Normalize role to lowercase to ensure consistency
@@ -99,6 +117,7 @@ const generateToken = (user) => {
     id: user.id,
     email: user.email,
     username: user.username,
+    phone: user.phone, // Add phone for parent role
     role: normalizedRole,
     schoolId: user.school_id,
     schoolName: user.school_name
@@ -107,6 +126,7 @@ const generateToken = (user) => {
   console.log('🔑 Generating token with payload:', {
     id: tokenPayload.id,
     email: tokenPayload.email,
+    phone: tokenPayload.phone,
     role: tokenPayload.role,
     originalRole: user.role
   });
@@ -123,5 +143,6 @@ module.exports = {
   requireSuperAdmin,
   requireAdmin,
   requireTeacher,
+  requireParent,
   generateToken
 };

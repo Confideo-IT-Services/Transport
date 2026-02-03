@@ -11,8 +11,12 @@ export function UnifiedHeader() {
   const location = useLocation();
   const [unreadCount, setUnreadCount] = useState(0);
 
-  // Fetch unread notification count
+  // Only fetch notifications for admin/teacher, not for parents
   useEffect(() => {
+    if (user?.role === 'parent') {
+      return; // Don't fetch notifications for parents
+    }
+
     const fetchUnreadCount = async () => {
       try {
         const notifications = await notificationsApi.getInbox();
@@ -39,11 +43,27 @@ export function UnifiedHeader() {
       clearInterval(interval);
       window.removeEventListener('notification-read', handleNotificationRead);
     };
-  }, [location.pathname]);
+  }, [location.pathname, user?.role]);
 
   const handleNotificationClick = () => {
     navigate('/dashboard/notifications');
   };
+
+  // Don't show notification icon and role badge for parents
+  if (user?.role === 'parent') {
+    return (
+      <header className="sticky top-0 z-30 h-16 bg-card border-b border-border flex items-center justify-end px-6">
+        {/* Empty header for parents - just show user avatar if needed */}
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-full bg-primary flex items-center justify-center">
+            <span className="text-sm font-medium text-primary-foreground">
+              {user?.name.charAt(0)}
+            </span>
+          </div>
+        </div>
+      </header>
+    );
+  }
 
   return (
     <header className="sticky top-0 z-30 h-16 bg-card border-b border-border flex items-center justify-end px-6">
