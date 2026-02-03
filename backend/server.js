@@ -6,7 +6,13 @@ const app = express();
 
 // Middleware
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://localhost:8080', process.env.FRONTEND_URL].filter(Boolean),
+  origin: [
+    'http://localhost:5173',
+    'http://localhost:8080',
+    'http://localhost:8081', // Expo web
+    /^exp:\/\/.*/, // Allow all Expo URLs (mobile app)
+    process.env.FRONTEND_URL
+  ].filter(Boolean),
   credentials: true
 }));
 app.use(express.json());
@@ -77,7 +83,11 @@ app.use((req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+const HOST = '0.0.0.0'; // Listen on all network interfaces
+
+app.listen(PORT, HOST, () => {
   console.log(`🚀 AllPulse API Server running on port ${PORT}`);
-  console.log(`📍 API Base URL: http://localhost:${PORT}/api`);
+  console.log(`📍 API Base URL (localhost): http://localhost:${PORT}/api`);
+  console.log(`📍 API Base URL (network): http://192.168.0.33:${PORT}/api`);
+  console.log(`🌐 Server accessible from all network interfaces`);
 });

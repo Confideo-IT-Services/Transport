@@ -324,3 +324,10 @@ VALUES (UUID(), @school_id, 'Default ID Card', '{}', TRUE);
 -- Admin:  admin@democonvent.com  /  password
 -- Teachers: teacher_nur_a, teacher_1a, teacher_2a, ... teacher_10b  /  password
 -- ============================================================================
+
+
+
+
+
+
+
