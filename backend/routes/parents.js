@@ -210,10 +210,13 @@ router.get('/children/:studentId/notifications', authenticateToken, async (req, 
     }
 
     const [notifications] = await db.query(
-      `SELECT n.*, nr.is_read, nr.read_at, u.name as sender_name, u.role as sender_role
+      `SELECT n.*, nr.is_read, nr.read_at, 
+              COALESCE(u.name, t.name) as sender_name,
+              COALESCE(u.role, n.sender_role) as sender_role
        FROM notifications n
        JOIN notification_recipients nr ON n.id = nr.notification_id
-       LEFT JOIN users u ON n.sender_id = u.id
+       LEFT JOIN users u ON n.sender_id = u.id AND n.sender_role = 'admin'
+       LEFT JOIN teachers t ON n.sender_id = t.id AND n.sender_role = 'teacher'
        WHERE nr.recipient_type = 'parent' 
          AND nr.student_id = ?
        ORDER BY n.created_at DESC

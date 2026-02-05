@@ -15,7 +15,6 @@ import {
   School,
   Users,
   FileText,
-  MessageSquare,
 } from "lucide-react";
 
 interface NavItem {
@@ -129,12 +128,6 @@ const navItems: NavItem[] = [
     href: "/dashboard/profile", 
     icon: User,
     roles: ["admin", "teacher"]
-  },
-  { 
-    label: "WhatsApp Settings", 
-    href: "/dashboard/whatsapp-settings", 
-    icon: MessageSquare,
-    roles: ["admin"]
   },
 ];
 

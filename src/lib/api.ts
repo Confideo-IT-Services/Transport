@@ -181,18 +181,6 @@ export const authApi = {
 
 // ============ SCHOOLS API (SuperAdmin) ============
 
-export interface WhatsAppSettings {
-  whatsappEnabled: boolean;
-  features: {
-    homework: boolean;
-    attendance: boolean;
-    fees: boolean;
-    notifications: boolean;
-    reports: boolean;
-    timetable: boolean;
-  };
-}
-
 export const schoolsApi = {
   getAll: async (): Promise<School[]> => {
     return apiRequest<School[]>('/schools');
@@ -243,27 +231,6 @@ export const schoolsApi = {
     return apiRequest('/schools/my-school', {
       method: 'PUT',
       body: JSON.stringify(data),
-    });
-  },
-
-  // WhatsApp Settings
-  getWhatsAppSettings: async (schoolId?: string): Promise<WhatsAppSettings> => {
-    const endpoint = schoolId 
-      ? `/schools/${schoolId}/whatsapp-settings`
-      : '/schools/my-school/whatsapp-settings';
-    return apiRequest<WhatsAppSettings>(endpoint);
-  },
-
-  updateWhatsAppSettings: async (
-    settings: WhatsAppSettings,
-    schoolId?: string
-  ): Promise<{ success: boolean; whatsappEnabled: boolean; features: WhatsAppSettings['features'] }> => {
-    const endpoint = schoolId
-      ? `/schools/${schoolId}/whatsapp-settings`
-      : '/schools/my-school/whatsapp-settings';
-    return apiRequest(endpoint, {
-      method: 'PUT',
-      body: JSON.stringify(settings),
     });
   },
 };

@@ -1284,7 +1284,7 @@ export default function AttendanceModule() {
                       />
                     </div>
                     {/* Send to All Parents Button */}
-                    <Button
+                    {/*<Button
                       onClick={handleSendAttendanceToAll}
                       disabled={isSendingAttendance || !selectedClassId || studentAttendancePercentages.length === 0}
                       className="ml-auto"
@@ -1300,7 +1300,7 @@ export default function AttendanceModule() {
                           Send to All Parents
                         </>
                       )}
-                    </Button>
+                    </Button>*/}
                   </div>
                 </div>
               </CardHeader>

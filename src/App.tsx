@@ -29,7 +29,6 @@ import HomeworkModule from "./pages/dashboard/HomeworkModule";
 import StudentManagement from "./pages/dashboard/StudentManagement";
 import RegistrationLinksManagement from "./pages/dashboard/RegistrationLinksManagement";
 import MyStudents from "./pages/dashboard/MyStudents";
-import WhatsAppSettings from "./pages/dashboard/WhatsAppSettings";
 
 // Super Admin pages
 import SuperAdminDashboard from "./pages/superadmin/SuperAdminDashboard";
@@ -74,7 +73,6 @@ const App = () => (
             <Route path="/dashboard/students" element={<StudentManagement />} />
             <Route path="/dashboard/students/registration-links" element={<RegistrationLinksManagement />} />
             <Route path="/dashboard/my-students" element={<MyStudents />} />
-            <Route path="/dashboard/whatsapp-settings" element={<WhatsAppSettings />} />
             
             {/* Super Admin Routes */}
             <Route path="/superadmin/login" element={<SuperAdminLogin />} />
