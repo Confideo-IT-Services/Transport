@@ -207,13 +207,13 @@ export function FeesScreen() {
   const getStatusConfig = (status: string) => {
     switch (status) {
       case 'paid':
-        return { bg: '#d1fae5', text: '#065f46', border: '#10b981' };
+        return { bg: '#d1fae5', text: '#065f46', border: '#10b981' }; // Green - Success/Completed
       case 'partial':
-        return { bg: '#fef3c7', text: '#92400e', border: '#f59e0b' };
+        return { bg: '#fef3c7', text: '#92400e', border: '#f59e0b' }; // Amber - Pending
       case 'unpaid':
-        return { bg: '#fee2e2', text: '#991b1b', border: '#ef4444' };
+        return { bg: '#fee2e2', text: '#991b1b', border: '#ef4444' }; // Red - Alert/Overdue
       default:
-        return { bg: '#f3f4f6', text: '#374151', border: '#6b7280' };
+        return { bg: '#f3f4f6', text: '#374151', border: '#6b7280' }; // Gray - Info
     }
   };
 
@@ -303,7 +303,14 @@ export function FeesScreen() {
   const renderHeader = () => (
     <View style={styles.headerSection}>
       <View style={styles.header}>
-        <Text style={styles.title}>Fee Records</Text>
+        <View style={styles.headerContent}>
+          <Text style={styles.headerIcon}>💰</Text>
+          <View style={styles.headerTextContainer}>
+            <Text style={styles.title}>Fee Records</Text>
+            <Text style={styles.headerSubtitle}>Payment status for selected child</Text>
+          </View>
+        </View>
+        <View style={[styles.headerAccent, { backgroundColor: '#8b5cf6' }]} />
       </View>
 
       {children.length > 1 && (
@@ -374,12 +381,37 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 16,
     paddingBottom: 12,
+    position: 'relative',
+  },
+  headerContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  headerIcon: {
+    fontSize: 28,
+  },
+  headerTextContainer: {
+    flex: 1,
   },
   title: {
     fontSize: 28,
     fontWeight: '700',
     color: '#111827',
     letterSpacing: -0.5,
+  },
+  headerSubtitle: {
+    fontSize: 13,
+    color: '#9ca3af',
+    marginTop: 2,
+  },
+  headerAccent: {
+    position: 'absolute',
+    bottom: 0,
+    left: 20,
+    right: 20,
+    height: 3,
+    borderRadius: 2,
   },
   filterSection: {
     paddingHorizontal: 16,

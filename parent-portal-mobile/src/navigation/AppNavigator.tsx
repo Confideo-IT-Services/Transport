@@ -4,16 +4,28 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useAuth } from '../contexts/AuthContext';
 import { LoginScreen } from '../screens/LoginScreen';
+import { ParentDashboardScreen } from '../screens/ParentDashboardScreen';
 import { AttendanceScreen } from '../screens/AttendanceScreen';
 import { HomeworkScreen } from '../screens/HomeworkScreen';
 import { NotificationsScreen } from '../screens/NotificationsScreen';
 import { FeesScreen } from '../screens/FeesScreen';
 import { TestResultsScreen } from '../screens/TestResultsScreen';
+import { TestDetailScreen } from '../screens/TestDetailScreen';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { Text } from 'react-native';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
+const TestResultsStack = createNativeStackNavigator();
+
+function TestResultsNavigator() {
+  return (
+    <TestResultsStack.Navigator screenOptions={{ headerShown: false }}>
+      <TestResultsStack.Screen name="TestResultsList" component={TestResultsScreen} />
+      <TestResultsStack.Screen name="TestDetail" component={TestDetailScreen} />
+    </TestResultsStack.Navigator>
+  );
+}
 
 function MainTabs() {
   return (
@@ -29,6 +41,13 @@ function MainTabs() {
         },
       }}
     >
+      <Tab.Screen
+        name="Dashboard"
+        component={ParentDashboardScreen}
+        options={{
+          tabBarIcon: ({ color }) => <Text style={{ color, fontSize: 20 }}>🏠</Text>,
+        }}
+      />
       <Tab.Screen
         name="Attendance"
         component={AttendanceScreen}
@@ -59,7 +78,7 @@ function MainTabs() {
       />
       <Tab.Screen
         name="Results"
-        component={TestResultsScreen}
+        component={TestResultsNavigator}
         options={{
           tabBarIcon: ({ color }) => <Text style={{ color, fontSize: 20 }}>📊</Text>,
         }}

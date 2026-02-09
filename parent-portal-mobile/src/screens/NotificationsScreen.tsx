@@ -3,7 +3,6 @@ import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
   FlatList,
   TouchableOpacity,
   Linking,
@@ -80,47 +79,86 @@ export function NotificationsScreen() {
     >
       <View style={styles.cardContent}>
         <View style={styles.cardHeader}>
-          <Text style={styles.title}>{item.title}</Text>
-          <View style={styles.badgeContainer}>
-            {!item.isRead && (
-              <View style={styles.newBadge}>
-                <Text style={styles.badgeText}>New</Text>
-              </View>
-            )}
-            {item.priority === 'urgent' && (
-              <View style={styles.urgentBadge}>
-                <Text style={styles.badgeText}>Urgent</Text>
-              </View>
-            )}
+          <View style={styles.titleContainer}>
+            <Text style={styles.title}>{item.title}</Text>
+            <View style={styles.badgeContainer}>
+              {!item.isRead && (
+                <View style={styles.newBadge}>
+                  <Text style={styles.newBadgeText}>New</Text>
+                </View>
+              )}
+              {item.priority === 'urgent' && (
+                <View style={styles.urgentBadge}>
+                  <Text style={styles.urgentBadgeText}>Urgent</Text>
+                </View>
+              )}
+            </View>
           </View>
         </View>
+
         <Text style={styles.message}>{item.message}</Text>
-        <View style={styles.meta}>
-          <Text style={styles.metaText}>
-            From: {item.senderName} ({item.senderRole})
-          </Text>
-          <Text style={styles.metaText}>•</Text>
-          <Text style={styles.metaText}>
-            {format(new Date(item.createdAt), 'MMM d, yyyy, h:mm a')}
+
+        <View style={styles.metaContainer}>
+          <View style={styles.metaRow}>
+            <Text style={styles.metaLabel}>From:</Text>
+            <Text style={styles.metaValue}>
+              {item.senderName} ({item.senderRole})
+            </Text>
+          </View>
+          <Text style={styles.metaTime}>
+            {format(new Date(item.createdAt), 'MMM d, yyyy • h:mm a')}
           </Text>
         </View>
+
         {item.attachmentUrl && (
           <TouchableOpacity
             onPress={() => Linking.openURL(item.attachmentUrl!)}
             style={styles.attachmentLink}
           >
-            <Text style={styles.attachmentText}>View Attachment →</Text>
+            <Text style={styles.attachmentText}>📎 View Attachment</Text>
+          </TouchableOpacity>
+        )}
+
+        {!item.isRead && (
+          <TouchableOpacity
+            style={styles.markReadButton}
+            onPress={() => handleMarkRead(item.id)}
+          >
+            <Text style={styles.markReadText}>Mark as Read</Text>
           </TouchableOpacity>
         )}
       </View>
-      {!item.isRead && (
-        <TouchableOpacity
-          style={styles.markReadButton}
-          onPress={() => handleMarkRead(item.id)}
-        >
-          <Text style={styles.markReadText}>Mark Read</Text>
-        </TouchableOpacity>
+    </View>
+  );
+
+  const renderHeader = () => (
+    <View style={styles.headerSection}>
+      <View style={styles.header}>
+        <View style={styles.headerContent}>
+          <Text style={styles.headerIcon}>🔔</Text>
+          <View style={styles.headerTextContainer}>
+            <Text style={styles.headerTitle}>Notifications</Text>
+            <Text style={styles.headerSubtitle}>Messages and updates for selected child</Text>
+          </View>
+        </View>
+        <View style={[styles.headerAccent, { backgroundColor: '#ef4444' }]} />
+      </View>
+
+      {children.length > 1 && (
+        <View style={styles.filterSection}>
+          <ChildSelector
+            children={children}
+            selectedChildId={selectedChildId}
+            onSelect={setSelectedChildId}
+          />
+        </View>
       )}
+    </View>
+  );
+
+  const renderEmpty = () => (
+    <View style={styles.emptyContainer}>
+      <EmptyState message="No notifications." />
     </View>
   );
 
@@ -130,144 +168,229 @@ export function NotificationsScreen() {
 
   if (children.length === 0) {
     return (
-      <EmptyState message="No children found. Please contact the school if you believe this is an error." />
+      <View style={styles.container}>
+        <EmptyState message="No children found. Please contact the school if you believe this is an error." />
+      </View>
+    );
+  }
+
+  if (loading) {
+    return (
+      <View style={styles.container}>
+        {renderHeader()}
+        <LoadingSpinner />
+      </View>
     );
   }
 
   return (
-    <ScrollView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Notifications</Text>
-      </View>
-
-      <ChildSelector
-        children={children}
-        selectedChildId={selectedChildId}
-        onSelect={setSelectedChildId}
+    <View style={styles.container}>
+      <FlatList
+        data={notifications}
+        renderItem={renderItem}
+        keyExtractor={(item) => item.id}
+        ListHeaderComponent={renderHeader}
+        ListEmptyComponent={renderEmpty}
+        contentContainerStyle={notifications.length === 0 ? styles.emptyListContent : styles.listContent}
+        showsVerticalScrollIndicator={false}
       />
-
-      {loading ? (
-        <LoadingSpinner />
-      ) : notifications.length === 0 ? (
-        <EmptyState message="No notifications." />
-      ) : (
-        <FlatList
-          data={notifications}
-          renderItem={renderItem}
-          keyExtractor={(item) => item.id}
-          scrollEnabled={false}
-        />
-      )}
-    </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f9fafb',
+    backgroundColor: '#f5f5f5',
   },
-  header: {
+  headerSection: {
     backgroundColor: '#fff',
-    padding: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#e5e7eb',
   },
+  header: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 12,
+    position: 'relative',
+  },
+  headerContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  headerIcon: {
+    fontSize: 28,
+  },
+  headerTextContainer: {
+    flex: 1,
+  },
   headerTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
+    fontSize: 28,
+    fontWeight: '700',
     color: '#111827',
+    letterSpacing: -0.5,
+  },
+  headerSubtitle: {
+    fontSize: 13,
+    color: '#9ca3af',
+    marginTop: 2,
+  },
+  headerAccent: {
+    position: 'absolute',
+    bottom: 0,
+    left: 20,
+    right: 20,
+    height: 3,
+    borderRadius: 2,
+  },
+  filterSection: {
+    paddingHorizontal: 16,
+    paddingBottom: 16,
+    backgroundColor: '#fff',
+  },
+  listContent: {
+    paddingTop: 8,
+    paddingBottom: 24,
+  },
+  emptyListContent: {
+    flexGrow: 1,
+  },
+  emptyContainer: {
+    flex: 1,
+    minHeight: 400,
   },
   card: {
     backgroundColor: '#fff',
     marginHorizontal: 16,
-    marginBottom: 16,
-    padding: 16,
-    borderRadius: 8,
+    marginBottom: 12,
+    padding: 20,
+    borderRadius: 12,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 3,
+    borderWidth: 1,
+    borderColor: '#f0f0f0',
   },
   cardUnread: {
     backgroundColor: '#eff6ff',
-    borderWidth: 1,
-    borderColor: '#bfdbfe',
+    borderWidth: 2,
+    borderColor: '#3b82f6',
   },
   cardContent: {
     flex: 1,
   },
   cardHeader: {
+    marginBottom: 12,
+  },
+  titleContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: 8,
+    flexWrap: 'wrap',
+    gap: 8,
   },
   title: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: '600',
     color: '#111827',
     flex: 1,
+    lineHeight: 24,
   },
   badgeContainer: {
     flexDirection: 'row',
-    gap: 4,
+    gap: 6,
+    flexWrap: 'wrap',
   },
   newBadge: {
-    backgroundColor: '#ef4444',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
+    backgroundColor: '#fee2e2',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#ef4444',
+  },
+  newBadgeText: {
+    color: '#991b1b',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.3,
   },
   urgentBadge: {
-    backgroundColor: '#ef4444',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
+    backgroundColor: '#fef3c7',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#f59e0b',
   },
-  badgeText: {
-    color: '#fff',
-    fontSize: 10,
-    fontWeight: '600',
+  urgentBadgeText: {
+    color: '#92400e',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.3,
   },
   message: {
-    fontSize: 14,
-    color: '#6b7280',
-    marginBottom: 8,
-    lineHeight: 20,
+    fontSize: 15,
+    color: '#374151',
+    marginBottom: 16,
+    lineHeight: 22,
   },
-  meta: {
+  metaContainer: {
+    marginTop: 4,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#f0f0f0',
+  },
+  metaRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    marginTop: 8,
+    marginBottom: 6,
+    flexWrap: 'wrap',
   },
-  metaText: {
+  metaLabel: {
+    fontSize: 13,
+    color: '#6b7280',
+    fontWeight: '500',
+    marginRight: 4,
+  },
+  metaValue: {
+    fontSize: 13,
+    color: '#111827',
+    fontWeight: '600',
+  },
+  metaTime: {
     fontSize: 12,
     color: '#6b7280',
+    marginTop: 2,
   },
   attachmentLink: {
-    marginTop: 8,
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#f0f0f0',
   },
   attachmentText: {
-    fontSize: 12,
+    fontSize: 14,
     color: '#3b82f6',
-    textDecorationLine: 'underline',
+    fontWeight: '600',
   },
   markReadButton: {
-    marginTop: 12,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 6,
+    marginTop: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    backgroundColor: '#3b82f6',
+    borderRadius: 8,
     alignSelf: 'flex-start',
   },
   markReadText: {
     fontSize: 14,
-    color: '#374151',
-    fontWeight: '500',
+    color: '#fff',
+    fontWeight: '600',
   },
 });
+
+
 
