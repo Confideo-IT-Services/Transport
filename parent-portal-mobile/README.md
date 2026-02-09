@@ -29,7 +29,7 @@ React Native mobile application for parents to view their children's school info
    - Update the `extra.apiUrl` field with your backend API URL:
      ```json
      "extra": {
-       "apiUrl": "http://your-backend-url:3000/api"
+       "apiUrl": "https://app.conventpulse.in/api"
      }
      ```
    - For local development: `http://localhost:3000/api`

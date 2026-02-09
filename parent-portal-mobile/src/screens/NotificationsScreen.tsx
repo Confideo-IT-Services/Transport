@@ -226,10 +226,10 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   headerTitle: {
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: '700',
-    color: '#111827',
-    letterSpacing: -0.5,
+    color: '#374151',
+    letterSpacing: -0.3,
   },
   headerSubtitle: {
     fontSize: 13,

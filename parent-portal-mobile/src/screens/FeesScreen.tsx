@@ -6,6 +6,8 @@ import {
   FlatList,
   TouchableOpacity,
   Alert,
+  Platform,
+  Linking,
 } from 'react-native';
 import { useAuth } from '../contexts/AuthContext';
 import { parentsApi, Fee, Child } from '../config/api';
@@ -15,6 +17,7 @@ import { ChildSelector } from '../components/ChildSelector';
 import { format } from 'date-fns';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
+import * as FileSystem from 'expo-file-system';
 
 export function FeesScreen() {
   const { user } = useAuth();
@@ -192,11 +195,43 @@ export function FeesScreen() {
 </html>`;
 
     try {
-      const { uri } = await Print.printToFileAsync({ html });
+      const { uri } = await Print.printToFileAsync({
+        html,
+        base64: false,
+        width: 595, // A4 width in points
+        height: 842, // A4 height in points
+      });
+
+      // Create a proper filename
+      const fileName = `Fee_Receipt_${selectedChild.name.replace(/\s+/g, '_')}_${format(new Date(), 'yyyyMMdd')}.pdf`;
+      
+      // For Android, try to save to a more accessible location
+      // For iOS, use documentDirectory
+      const newUri = Platform.OS === 'android' 
+        ? `${FileSystem.cacheDirectory}${fileName}`
+        : `${FileSystem.documentDirectory}${fileName}`;
+      
+      // Copy the file to a named location
+      await FileSystem.copyAsync({
+        from: uri,
+        to: newUri,
+      });
+
+      // Use Sharing with explicit options to avoid print dialog
       if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(uri);
+        await Sharing.shareAsync(newUri, {
+          mimeType: 'application/pdf',
+          dialogTitle: 'Save Fee Receipt',
+          UTI: 'com.adobe.pdf',
+        });
       } else {
-        Alert.alert('Success', 'Receipt generated. Please use a file manager to access it.');
+        // Fallback: Try to open the file
+        const canOpen = await Linking.canOpenURL(newUri);
+        if (canOpen) {
+          await Linking.openURL(newUri);
+        } else {
+          Alert.alert('Success', `Receipt saved as ${fileName}. Please check your Downloads folder.`);
+        }
       }
     } catch (error) {
       Alert.alert('Error', 'Failed to generate receipt');
@@ -237,12 +272,12 @@ export function FeesScreen() {
                 {item.status.charAt(0).toUpperCase() + item.status.slice(1)}
               </Text>
             </View>
-            <TouchableOpacity
+            {/* <TouchableOpacity
               style={styles.downloadButton}
               onPress={() => handleDownloadReceipt(item)}
             >
               <Text style={styles.downloadText}>Download</Text>
-            </TouchableOpacity>
+            </TouchableOpacity> */}
           </View>
         </View>
 
@@ -395,10 +430,10 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   title: {
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: '700',
-    color: '#111827',
-    letterSpacing: -0.5,
+    color: '#374151',
+    letterSpacing: -0.3,
   },
   headerSubtitle: {
     fontSize: 13,

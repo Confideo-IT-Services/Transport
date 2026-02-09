@@ -9,6 +9,8 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { User, Download } from "lucide-react";
 import { format } from "date-fns";
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
 
 export default function ParentDashboard() {
   const { user } = useAuth();
@@ -230,7 +232,7 @@ function ChildDetails({
     }
   };
 
-  const handleDownloadReceipt = (fee: any) => {
+  const handleDownloadReceipt = async (fee: any) => {
     if (!childInfo) return;
     
     const html = `
@@ -391,16 +393,53 @@ function ChildDetails({
   </div>
 </body>
 </html>`;
-    
-    const w = window.open("", "_blank");
-    if (!w) return;
-    w.document.write(html);
-    w.document.close();
-    w.focus();
-    // Auto-trigger print dialog after a short delay
-    setTimeout(() => {
-      w.print();
-    }, 250);
+
+    try {
+      // Create a temporary container
+      const container = document.createElement('div');
+      container.innerHTML = html;
+      container.style.position = 'absolute';
+      container.style.left = '-9999px';
+      container.style.width = '600px';
+      document.body.appendChild(container);
+
+      // Convert to canvas then PDF
+      const canvas = await html2canvas(container, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+      });
+
+      // Remove temporary container
+      document.body.removeChild(container);
+
+      // Create PDF
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const imgWidth = 210; // A4 width in mm
+      const pageHeight = 297; // A4 height in mm
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      let heightLeft = imgHeight;
+      let position = 0;
+
+      // Add first page
+      pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, position, imgWidth, imgHeight);
+      heightLeft -= pageHeight;
+
+      // Add additional pages if needed
+      while (heightLeft > 0) {
+        position = heightLeft - imgHeight;
+        pdf.addPage();
+        pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, position, imgWidth, imgHeight);
+        heightLeft -= pageHeight;
+      }
+
+      // Download PDF
+      const fileName = `Fee_Receipt_${childInfo.name.replace(/\s+/g, '_')}_${format(new Date(), 'yyyyMMdd')}.pdf`;
+      pdf.save(fileName);
+    } catch (error) {
+      console.error('Failed to generate PDF:', error);
+      alert('Failed to download receipt. Please try again.');
+    }
   };
 
   if (loading) {
