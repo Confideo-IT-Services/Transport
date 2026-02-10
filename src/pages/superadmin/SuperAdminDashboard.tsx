@@ -95,7 +95,7 @@ export default function SuperAdminDashboard() {
         <div>
           <h1 className="page-title">Platform Overview</h1>
           <p className="text-muted-foreground mt-1">
-            Manage all schools and administrators on AllPulse.
+            Manage all schools and administrators on ConventPulse.
           </p>
         </div>
 

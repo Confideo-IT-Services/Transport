@@ -246,126 +246,99 @@ router.get('/structure', authenticateToken, async (req, res) => {
   }
 });
 
-// Create/Update fee structure (Admin only)
+// Create/Update fee structure (Admin only) - applies to all sections of the class
 router.post('/structure', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const { classId, academicYearId, totalFee, tuitionFee, transportFee, labFee, otherFees, frequency } = req.body;
-
-    if (!classId) {
-      return res.status(400).json({ error: 'Class ID is required' });
-    }
-
-    // Calculate total from components if not provided or validate it matches
-    const calculatedTotal = (tuitionFee || 0) + (transportFee || 0) + (labFee || 0) + 
-      (otherFees && Array.isArray(otherFees) ? otherFees.reduce((sum, item) => sum + (item.amount || 0), 0) : 0);
-
-    // Use provided totalFee if it matches calculated, otherwise use calculated
-    const finalTotalFee = totalFee && Math.abs(parseFloat(totalFee) - calculatedTotal) < 0.01 
-      ? parseFloat(totalFee) 
-      : calculatedTotal;
-
-    if (finalTotalFee <= 0) {
-      return res.status(400).json({ error: 'Total fee must be greater than 0. Please enter at least one fee component.' });
-    }
+    const { classId, className, academicYearId, totalFee, tuitionFee, transportFee, labFee, otherFees, frequency } = req.body;
 
     const schoolId = req.user.schoolId;
     if (!schoolId) {
       return res.status(400).json({ error: 'School ID not found' });
     }
 
-    // Check if structure already exists - if academic_year_id is null, check by class_id and school_id only
-    let existingQuery;
-    let existingParams;
-    
-    if (academicYearId) {
-      existingQuery = 'SELECT id FROM fee_structure WHERE class_id = ? AND academic_year_id = ? AND school_id = ?';
-      existingParams = [classId, academicYearId, schoolId];
-    } else {
-      // If no academic year, check for any structure for this class (regardless of academic year)
-      existingQuery = 'SELECT id FROM fee_structure WHERE class_id = ? AND school_id = ? AND academic_year_id IS NULL ORDER BY created_at DESC LIMIT 1';
-      existingParams = [classId, schoolId];
-    }
-
-    const [existing] = await db.query(existingQuery, existingParams);
-
-    if (existing.length > 0) {
-      // Update existing
-      await db.query(
-        `UPDATE fee_structure 
-         SET total_fee = ?, tuition_fee = ?, transport_fee = ?, lab_fee = ?, other_fees = ?, updated_at = NOW()
-         WHERE id = ?`,
-        [
-          finalTotalFee,
-          tuitionFee || 0,
-          transportFee || 0,
-          labFee || 0,
-          otherFees ? JSON.stringify(otherFees) : null,
-          existing[0].id
-        ]
-      );
-      res.json({ success: true, structureId: existing[0].id });
-    } else {
-      // Create new
-      const structureId = uuidv4();
-      await db.query(
-        `INSERT INTO fee_structure (id, school_id, class_id, academic_year_id, total_fee, tuition_fee, transport_fee, lab_fee, other_fees, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
-        [
-          structureId,
-          schoolId,
-          classId,
-          academicYearId || null,
-          finalTotalFee,
-          tuitionFee || 0,
-          transportFee || 0,
-          labFee || 0,
-          otherFees ? JSON.stringify(otherFees) : null
-        ]
-      );
-      res.status(201).json({ success: true, structureId });
-    }
-
-    // Clean up duplicate fee records for this class (keep only the latest one per student)
-    try {
-      // For each student in this class, keep only the most recent fee record
-      const [duplicates] = await db.query(`
-        SELECT student_id, COUNT(*) as count
-        FROM student_fees
-        WHERE class_id = ?
-        GROUP BY student_id
-        HAVING count > 1
-      `, [classId]);
-      
-      for (const dup of duplicates) {
-        // Delete all but the most recent record for this student
-        await db.query(`
-          DELETE FROM student_fees
-          WHERE student_id = ? AND class_id = ?
-          AND id NOT IN (
-            SELECT id FROM (
-              SELECT id FROM student_fees
-              WHERE student_id = ? AND class_id = ?
-              ORDER BY created_at DESC, id DESC
-              LIMIT 1
-            ) AS keep
-          )
-        `, [dup.student_id, classId, dup.student_id, classId]);
+    // Resolve all class_ids for this class (by class name - all sections get same fee)
+    let classIds = [];
+    if (className && typeof className === 'string' && className.trim()) {
+      const [rows] = await db.query('SELECT id FROM classes WHERE school_id = ? AND name = ? ORDER BY section', [schoolId, className.trim()]);
+      classIds = (rows || []).map(r => r.id);
+    } else if (classId) {
+      const [nameRow] = await db.query('SELECT name FROM classes WHERE id = ? AND school_id = ?', [classId, schoolId]);
+      if (!nameRow || nameRow.length === 0) {
+        return res.status(400).json({ error: 'Class not found' });
       }
-      
-      if (duplicates.length > 0) {
-        console.log(`✅ Cleaned up duplicate fee records for ${duplicates.length} students in class:`, classId);
-      }
-    } catch (cleanupError) {
-      console.error('Error cleaning up duplicate fees:', cleanupError);
-      // Continue even if cleanup fails
+      const [rows] = await db.query('SELECT id FROM classes WHERE school_id = ? AND name = ? ORDER BY section', [schoolId, nameRow[0].name]);
+      classIds = (rows || []).map(r => r.id);
+    }
+    if (!classIds.length) {
+      return res.status(400).json({ error: className ? 'No sections found for this class name' : 'Class is required' });
     }
 
-    // Auto-create student fees for all approved students in the class
-    try {
-      const [students] = await db.query(
-        'SELECT id FROM students WHERE class_id = ? AND school_id = ? AND status = ?',
-        [classId, schoolId, 'approved']
-      );
+    let otherFeesSum = 0;
+    if (otherFees) {
+      if (Array.isArray(otherFees)) {
+        otherFeesSum = otherFees.reduce((sum, item) => sum + (item.amount || 0), 0);
+      } else if (otherFees.components && Array.isArray(otherFees.components)) {
+        otherFeesSum = otherFees.components.reduce((sum, item) => sum + (item.amount || 0), 0);
+      }
+    }
+    const calculatedTotal = (tuitionFee || 0) + (transportFee || 0) + (labFee || 0) + otherFeesSum;
+    const finalTotalFee = totalFee && Math.abs(parseFloat(totalFee) - calculatedTotal) < 0.01 
+      ? parseFloat(totalFee) 
+      : calculatedTotal;
+    if (finalTotalFee <= 0) {
+      return res.status(400).json({ error: 'Total fee must be greater than 0. Please enter at least one fee component.' });
+    }
+
+    let firstStructureId = null;
+
+    for (const singleClassId of classIds) {
+      let existingQuery;
+      let existingParams;
+      if (academicYearId) {
+        existingQuery = 'SELECT id FROM fee_structure WHERE class_id = ? AND academic_year_id = ? AND school_id = ?';
+        existingParams = [singleClassId, academicYearId, schoolId];
+      } else {
+        existingQuery = 'SELECT id FROM fee_structure WHERE class_id = ? AND school_id = ? AND academic_year_id IS NULL ORDER BY created_at DESC LIMIT 1';
+        existingParams = [singleClassId, schoolId];
+      }
+      const [existing] = await db.query(existingQuery, existingParams);
+
+      if (existing.length > 0) {
+        await db.query(
+          `UPDATE fee_structure SET total_fee = ?, tuition_fee = ?, transport_fee = ?, lab_fee = ?, other_fees = ?, updated_at = NOW() WHERE id = ?`,
+          [finalTotalFee, tuitionFee || 0, transportFee || 0, labFee || 0, otherFees ? JSON.stringify(otherFees) : null, existing[0].id]
+        );
+        if (!firstStructureId) firstStructureId = existing[0].id;
+      } else {
+        const structureId = uuidv4();
+        await db.query(
+          `INSERT INTO fee_structure (id, school_id, class_id, academic_year_id, total_fee, tuition_fee, transport_fee, lab_fee, other_fees, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+          [structureId, schoolId, singleClassId, academicYearId || null, finalTotalFee, tuitionFee || 0, transportFee || 0, labFee || 0, otherFees ? JSON.stringify(otherFees) : null]
+        );
+        if (!firstStructureId) firstStructureId = structureId;
+      }
+
+      try {
+        const [duplicates] = await db.query(
+          `SELECT student_id, COUNT(*) as count FROM student_fees WHERE class_id = ? GROUP BY student_id HAVING count > 1`,
+          [singleClassId]
+        );
+        for (const dup of duplicates) {
+          await db.query(`
+            DELETE FROM student_fees WHERE student_id = ? AND class_id = ?
+            AND id NOT IN (SELECT id FROM (SELECT id FROM student_fees WHERE student_id = ? AND class_id = ? ORDER BY created_at DESC, id DESC LIMIT 1) AS keep)
+          `, [dup.student_id, singleClassId, dup.student_id, singleClassId]);
+        }
+      } catch (cleanupError) {
+        console.error('Error cleaning up duplicate fees:', cleanupError);
+      }
+
+      try {
+        const [students] = await db.query(
+          'SELECT id FROM students WHERE class_id = ? AND school_id = ? AND status = ?',
+          [singleClassId, schoolId, 'approved']
+        );
 
       let created = 0;
       let updated = 0;
@@ -391,11 +364,10 @@ router.post('/structure', authenticateToken, requireAdmin, async (req, res) => {
         // Use a single query with proper error handling
         const [existing] = await db.query(
           'SELECT id, paid_amount, component_breakdown FROM student_fees WHERE student_id = ? AND class_id = ? LIMIT 1',
-          [student.id, classId]
+          [student.id, singleClassId]
         );
 
         if (existing.length === 0) {
-          // Create new fee record with duplicate prevention
           const studentFeeId = uuidv4();
           try {
             await db.query(
@@ -404,7 +376,7 @@ router.post('/structure', authenticateToken, requireAdmin, async (req, res) => {
               [
                 studentFeeId,
                 student.id,
-                classId,
+                singleClassId,
                 schoolId,
                 academicYearId || null,
                 finalTotalFee,
@@ -413,15 +385,13 @@ router.post('/structure', authenticateToken, requireAdmin, async (req, res) => {
               ]
             );
             created++;
-            console.log(`✅ Created fee record for student ${student.id} in class ${classId}`);
+            console.log(`✅ Created fee record for student ${student.id} in class ${singleClassId}`);
           } catch (insertError) {
-            // If duplicate key error, another process created it - update instead
             if (insertError.code === 'ER_DUP_ENTRY' || insertError.message?.includes('Duplicate') || insertError.message?.includes('UNIQUE')) {
               console.log(`⚠️ Duplicate detected for student ${student.id}, fetching and updating instead`);
-              // Fetch the existing record that was just created
               const [existingRecord] = await db.query(
                 'SELECT id, paid_amount, component_breakdown FROM student_fees WHERE student_id = ? AND class_id = ? LIMIT 1',
-                [student.id, classId]
+                [student.id, singleClassId]
               );
               if (existingRecord.length > 0) {
                 const currentPaid = parseFloat(existingRecord[0].paid_amount) || 0;
@@ -539,7 +509,13 @@ router.post('/structure', authenticateToken, requireAdmin, async (req, res) => {
       console.log(`✅ Fee structure applied: ${created} created, ${updated} updated, ${skipped} skipped`);
     } catch (autoCreateError) {
       console.error('Error auto-creating student fees:', autoCreateError);
-      // Don't fail the structure creation if auto-create fails
+    }
+    }
+
+    if (firstStructureId) {
+      res.json({ success: true, structureId: firstStructureId });
+    } else {
+      res.status(201).json({ success: true, structureId: firstStructureId || '' });
     }
   } catch (error) {
     console.error('Create/Update fee structure error:', error);
@@ -547,15 +523,14 @@ router.post('/structure', authenticateToken, requireAdmin, async (req, res) => {
   }
 });
 
-// Delete fee structure (Admin only)
+// Delete fee structure (Admin only) - deletes all sections of that class
 router.delete('/structure/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const schoolId = req.user.schoolId;
 
-    // Verify the structure belongs to this school
     const [structures] = await db.query(
-      'SELECT id FROM fee_structure WHERE id = ? AND school_id = ?',
+      'SELECT id, class_id FROM fee_structure WHERE id = ? AND school_id = ?',
       [id, schoolId]
     );
 
@@ -563,8 +538,27 @@ router.delete('/structure/:id', authenticateToken, requireAdmin, async (req, res
       return res.status(404).json({ error: 'Fee structure not found or access denied' });
     }
 
-    // Delete the fee structure
-    await db.query('DELETE FROM fee_structure WHERE id = ?', [id]);
+    // Get class name so we can delete fee structure for all sections of this class
+    const [classRows] = await db.query(
+      'SELECT name FROM classes WHERE id = ? AND school_id = ?',
+      [structures[0].class_id, schoolId]
+    );
+    if (classRows.length > 0) {
+      const className = classRows[0].name;
+      const [classIds] = await db.query(
+        'SELECT id FROM classes WHERE school_id = ? AND name = ?',
+        [schoolId, className]
+      );
+      const ids = (classIds || []).map(r => r.id);
+      if (ids.length > 0) {
+        const placeholders = ids.map(() => '?').join(',');
+        await db.query(`DELETE FROM fee_structure WHERE school_id = ? AND class_id IN (${placeholders})`, [schoolId, ...ids]);
+      } else {
+        await db.query('DELETE FROM fee_structure WHERE id = ?', [id]);
+      }
+    } else {
+      await db.query('DELETE FROM fee_structure WHERE id = ?', [id]);
+    }
 
     res.json({ success: true, message: 'Fee structure deleted successfully' });
   } catch (error) {

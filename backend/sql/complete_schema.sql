@@ -1,7 +1,7 @@
 -- ============================================================================
--- AllPulse School Management System - Complete Database Schema
+-- ConventPulse School Management System - Complete Database Schema
 -- ============================================================================
--- This file contains ALL database tables for the AllPulse system.
+-- This file contains ALL database tables for the ConventPulse system.
 -- All separate schema files and migrations have been consolidated here.
 --
 -- IMPORTANT: This schema matches EXACTLY what exists in your current database
@@ -166,6 +166,30 @@ CREATE TABLE IF NOT EXISTS students (
     INDEX idx_status (status),
     INDEX idx_admission_number (admission_number),
     INDEX idx_tc_status (tc_status),
+    FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE,
+    FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE
+);
+
+-- ============ STUDENT ENROLLMENTS (per academic year) ============
+-- One row per student per academic year; enables year filter and read-only previous year data.
+CREATE TABLE IF NOT EXISTS student_enrollments (
+    id VARCHAR(36) PRIMARY KEY,
+    student_id VARCHAR(36) NOT NULL,
+    academic_year_id VARCHAR(36) NOT NULL,
+    class_id VARCHAR(36) NOT NULL,
+    roll_no VARCHAR(20),
+    school_id VARCHAR(36) NOT NULL,
+    enrolled_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    left_at TIMESTAMP NULL,
+    tc_issued_at TIMESTAMP NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY unique_student_year (student_id, academic_year_id),
+    INDEX idx_academic_year_id (academic_year_id),
+    INDEX idx_class_id (class_id),
+    INDEX idx_school_id (school_id),
+    FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE,
+    FOREIGN KEY (academic_year_id) REFERENCES academic_years(id) ON DELETE CASCADE,
     FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE,
     FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE
 );

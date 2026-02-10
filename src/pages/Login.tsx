@@ -85,7 +85,7 @@ export default function Login() {
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary shadow-lg shadow-primary/25 mb-4">
             <GraduationCap className="w-8 h-8 text-primary-foreground" />
           </div>
-          <h1 className="text-3xl font-bold text-foreground">AllPulse</h1>
+          <h1 className="text-3xl font-bold text-foreground">ConventPulse</h1>
           <p className="text-muted-foreground mt-2">School Management System</p>
         </div>
 
@@ -231,7 +231,7 @@ export default function Login() {
 
         {/* Footer */}
         <p className="text-center text-sm text-muted-foreground mt-6 animate-fade-in" style={{ animationDelay: "0.2s" }}>
-          © 2024 AllPulse. All rights reserved.
+          © 2024 ConventPulse. All rights reserved.
         </p>
       </div>
     </div>

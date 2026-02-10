@@ -12,12 +12,16 @@ router.get('/inbox', authenticateToken, requireTeacher, async (req, res) => {
 
     if (req.user.role === 'teacher') {
       // For teachers: show notifications where they are recipients, exclude their own sent notifications
+      // Handle both admin (users table) and teacher (teachers table) senders
       query = `
-        SELECT n.*, u.name as sender_name, u.role as sender_role,
+        SELECT n.*, 
+               COALESCE(u.name, t.name) as sender_name,
+               COALESCE(u.role, n.sender_role) as sender_role,
                nr.is_read, nr.read_at
         FROM notifications n
         JOIN notification_recipients nr ON n.id = nr.notification_id
-        JOIN users u ON n.sender_id = u.id
+        LEFT JOIN users u ON n.sender_id = u.id AND n.sender_role = 'admin'
+        LEFT JOIN teachers t ON n.sender_id = t.id AND n.sender_role = 'teacher'
         WHERE n.sender_id != ?
           AND nr.recipient_type = ? 
           AND nr.recipient_id = ?
@@ -28,13 +32,17 @@ router.get('/inbox', authenticateToken, requireTeacher, async (req, res) => {
     } else if (req.user.role === 'admin') {
       // For admin: show notifications sent to teachers in their school, exclude their own sent notifications
       // Check if admin has read status via LEFT JOIN
+      // Handle both admin (users table) and teacher (teachers table) senders
       query = `
-        SELECT n.*, u.name as sender_name, u.role as sender_role,
+        SELECT n.*, 
+               COALESCE(u.name, t.name) as sender_name,
+               COALESCE(u.role, n.sender_role) as sender_role,
                COALESCE(admin_nr.is_read, 0) as is_read,
                admin_nr.read_at
         FROM notifications n
         JOIN notification_recipients nr ON n.id = nr.notification_id
-        JOIN users u ON n.sender_id = u.id
+        LEFT JOIN users u ON n.sender_id = u.id AND n.sender_role = 'admin'
+        LEFT JOIN teachers t ON n.sender_id = t.id AND n.sender_role = 'teacher'
         LEFT JOIN notification_recipients admin_nr ON n.id = admin_nr.notification_id 
           AND admin_nr.recipient_id = ?
           AND admin_nr.recipient_type = 'teacher'

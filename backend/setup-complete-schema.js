@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 
 async function setupCompleteSchema() {
-  console.log('🚀 Setting up AllPulse Complete Database Schema...\n');
+  console.log('🚀 Setting up ConventPulse Complete Database Schema...\n');
   
   const config = {
     host: process.env.DB_HOST || 'localhost',
@@ -142,7 +142,7 @@ async function setupCompleteSchema() {
 
     await connection.end();
     console.log('\n✅ Complete database setup completed successfully!');
-    console.log('📝 You can now start using the AllPulse application.\n');
+    console.log('📝 You can now start using the ConventPulse application.\n');
     process.exit(0);
   } catch (error) {
     console.error('\n❌ Error setting up database:');

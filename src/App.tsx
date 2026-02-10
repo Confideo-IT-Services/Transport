@@ -11,6 +11,10 @@ import Login from "./pages/Login";
 import NotFound from "./pages/NotFound";
 import StudentRegistration from "./pages/register/StudentRegistration";
 
+// Parent pages
+import ParentLogin from "./pages/parent/ParentLogin";
+import ParentDashboard from "./pages/parent/ParentDashboard";
+
 // Unified Dashboard pages
 import UnifiedDashboard from "./pages/dashboard/UnifiedDashboard";
 import AcademicSetup from "./pages/dashboard/AcademicSetup";
@@ -49,6 +53,11 @@ const App = () => (
             <Route path="/" element={<Index />} />
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<StudentRegistration />} />
+            
+            {/* Parent Routes */}
+            <Route path="/parent/login" element={<ParentLogin />} />
+            <Route path="/parent/dashboard" element={<ParentDashboard />} />
+            <Route path="/parent/dashboard/:section" element={<ParentDashboard />} />
             
             {/* Unified Dashboard Routes (School Admin & Teacher) */}
             <Route path="/dashboard" element={<UnifiedDashboard />} />

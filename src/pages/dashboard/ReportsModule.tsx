@@ -46,7 +46,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { 
-  Download, 
   TrendingUp, 
   Users, 
   IndianRupee, 
@@ -1067,10 +1066,6 @@ export default function ReportsModule() {
                 ))}
               </SelectContent>
             </Select>
-            <Button variant="outline">
-              <Download className="w-4 h-4 mr-2" />
-              Export All
-            </Button>
           </div>
         </div>
 
@@ -1580,14 +1575,14 @@ export default function ReportsModule() {
                       ))}
                     </div>
                   </div>
-                  {!isAdmin && (
+                  {/*{!isAdmin && (
                     <Button 
                       className="w-full" 
                       onClick={() => sendTestDetailsToParents(testDetails)}
                     >
                       <Send className="w-4 h-4 mr-2" />Send Test Details to All Parents
                     </Button>
-                  )}
+                  )}*/}
                 </CardContent>
               </Card>
             )}

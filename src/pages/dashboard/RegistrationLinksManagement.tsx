@@ -14,12 +14,18 @@ import { toast } from "sonner";
 import { registrationLinksApi, classesApi } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 
+type FilterLinkType = 'all_classes_filter' | 'specific_class_filter' | 'teacher_filter' | 'others_filter';
+
 interface RegistrationLink {
   id: string;
   linkCode: string;
-  classId: string;
-  className: string;
-  classSection: string;
+  linkType?: 'class' | 'all_classes' | 'teacher' | 'others';
+  name?: string;
+  teacherId?: string;
+  teacherName?: string;
+  classId?: string;
+  className?: string;
+  classSection?: string;
   fieldConfig: any[];
   expiresAt: string | null;
   isActive: boolean;
@@ -32,6 +38,7 @@ export default function RegistrationLinksManagement() {
   const [links, setLinks] = useState<RegistrationLink[]>([]);
   const [classes, setClasses] = useState<any[]>([]);
   const [filteredLinks, setFilteredLinks] = useState<RegistrationLink[]>([]);
+  const [filterLinkType, setFilterLinkType] = useState<FilterLinkType>('all_classes_filter');
   const [selectedClass, setSelectedClass] = useState("all");
   const [selectedSection, setSelectedSection] = useState("all");
   const [isLoading, setIsLoading] = useState(false);
@@ -57,69 +64,65 @@ export default function RegistrationLinksManagement() {
   };
 
   const handleLoadForms = async () => {
-    if (selectedClass === "all") {
+    if (filterLinkType === 'specific_class_filter' && selectedClass === "all") {
       toast.error("Please select a class");
       return;
     }
 
     setIsLoadingLinks(true);
     try {
-      // Fetch all links
       let linksData: RegistrationLink[] = [];
       try {
         linksData = await registrationLinksApi.getAll();
-        console.log('✅ All links fetched:', linksData);
       } catch (error: any) {
-        console.error('❌ Error fetching links:', error);
+        console.error('Error fetching links:', error);
         toast.error(error?.message || "Failed to load registration links. Please check the backend server.");
         setLinks([]);
         setFilteredLinks([]);
         setIsLoadingLinks(false);
         return;
       }
-      
-      console.log('Selected class:', selectedClass);
-      console.log('Selected section:', selectedSection);
-      
-      // Filter by class name directly (not by matching IDs)
-      // The backend returns className from the JOIN, so we can filter directly
+
+      // Filter by link type
       let filtered = linksData.filter((link: RegistrationLink) => {
-        const matches = link.className === selectedClass;
-        console.log(`Link ${link.linkCode}: className="${link.className}" matches "${selectedClass}": ${matches}`);
-        return matches;
+        const type = link.linkType ?? 'class';
+        switch (filterLinkType) {
+          case 'all_classes_filter':
+            return type === 'class' || type === 'all_classes';
+          case 'specific_class_filter':
+            if (type !== 'class') return false;
+            if (link.className !== selectedClass) return false;
+            if (selectedSection !== "all" && link.classSection !== selectedSection) return false;
+            return true;
+          case 'teacher_filter':
+            return type === 'teacher';
+          case 'others_filter':
+            return type === 'others';
+          default:
+            return true;
+        }
       });
 
-      console.log('Filtered by class:', filtered);
-
-      // Filter by section if selected
-      if (selectedSection !== "all") {
-        filtered = filtered.filter((link: RegistrationLink) => {
-          const matches = link.classSection === selectedSection;
-          console.log(`Link ${link.linkCode}: classSection="${link.classSection}" matches "${selectedSection}": ${matches}`);
-          return matches;
-        });
-      }
-
-      console.log('Filtered by section:', filtered);
-
-      // Sort by date/time (most recent first)
       filtered.sort((a: RegistrationLink, b: RegistrationLink) => {
         const dateA = new Date(a.createdAt).getTime();
         const dateB = new Date(b.createdAt).getTime();
-        return dateB - dateA; // Descending order (newest first)
+        return dateB - dateA;
       });
 
       setLinks(filtered);
       setFilteredLinks(filtered);
       setHasLoadedLinks(true);
-      
+
       if (filtered.length === 0) {
-        toast.info(`No registration links found for ${selectedClass}${selectedSection !== "all" ? ` - Section ${selectedSection}` : ""}`);
+        const filterLabel = filterLinkType === 'specific_class_filter'
+          ? `${selectedClass}${selectedSection !== "all" ? ` - Section ${selectedSection}` : ""}`
+          : filterLinkType === 'all_classes_filter' ? 'all classes' : filterLinkType === 'teacher_filter' ? 'teachers' : 'others';
+        toast.info(`No registration links found for ${filterLabel}`);
       } else {
         toast.success(`Loaded ${filtered.length} registration link(s)`);
       }
     } catch (error: any) {
-      console.error('❌ Failed to load links:', error);
+      console.error('Failed to load links:', error);
       toast.error(error?.message || "Failed to load registration links");
       setLinks([]);
       setFilteredLinks([]);
@@ -191,70 +194,105 @@ export default function RegistrationLinksManagement() {
           <div>
             <h1 className="text-3xl font-bold text-foreground">Registration Links</h1>
             <p className="text-muted-foreground mt-1">
-              Select class and section to view registration links.
+              Filter by link type (all classes, specific class, teachers, or others) and load registration links.
             </p>
           </div>
         </div>
 
-        {/* Class and Section Selection */}
+        {/* Filter and Load */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Filter className="w-5 h-5" />
-              Select Class and Section
+              Show links for
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {/* Class Selection */}
-              <Select value={selectedClass} onValueChange={(value) => {
-                setSelectedClass(value);
-                setSelectedSection("all"); // Reset section when class changes
-                setHasLoadedLinks(false); // Reset loaded state
-                setLinks([]);
-                setFilteredLinks([]);
-              }}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select Class" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Classes</SelectItem>
-                  {uniqueClassNames.map((className) => (
-                    <SelectItem key={className} value={className}>
-                      {className}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-
-              {/* Section Selection */}
-              <Select 
-                value={selectedSection} 
-                onValueChange={(value) => {
-                  setSelectedSection(value);
-                  setHasLoadedLinks(false); // Reset loaded state
+            <div className={`grid grid-cols-1 gap-4 ${filterLinkType === 'specific_class_filter' ? 'md:grid-cols-4' : 'md:grid-cols-2'}`}>
+              {/* Show links for */}
+              <Select
+                value={filterLinkType}
+                onValueChange={(value: FilterLinkType) => {
+                  setFilterLinkType(value);
+                  setHasLoadedLinks(false);
                   setLinks([]);
                   setFilteredLinks([]);
+                  if (value !== 'specific_class_filter') {
+                    setSelectedClass("all");
+                    setSelectedSection("all");
+                  }
                 }}
-                disabled={selectedClass === "all" || sections.length === 0}
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="Select Section" />
+                  <SelectValue placeholder="Show links for" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Sections</SelectItem>
-                  {sections.map((section) => (
-                    <SelectItem key={section} value={section}>
-                      Section {section}
-                    </SelectItem>
-                  ))}
+                  <SelectItem value="all_classes_filter">All classes</SelectItem>
+                  <SelectItem value="specific_class_filter">Specific class</SelectItem>
+                  <SelectItem value="teacher_filter">Teachers</SelectItem>
+                  <SelectItem value="others_filter">Others</SelectItem>
                 </SelectContent>
               </Select>
 
+              {/* Class Selection - only when Specific class */}
+              {filterLinkType === 'specific_class_filter' && (
+                <Select
+                  value={selectedClass}
+                  onValueChange={(value) => {
+                    setSelectedClass(value);
+                    setSelectedSection("all");
+                    setHasLoadedLinks(false);
+                    setLinks([]);
+                    setFilteredLinks([]);
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select Class" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Select Class</SelectItem>
+                    {uniqueClassNames.map((className) => (
+                      <SelectItem key={className} value={className}>
+                        {className}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+
+              {/* Section Selection - only when Specific class */}
+              {filterLinkType === 'specific_class_filter' && (
+                <Select
+                  value={selectedSection}
+                  onValueChange={(value) => {
+                    setSelectedSection(value);
+                    setHasLoadedLinks(false);
+                    setLinks([]);
+                    setFilteredLinks([]);
+                  }}
+                  disabled={selectedClass === "all" || sections.length === 0}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select Section" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Sections</SelectItem>
+                    {sections.map((section) => (
+                      <SelectItem key={section} value={section}>
+                        Section {section}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+
               {/* Load Forms Button */}
-              <Button 
+              <Button
                 onClick={handleLoadForms}
-                disabled={selectedClass === "all" || isLoadingLinks}
+                disabled={
+                  (filterLinkType === 'specific_class_filter' && selectedClass === "all") ||
+                  isLoadingLinks
+                }
                 className="w-full"
               >
                 {isLoadingLinks ? (
@@ -285,9 +323,9 @@ export default function RegistrationLinksManagement() {
           <Card>
             <CardContent className="py-12 text-center">
               <Link2 className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-              <h3 className="text-lg font-semibold mb-2">Select Class and Load Forms</h3>
+              <h3 className="text-lg font-semibold mb-2">Show links for and Load Forms</h3>
               <p className="text-muted-foreground">
-                Please select a class (and optionally a section) and click "Load Forms" to view registration links.
+                Choose a filter (All classes, Specific class, Teachers, or Others), optionally select class/section for specific class, then click "Load Forms" to view registration links.
               </p>
             </CardContent>
           </Card>
@@ -297,7 +335,15 @@ export default function RegistrationLinksManagement() {
               <Link2 className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
               <h3 className="text-lg font-semibold mb-2">No registration links found</h3>
               <p className="text-muted-foreground">
-                No registration links found for {selectedClass}{selectedSection !== "all" ? ` - Section ${selectedSection}` : ""}.
+                No registration links found for{" "}
+                {filterLinkType === "specific_class_filter"
+                  ? `${selectedClass}${selectedSection !== "all" ? ` - Section ${selectedSection}` : ""}`
+                  : filterLinkType === "all_classes_filter"
+                    ? "all classes"
+                    : filterLinkType === "teacher_filter"
+                      ? "teachers"
+                      : "others"}
+                .
               </p>
             </CardContent>
           </Card>
@@ -308,11 +354,23 @@ export default function RegistrationLinksManagement() {
                 <CardContent className="pt-6">
                   <div className="flex items-start justify-between">
                     <div className="flex-1">
-                      <div className="flex items-center gap-3 mb-2">
-                        <h3 className="font-semibold text-lg">{link.className}</h3>
-                        {link.classSection && (
-                          <span className="px-2 py-1 text-xs rounded-full bg-primary/10 text-primary">
-                            Section {link.classSection}
+                      <div className="flex items-center gap-3 mb-2 flex-wrap">
+                        <h3 className="font-semibold text-lg">
+                          {link.linkType === 'teacher' && link.teacherName
+                            ? link.teacherName
+                            : link.linkType === 'others' && link.name
+                              ? link.name || 'Others'
+                              : link.className || link.name || 'Class'}
+                        </h3>
+                        {link.linkType === 'class' || link.linkType === 'all_classes' ? (
+                          link.classSection && (
+                            <span className="px-2 py-1 text-xs rounded-full bg-primary/10 text-primary">
+                              Section {link.classSection}
+                            </span>
+                          )
+                        ) : (
+                          <span className="px-2 py-1 text-xs rounded-full bg-muted text-muted-foreground">
+                            {link.linkType === 'teacher' ? 'Teacher' : link.linkType === 'others' ? 'Others' : link.linkType === 'all_classes' ? 'All classes' : 'Class'}
                           </span>
                         )}
                         {link.isActive ? (
@@ -412,7 +470,14 @@ export default function RegistrationLinksManagement() {
         {/* Summary */}
         {hasLoadedLinks && filteredLinks.length > 0 && (
           <div className="text-sm text-muted-foreground text-center">
-            Showing {filteredLinks.length} registration link(s) for {selectedClass}{selectedSection !== "all" ? ` - Section ${selectedSection}` : ""}
+            Showing {filteredLinks.length} registration link(s) for{" "}
+            {filterLinkType === "specific_class_filter"
+              ? `${selectedClass}${selectedSection !== "all" ? ` - Section ${selectedSection}` : ""}`
+              : filterLinkType === "all_classes_filter"
+                ? "all classes"
+                : filterLinkType === "teacher_filter"
+                  ? "teachers"
+                  : "others"}
           </div>
         )}
       </div>

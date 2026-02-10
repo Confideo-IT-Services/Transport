@@ -42,6 +42,28 @@ router.get('/', authenticateToken, requireTeacher, async (req, res) => {
   }
 });
 
+// Get all school classes for dropdowns (e.g. change section) - admin and teacher
+router.get('/for-dropdown', authenticateToken, async (req, res) => {
+  try {
+    const schoolId = req.user.schoolId;
+    if (!schoolId) {
+      return res.status(403).json({ error: 'School context required' });
+    }
+    const [classes] = await db.query(
+      'SELECT id, name, section FROM classes WHERE school_id = ? ORDER BY name, section',
+      [schoolId]
+    );
+    res.json(classes.map(c => ({
+      id: c.id,
+      name: c.name,
+      section: c.section || ''
+    })));
+  } catch (error) {
+    console.error('Get classes for dropdown error:', error);
+    res.status(500).json({ error: 'Failed to fetch classes' });
+  }
+});
+
 // Get students in a class (accessible to both admin and teacher)
 router.get('/:id/students', authenticateToken, async (req, res) => {
   try {
@@ -64,10 +86,43 @@ router.get('/:id/students', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'Class not found or access denied' });
     }
 
-    const [students] = await db.query(
-      `SELECT * FROM students WHERE class_id = ? AND status = 'approved' ORDER BY roll_no`,
-      [id]
-    );
+    const academicYearId = req.query.academicYearId || null;
+    let students = [];
+
+    if (academicYearId) {
+      try {
+        const [rows] = await db.query(
+          `SELECT s.id, s.name, s.roll_no, s.parent_phone, s.parent_email, s.parent_name,
+                  s.address, s.date_of_birth, s.gender, s.blood_group, s.photo_url, s.status,
+                  s.admission_number, s.submitted_data,
+                  e.roll_no as enrollment_roll_no
+           FROM student_enrollments e
+           JOIN students s ON s.id = e.student_id
+           WHERE e.class_id = ? AND e.academic_year_id = ?
+           ORDER BY e.roll_no, s.name`,
+          [id, academicYearId]
+        );
+        students = rows.map(s => ({
+          ...s,
+          roll_no: s.enrollment_roll_no != null ? s.enrollment_roll_no : s.roll_no,
+        }));
+      } catch (err) {
+        if (err.code !== 'ER_NO_SUCH_TABLE') throw err;
+      }
+    }
+    if (students.length === 0 && !academicYearId) {
+      const [all] = await db.query(
+        `SELECT * FROM students WHERE class_id = ? AND status = 'approved' ORDER BY roll_no`,
+        [id]
+      );
+      students = all;
+    } else if (students.length === 0 && academicYearId) {
+      const [all] = await db.query(
+        `SELECT * FROM students WHERE class_id = ? AND status = 'approved' ORDER BY roll_no`,
+        [id]
+      );
+      students = all;
+    }
 
     res.json(students.map(s => {
       // Parse submitted_data JSON if it exists

@@ -62,7 +62,7 @@ export default function SuperAdminLogin() {
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-purple-600 shadow-lg shadow-purple-600/25 mb-4">
             <Shield className="w-8 h-8 text-white" />
           </div>
-          <h1 className="text-3xl font-bold text-foreground">AllPulse</h1>
+          <h1 className="text-3xl font-bold text-foreground">ConventPulse</h1>
           <p className="text-muted-foreground mt-2">Platform Administration</p>
         </div>
 
@@ -81,7 +81,7 @@ export default function SuperAdminLogin() {
                 <Input
                   id="email"
                   type="email"
-                  placeholder="superadmin@allpulse.com"
+                  placeholder="superadmin@conventpulse.com"
                   className="pl-10"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -124,20 +124,20 @@ export default function SuperAdminLogin() {
             <button
               type="button"
               onClick={() => {
-                setEmail("superadmin@allpulse.com");
+                setEmail("superadmin@conventpulse.com");
                 setPassword("demo123");
               }}
               className="w-full text-xs p-3 rounded-lg bg-purple-500/10 hover:bg-purple-500/20 transition-colors text-center"
             >
               <span className="font-medium text-foreground">Platform Super Admin</span>
-              <p className="text-muted-foreground">superadmin@allpulse.com</p>
+              <p className="text-muted-foreground">superadmin@conventpulse.com</p>
             </button>
           </div>
         </div>
 
         {/* Footer */}
         <p className="text-center text-sm text-muted-foreground mt-6 animate-fade-in" style={{ animationDelay: "0.2s" }}>
-          © 2024 AllPulse. Platform Administration.
+          © 2024 ConventPulse. Platform Administration.
         </p>
       </div>
     </div>

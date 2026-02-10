@@ -96,6 +96,15 @@ export default function AcademicSetup() {
   const [isPromoting, setIsPromoting] = useState(false);
   const [promotingYearId, setPromotingYearId] = useState<string | null>(null);
 
+  // Edit academic year state
+  const [isEditAcademicYearOpen, setIsEditAcademicYearOpen] = useState(false);
+  const [editingAcademicYear, setEditingAcademicYear] = useState<any>(null);
+  const [editAcademicYearForm, setEditAcademicYearForm] = useState({
+    name: "",
+    startDate: "",
+    endDate: "",
+  });
+
   // Class teacher assignment state
   const [selectedSectionForAssign, setSelectedSectionForAssign] = useState<{className: string, sectionName: string} | null>(null);
   const [selectedTeacherForAssign, setSelectedTeacherForAssign] = useState<string>("");
@@ -180,12 +189,16 @@ export default function AcademicSetup() {
           const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
           return `${months[date.getMonth()]} ${date.getFullYear()}`;
         };
+        const startRaw = typeof y.startDate === "string" ? y.startDate.slice(0, 10) : y.startDate;
+        const endRaw = typeof y.endDate === "string" ? y.endDate.slice(0, 10) : y.endDate;
         return {
           id: y.id,
           name: y.name,
           status: y.status,
           startDate: formatDate(startDate),
           endDate: formatDate(endDate),
+          startDateRaw: startRaw,
+          endDateRaw: endRaw,
           startYear: startDate.getFullYear(),
           endYear: endDate.getFullYear(),
         };
@@ -536,6 +549,58 @@ export default function AcademicSetup() {
     }
   };
 
+  const handleOpenEditAcademicYear = (year: any) => {
+    setEditingAcademicYear(year);
+    setEditAcademicYearForm({
+      name: year.name,
+      startDate: year.startDateRaw ?? "",
+      endDate: year.endDateRaw ?? "",
+    });
+    setIsEditAcademicYearOpen(true);
+  };
+
+  const handleUpdateAcademicYear = async () => {
+    if (!editingAcademicYear || !editAcademicYearForm.name.trim() || !editAcademicYearForm.startDate || !editAcademicYearForm.endDate) {
+      toast({
+        title: "Validation Error",
+        description: "Please fill in all fields",
+        variant: "destructive",
+      });
+      return;
+    }
+    const start = new Date(editAcademicYearForm.startDate);
+    const end = new Date(editAcademicYearForm.endDate);
+    if (isNaN(start.getTime()) || isNaN(end.getTime()) || end <= start) {
+      toast({
+        title: "Validation Error",
+        description: "Please enter valid dates (end date must be after start date).",
+        variant: "destructive",
+      });
+      return;
+    }
+    try {
+      await academicYearsApi.update(editingAcademicYear.id, {
+        name: editAcademicYearForm.name.trim(),
+        startDate: editAcademicYearForm.startDate,
+        endDate: editAcademicYearForm.endDate,
+      });
+      toast({
+        title: "Success",
+        description: "Academic year updated successfully.",
+      });
+      setIsEditAcademicYearOpen(false);
+      setEditingAcademicYear(null);
+      setEditAcademicYearForm({ name: "", startDate: "", endDate: "" });
+      await loadAcademicYears();
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error?.message ?? "Failed to update academic year. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
   const toggleSubject = (subject: string) => {
     setNewTeacher(prev => ({
       ...prev,
@@ -768,6 +833,56 @@ export default function AcademicSetup() {
                   </DialogContent>
                 </Dialog>
               )}
+
+              {/* Edit Academic Year Dialog */}
+              {isAdmin && (
+                <Dialog open={isEditAcademicYearOpen} onOpenChange={(open) => {
+                  setIsEditAcademicYearOpen(open);
+                  if (!open) {
+                    setEditingAcademicYear(null);
+                    setEditAcademicYearForm({ name: "", startDate: "", endDate: "" });
+                  }
+                }}>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>Edit Academic Year</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-4 py-4">
+                      <div className="space-y-2">
+                        <Label>Academic Year Name *</Label>
+                        <Input
+                          placeholder="e.g., 2025-26"
+                          value={editAcademicYearForm.name}
+                          onChange={(e) => setEditAcademicYearForm(prev => ({ ...prev, name: e.target.value }))}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Start Date *</Label>
+                        <Input
+                          type="date"
+                          value={editAcademicYearForm.startDate}
+                          onChange={(e) => setEditAcademicYearForm(prev => ({ ...prev, startDate: e.target.value }))}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>End Date *</Label>
+                        <Input
+                          type="date"
+                          value={editAcademicYearForm.endDate}
+                          onChange={(e) => setEditAcademicYearForm(prev => ({ ...prev, endDate: e.target.value }))}
+                        />
+                      </div>
+                      <Button
+                        className="w-full"
+                        onClick={handleUpdateAcademicYear}
+                        disabled={!editAcademicYearForm.name.trim() || !editAcademicYearForm.startDate || !editAcademicYearForm.endDate}
+                      >
+                        Save Changes
+                      </Button>
+                    </div>
+                  </DialogContent>
+                </Dialog>
+              )}
             </div>
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
               {academicYears.map((year) => (
@@ -795,7 +910,12 @@ export default function AcademicSetup() {
                       </Button>
                     )}
                     {isAdmin && (
-                      <Button variant="outline" size="sm" className="w-full mt-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full mt-2"
+                        onClick={() => handleOpenEditAcademicYear(year)}
+                      >
                         <Edit className="w-4 h-4 mr-2" />
                         Edit
                       </Button>
@@ -1152,7 +1272,7 @@ export default function AcademicSetup() {
                   <DialogTrigger asChild>
                     <Button size="sm">
                       <Plus className="w-4 h-4 mr-2" />
-                      Add New Teacher
+                      Assign Subjects
                     </Button>
                   </DialogTrigger>
                   <DialogContent className="max-w-md">

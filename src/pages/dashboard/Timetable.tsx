@@ -35,7 +35,6 @@ import {
 import { 
   Edit, 
   Eye, 
-  Download, 
   Clock, 
   Plus, 
   CalendarDays, 
@@ -737,49 +736,6 @@ export default function Timetable() {
     });
   };
 
-  // Export timetable to CSV
-  const handleExport = () => {
-    if (!selectedClassId || timetableData.length === 0) {
-      toast({ 
-        title: "No Data", 
-        description: "No timetable data to export",
-        variant: "destructive"
-      });
-      return;
-    }
-
-    const classData = classes.find(c => c.id === selectedClassId);
-    const className = classData ? `${classData.name}${classData.section ? `-${classData.section}` : ''}` : 'Unknown';
-
-    // Create CSV content
-    let csvContent = `Timetable for ${className}\n\n`;
-    csvContent += `Day,Time,Subject,Teacher\n`;
-
-    days.forEach(day => {
-      timeSlots.forEach(slot => {
-        if (slot.type === 'class') {
-          const entry = timetableData.find(e => e.slotId === slot.id && e.day === day);
-          if (entry) {
-            csvContent += `${day},${slot.startTime}-${slot.endTime},${getSubjectName(entry.subjectCode)},${entry.teacherName}\n`;
-          } else {
-            csvContent += `${day},${slot.startTime}-${slot.endTime},,\n`;
-          }
-        }
-      });
-    });
-
-    // Download CSV
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `timetable-${className}-${new Date().toISOString().split('T')[0]}.csv`;
-    a.click();
-    window.URL.revokeObjectURL(url);
-    
-    toast({ title: "Export Successful", description: "Timetable exported to CSV" });
-  };
-
   if (isLoading) {
     return (
       <UnifiedLayout>
@@ -828,10 +784,6 @@ export default function Timetable() {
                 <Button variant="outline" onClick={sendToAllTeachers}>
                   <MessageCircle className="w-4 h-4 mr-2" />
                   Send to All
-                </Button>
-                <Button variant="outline" onClick={handleExport} disabled={!selectedClassId}>
-                  <Download className="w-4 h-4 mr-2" />
-                  Export
                 </Button>
               </>
             ) : (

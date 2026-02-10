@@ -548,6 +548,12 @@ export default function NotificationsModule() {
                             <Clock className="w-3 h-3" />
                             {formatTimeAgo(notification.time)}
                           </span>
+                          {notification.attachmentUrl && (
+                            <span className="flex items-center gap-1">
+                              <FileText className="w-3 h-3" />
+                              Attachment
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>

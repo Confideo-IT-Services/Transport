@@ -5,7 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Search, Check, X, Eye, Filter, Link2, Copy, Plus, Settings, Camera } from "lucide-react";
+import { Search, Check, X, Eye, Filter, Link2, Copy, Plus, Settings, Camera, Upload, ArrowRight, ArrowLeft, Download } from "lucide-react";
+import * as XLSX from "xlsx";
 import {
   Select,
   SelectContent,
@@ -25,7 +26,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
-import { studentsApi, classesApi, registrationLinksApi } from "@/lib/api";
+import { studentsApi, classesApi, registrationLinksApi, teachersApi, academicYearsApi } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 
 interface FieldConfig {
@@ -66,6 +67,25 @@ interface Student {
   extra_fields?: Record<string, any>; // NEW: ID card extra fields
   tcStatus?: 'none' | 'applied' | 'issued';
 }
+
+const BULK_IMPORT_SKIP = "__skip__";
+const BULK_IMPORT_SYSTEM_FIELDS = [
+  { value: BULK_IMPORT_SKIP, label: "Don't map / Skip" },
+  { value: "name", label: "Student Name" },
+  { value: "rollNo", label: "Roll No" },
+  { value: "class", label: "Class" },
+  { value: "section", label: "Section" },
+  { value: "parentName", label: "Parent Name" },
+  { value: "parentPhone", label: "Parent Phone" },
+  { value: "parentEmail", label: "Parent Email" },
+  { value: "dateOfBirth", label: "Date of Birth" },
+  { value: "gender", label: "Gender" },
+  { value: "address", label: "Address" },
+  { value: "fatherName", label: "Father Name" },
+  { value: "motherName", label: "Mother Name" },
+  { value: "bloodGroup", label: "Blood Group" },
+  { value: "admissionNumber", label: "Admission Number" },
+];
 
 // Component to display student profile with only submitted fields
 function StudentProfileView({ 
@@ -338,10 +358,10 @@ function StudentProfileView({
 }
 
 const defaultFields: FieldConfig[] = [
-  { id: "studentName", fieldName: "studentName", label: "Student Name", fieldType: "text", mandatory: true, enabled: true },
+  { id: "studentName", fieldName: "studentName", label: "Name", fieldType: "text", mandatory: true, enabled: true },
   { id: "admissionNumber", fieldName: "admissionNumber", label: "Admission Number", fieldType: "text", mandatory: true, enabled: true },
   { id: "rollNo", fieldName: "rollNo", label: "Roll Number", fieldType: "text", mandatory: false, enabled: true },
-  { id: "photo", fieldName: "photo", label: "Student Photo", fieldType: "file", mandatory: true, enabled: true },
+  { id: "photo", fieldName: "photo", label: "Photo", fieldType: "file", mandatory: true, enabled: true },
   { id: "dateOfBirth", fieldName: "dateOfBirth", label: "Date of Birth", fieldType: "date", mandatory: true, enabled: true },
   { id: "gender", fieldName: "gender", label: "Gender", fieldType: "select", mandatory: true, enabled: true, options: ["Male", "Female", "Other"] },
   { id: "bloodGroup", fieldName: "bloodGroup", label: "Blood Group", fieldType: "select", mandatory: false, enabled: true, options: ["A+", "A-", "B+", "B-", "O+", "O-", "AB+", "AB-"] },
@@ -366,16 +386,38 @@ export default function StudentManagement() {
   const [linksCount, setLinksCount] = useState(0);
   const [searchTerm, setSearchTerm] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [academicYears, setAcademicYears] = useState<{ id: string; name: string; status: string }[]>([]);
+  const [selectedAcademicYearId, setSelectedAcademicYearId] = useState<string | null>(null);
+  const [activeYearId, setActiveYearId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const loadYears = async () => {
+      try {
+        const [years, active] = await Promise.all([
+          academicYearsApi.getAll().catch(() => []),
+          academicYearsApi.getActive().catch(() => null)
+        ]);
+        setAcademicYears(years || []);
+        if (active?.id) {
+          setActiveYearId(active.id);
+          setSelectedAcademicYearId((prev) => prev ?? active.id);
+        } else if ((years || []).length > 0) setSelectedAcademicYearId((prev) => prev ?? (years || [])[0].id);
+      } catch {
+        setAcademicYears([]);
+      }
+    };
+    loadYears();
+  }, []);
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [selectedAcademicYearId]);
 
   const loadData = async () => {
     setIsLoading(true);
     try {
       const [studentsData, classesData, linksData] = await Promise.all([
-        studentsApi.getAll().catch(() => []),
+        studentsApi.getAll(selectedAcademicYearId || undefined).catch(() => []),
         classesApi.getAll().catch(() => []),
         registrationLinksApi.getAll().catch(() => [])
       ]);
@@ -398,12 +440,37 @@ export default function StudentManagement() {
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [studentFieldConfig, setStudentFieldConfig] = useState<FieldConfig[]>([]);
   const [showLinkDialog, setShowLinkDialog] = useState(false);
+  const [showBulkImportDialog, setShowBulkImportDialog] = useState(false);
   const [showFieldConfigDialog, setShowFieldConfigDialog] = useState(false);
   const [showAddFieldDialog, setShowAddFieldDialog] = useState(false);
+  // Bulk import state
+  const [bulkStep, setBulkStep] = useState(1);
+  const [bulkExcelHeaders, setBulkExcelHeaders] = useState<string[]>([]);
+  const [bulkExcelRows, setBulkExcelRows] = useState<any[]>([]);
+  const [bulkColumnMapping, setBulkColumnMapping] = useState<Record<string, string>>({});
+  const [bulkImportType, setBulkImportType] = useState<'all_classes' | 'particular_class'>('all_classes');
+  const [bulkSelectedClassId, setBulkSelectedClassId] = useState("");
+  const [bulkImportResult, setBulkImportResult] = useState<{ created: number; failed: number; errors: Array<{ row: number; message: string }> } | null>(null);
+  const [bulkImporting, setBulkImporting] = useState(false);
+  const [linkName, setLinkName] = useState("");
+  const [linkType, setLinkType] = useState<'class' | 'all_classes' | 'teacher' | 'others'>('class');
   const [selectedClassForLink, setSelectedClassForLink] = useState("");
+  const [selectedTeacherForLink, setSelectedTeacherForLink] = useState("");
+  const [teachers, setTeachers] = useState<{ id: string; name: string }[]>([]);
   const [generatedLink, setGeneratedLink] = useState("");
   const [fieldConfigs, setFieldConfigs] = useState<FieldConfig[]>(defaultFields);
-  
+
+  const selectedYear = selectedAcademicYearId ? academicYears.find((y) => y.id === selectedAcademicYearId) : null;
+  const isReadOnlyYear = !!selectedYear && selectedYear.status !== "active";
+
+  useEffect(() => {
+    if (showLinkDialog) {
+      teachersApi.getAll().then((data: any[]) => {
+        setTeachers(data?.map((t: any) => ({ id: t.id, name: t.name || t.username })) || []);
+      }).catch(() => setTeachers([]));
+    }
+  }, [showLinkDialog]);
+
   // Add Field form state
   const [newField, setNewField] = useState({
     fieldName: "",
@@ -416,25 +483,18 @@ export default function StudentManagement() {
   });
 
   const handleGenerateLink = async () => {
-    if (!selectedClassForLink) {
-      toast.error("Please select class");
-      return;
-    }
-
     if (!user?.schoolId) {
       toast.error("School ID not found. Please log in again.");
       return;
     }
 
-    // Find the selected class to get its section
-    const selectedClass = classes.find(c => c.id === selectedClassForLink);
-    if (!selectedClass) {
-      toast.error("Selected class not found");
+    if (linkType === 'class' && !selectedClassForLink) {
+      toast.error("Please select class and section");
       return;
     }
+    const selectedClass = linkType === 'class' ? classes.find(c => c.id === selectedClassForLink) : null;
 
     try {
-      // Get enabled fields with full configuration
       const enabledFields = fieldConfigs
         .filter(f => f.enabled)
         .map(f => ({
@@ -448,27 +508,30 @@ export default function StudentManagement() {
           is_primary_identity: f.is_primary_identity,
         }));
 
-      // Save to database via API - use class ID directly (it already includes section)
-      const response = await registrationLinksApi.create({
-        classId: selectedClassForLink, // This is the full class ID (includes section)
-        section: selectedClass.section || '', // Just for reference/display
+      const payload: Parameters<typeof registrationLinksApi.create>[0] = {
+        name: linkName.trim(),
+        linkType,
         fieldConfig: enabledFields,
-      });
+      };
+      if (linkType === 'class') {
+        payload.classId = selectedClassForLink;
+        payload.section = selectedClass?.section || '';
+      }
+      if (linkType === 'teacher' && selectedTeacherForLink) {
+        payload.teacherId = selectedTeacherForLink;
+      }
 
-      // Set the generated link from API response
+      const response = await registrationLinksApi.create(payload);
+
       setGeneratedLink(response.link);
       toast.success("Registration link generated and saved!");
-      
-      // Refresh the links count to update the card
-      // Fetch links separately to ensure count updates
+
       try {
         const linksData = await registrationLinksApi.getAll().catch(() => []);
         setLinksCount(linksData.length || 0);
       } catch (error) {
         console.error('Error refreshing links count:', error);
       }
-      
-      // Also reload all data
       await loadData();
     } catch (error: any) {
       console.error('Error generating link:', error);
@@ -654,16 +717,49 @@ export default function StudentManagement() {
   return (
     <UnifiedLayout>
       <div className="space-y-6">
+        {/* Academic year filter */}
+        {academicYears.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2">
+            <Label className="text-muted-foreground">Academic year</Label>
+            <Select
+              value={selectedAcademicYearId ?? ""}
+              onValueChange={(v) => setSelectedAcademicYearId(v || null)}
+            >
+              <SelectTrigger className="w-48">
+                <SelectValue placeholder="Select year" />
+              </SelectTrigger>
+              <SelectContent>
+                {academicYears.map((y) => (
+                  <SelectItem key={y.id} value={y.id}>
+                    {y.name}{y.status === "active" ? " (Current)" : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {selectedAcademicYearId && academicYears.find((y) => y.id === selectedAcademicYearId)?.status !== "active" && (
+              <span className="text-sm text-amber-600 font-medium">Read-only — viewing previous year data</span>
+            )}
+          </div>
+        )}
+
         {/* Page Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold text-foreground">Student Management</h1>
             <p className="text-muted-foreground mt-1">Manage student registrations and approvals.</p>
           </div>
-          <Button onClick={() => setShowLinkDialog(true)}>
-            <Link2 className="w-4 h-4 mr-2" />
-            Generate Registration Link
-          </Button>
+          {(!selectedAcademicYearId || academicYears.find((y) => y.id === selectedAcademicYearId)?.status === "active") && (
+            <div className="flex items-center gap-2">
+              <Button variant="outline" onClick={() => setShowBulkImportDialog(true)}>
+                <Upload className="w-4 h-4 mr-2" />
+                Bulk Import
+              </Button>
+              <Button onClick={() => setShowLinkDialog(true)}>
+                <Link2 className="w-4 h-4 mr-2" />
+                Generate Registration Link
+              </Button>
+            </div>
+          )}
         </div>
 
         {/* Stats */}
@@ -785,22 +881,26 @@ export default function StudentManagement() {
                           >
                             <Eye className="w-4 h-4" />
                           </Button>
-                          <Button 
-                            variant="ghost" 
-                            size="icon" 
-                            className="text-success hover:text-success hover:bg-success/10"
-                            onClick={() => handleApprove(student.id)}
-                          >
-                            <Check className="w-4 h-4" />
-                          </Button>
-                          <Button 
-                            variant="ghost" 
-                            size="icon" 
-                            className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                            onClick={() => handleReject(student.id)}
-                          >
-                            <X className="w-4 h-4" />
-                          </Button>
+                          {!isReadOnlyYear && (
+                            <>
+                              <Button 
+                                variant="ghost" 
+                                size="icon" 
+                                className="text-success hover:text-success hover:bg-success/10"
+                                onClick={() => handleApprove(student.id)}
+                              >
+                                <Check className="w-4 h-4" />
+                              </Button>
+                              <Button 
+                                variant="ghost" 
+                                size="icon" 
+                                className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                                onClick={() => handleReject(student.id)}
+                              >
+                                <X className="w-4 h-4" />
+                              </Button>
+                            </>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -878,7 +978,7 @@ export default function StudentManagement() {
                       </td>
                       <td className="p-4 text-muted-foreground">{student.parentPhone}</td>
                       <td className="p-4">
-                        {user?.role === 'admin' ? (
+                        {user?.role === 'admin' && !isReadOnlyYear ? (
                           <Select
                             value={student.tcStatus || 'none'}
                             onValueChange={(value) => handleUpdateTcStatus(student.id, value as 'none' | 'applied' | 'issued')}
@@ -908,7 +1008,7 @@ export default function StudentManagement() {
                           >
                             <Eye className="w-4 h-4" />
                           </Button>
-                          {user?.role === 'admin' && (
+                          {user?.role === 'admin' && !isReadOnlyYear && (
                             <Button
                               variant="ghost"
                               size="icon"
@@ -933,41 +1033,82 @@ export default function StudentManagement() {
         </Tabs>
 
         {/* Generate Link Dialog */}
-        <Dialog open={showLinkDialog} onOpenChange={setShowLinkDialog}>
+        <Dialog open={showLinkDialog} onOpenChange={(open) => {
+          setShowLinkDialog(open);
+          if (!open) {
+            setLinkName("");
+            setLinkType("class");
+            setSelectedClassForLink("");
+            setSelectedTeacherForLink("");
+            setGeneratedLink("");
+          }
+        }}>
           <DialogContent className="max-w-lg">
             <DialogHeader>
               <DialogTitle>Generate Registration Link</DialogTitle>
               <DialogDescription>
-                Create a customized registration link for students. Configure which fields are required.
+                Create a customized registration link. Configure which fields are required.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-4">
               <div className="space-y-2">
-                <Label>Select Class</Label>
-                <Select value={selectedClassForLink} onValueChange={setSelectedClassForLink}>
+                <Label>Link Name <span className="text-destructive">*</span></Label>
+                <Input
+                  placeholder="e.g., Class 1A - 2026"
+                  value={linkName}
+                  onChange={(e) => setLinkName(e.target.value)}
+                  required
+                />
+                <p className="text-xs text-muted-foreground">
+                  This name will appear as the form title when students open the registration link.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Link for</Label>
+                <Select value={linkType} onValueChange={(v: 'class' | 'all_classes' | 'teacher' | 'others') => {
+                  setLinkType(v);
+                  setSelectedClassForLink("");
+                  setSelectedTeacherForLink("");
+                }}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Select class and section" />
+                    <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {classes.map((cls) => (
-                      <SelectItem key={cls.id} value={cls.id}>
-                        {cls.name}{cls.section ? ` - Section ${cls.section}` : ''}
-                      </SelectItem>
-                    ))}
+                    <SelectItem value="class">Specific class</SelectItem>
+                    <SelectItem value="all_classes">All classes</SelectItem>
+                    <SelectItem value="teacher">Teacher</SelectItem>
+                    <SelectItem value="others">Others</SelectItem>
                   </SelectContent>
                 </Select>
-                {selectedClassForLink && (() => {
-                  const selectedClass = classes.find(c => c.id === selectedClassForLink);
-                  if (selectedClass) {
-                    return (
-                      <p className="text-xs text-muted-foreground">
-                        Selected: {selectedClass.name}{selectedClass.section ? ` - Section ${selectedClass.section}` : ''}
-                      </p>
-                    );
-                  }
-                  return null;
-                })()}
               </div>
+
+              {linkType === 'class' && (
+                <div className="space-y-2">
+                  <Label>Select class and section</Label>
+                  <Select value={selectedClassForLink} onValueChange={setSelectedClassForLink}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select class and section" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {classes.map((cls) => (
+                        <SelectItem key={cls.id} value={cls.id}>
+                          {cls.name}{cls.section ? ` - Section ${cls.section}` : ''}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {selectedClassForLink && (() => {
+                    const sel = classes.find(c => c.id === selectedClassForLink);
+                    return sel ? (
+                      <p className="text-xs text-muted-foreground">
+                        Selected: {sel.name}{sel.section ? ` - Section ${sel.section}` : ''}
+                      </p>
+                    ) : null;
+                  })()}
+                </div>
+              )}
+
 
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
@@ -982,34 +1123,342 @@ export default function StudentManagement() {
                   {" "}{fieldConfigs.filter(f => f.enabled && !f.mandatory).length} optional fields
                 </div>
               </div>
-              
+
               {generatedLink && (
                 <div className="space-y-2">
                   <Label>Registration Link</Label>
                   <div className="flex gap-2">
-                    <Input 
-                      value={generatedLink} 
-                      readOnly 
-                      className="text-sm"
-                    />
+                    <Input value={generatedLink} readOnly className="text-sm" />
                     <Button variant="outline" size="icon" onClick={handleCopyLink}>
                       <Copy className="w-4 h-4" />
                     </Button>
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Share this link with parents. Students will see a form with camera access for photo capture.
+                    Share this link. Recipients will see a form with the configured fields.
                   </p>
                 </div>
               )}
             </div>
             <DialogFooter>
-              <Button variant="outline" onClick={() => setShowLinkDialog(false)}>
-                Close
-              </Button>
-              <Button onClick={handleGenerateLink}>
+              <Button variant="outline" onClick={() => setShowLinkDialog(false)}>Close</Button>
+              <Button
+                onClick={handleGenerateLink}
+                disabled={!linkName?.trim() || (linkType === 'class' ? !selectedClassForLink : false)}
+              >
                 <Plus className="w-4 h-4 mr-2" />
                 Generate Link
               </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Bulk Import Dialog */}
+        <Dialog open={showBulkImportDialog} onOpenChange={(open) => {
+          setShowBulkImportDialog(open);
+          if (!open) {
+            setBulkStep(1);
+            setBulkExcelHeaders([]);
+            setBulkExcelRows([]);
+            setBulkColumnMapping({});
+            setBulkImportType('all_classes');
+            setBulkSelectedClassId("");
+            setBulkImportResult(null);
+          }
+        }}>
+          <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col">
+            <DialogHeader>
+              <DialogTitle>Bulk Import Students</DialogTitle>
+              <DialogDescription>
+                {bulkStep === 1 && "Upload an Excel file (.xlsx). First row should be column headers."}
+                {bulkStep === 2 && "Is this data for all school students (class/section from file) or one particular class and section?"}
+                {bulkStep === 3 && "Map each Excel column to a system field."}
+                {bulkStep === 4 && "Preview mapped data and import."}
+                {bulkStep === 5 && "Import complete."}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex-1 overflow-y-auto space-y-4 py-4">
+              {/* Step 1: Upload */}
+              {bulkStep === 1 && (
+                <div className="space-y-4">
+                  <Label>Select file (.xlsx or .csv)</Label>
+                  <Input
+                    type="file"
+                    accept=".xlsx,.xls,.csv"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const isCsv = file.name.toLowerCase().endsWith(".csv") || file.type === "text/csv";
+                      const reader = new FileReader();
+                      reader.onload = (ev) => {
+                        try {
+                          let wb: XLSX.WorkBook;
+                          if (isCsv) {
+                            const text = ev.target?.result as string;
+                            wb = XLSX.read(text, { type: "string" });
+                          } else {
+                            const data = new Uint8Array(ev.target?.result as ArrayBuffer);
+                            wb = XLSX.read(data, { type: "array" });
+                          }
+                          const ws = wb.Sheets[wb.SheetNames[0]];
+                          const json = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][];
+                          const headers = (json[0] || []).map((h: any) => String(h ?? "").trim() || `Col${(json[0] || []).indexOf(h) + 1}`);
+                          const rows = json.slice(1).filter(r => r.some((c: any) => c != null && String(c).trim() !== "")).map(row => {
+                            const obj: any = {};
+                            headers.forEach((h, i) => { obj[h] = row[i] != null ? row[i] : ""; });
+                            return obj;
+                          });
+                          setBulkExcelHeaders(headers);
+                          setBulkExcelRows(rows);
+                          setBulkColumnMapping({});
+                          toast.success(`Loaded ${rows.length} rows`);
+                        } catch (err: any) {
+                          toast.error(err?.message || "Failed to parse file");
+                        }
+                      };
+                      if (isCsv) reader.readAsText(file); else reader.readAsArrayBuffer(file);
+                    }}
+                  />
+                  {bulkExcelRows.length > 0 && (
+                    <p className="text-sm text-muted-foreground">
+                      {bulkExcelHeaders.length} columns, {bulkExcelRows.length} rows. Click Next to choose import type.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Step 2: Import type */}
+              {bulkStep === 2 && (
+                <div className="space-y-4">
+                  <Label>Import type</Label>
+                  <Select value={bulkImportType} onValueChange={(v: 'all_classes' | 'particular_class') => setBulkImportType(v)}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all_classes">All school students (all classes form)</SelectItem>
+                      <SelectItem value="particular_class">Particular class and section form</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {bulkImportType === "particular_class" && (
+                    <>
+                      <Label>Select class and section</Label>
+                      <Select value={bulkSelectedClassId} onValueChange={setBulkSelectedClassId}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select class and section" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {classes.map((c) => (
+                            <SelectItem key={c.id} value={c.id}>
+                              {c.name}{c.section ? ` - ${c.section}` : ""}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* Step 3: Mapping */}
+              {bulkStep === 3 && (
+                <div className="space-y-3">
+                  <Label>Map Excel columns to system fields</Label>
+                  <div className="border rounded-lg divide-y max-h-60 overflow-y-auto">
+                    {bulkExcelHeaders.map((h) => (
+                      <div key={h} className="flex items-center gap-4 p-3">
+                        <span className="font-medium text-sm w-40 truncate" title={h}>{h}</span>
+                        <span className="text-muted-foreground">→</span>
+                        <Select
+                          value={bulkColumnMapping[h] ?? ""}
+                          onValueChange={(v) => setBulkColumnMapping(prev => ({ ...prev, [h]: v }))}
+                        >
+                          <SelectTrigger className="flex-1">
+                            <SelectValue placeholder="Select field" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {BULK_IMPORT_SYSTEM_FIELDS.map((f) => (
+                              <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Step 4: Preview & Import */}
+              {bulkStep === 4 && (() => {
+                const mappedRows = bulkExcelRows.map(row => {
+                  const out: Record<string, any> = {};
+                  Object.entries(bulkColumnMapping).forEach(([excelCol, sysField]) => {
+                    if (sysField && sysField !== BULK_IMPORT_SKIP && row[excelCol] != null) out[sysField] = row[excelCol];
+                  });
+                  return out;
+                });
+                return (
+                  <div className="space-y-4">
+                    <p className="text-sm text-muted-foreground">First 10 rows (mapped):</p>
+                    <div className="border rounded-lg overflow-x-auto max-h-48 overflow-y-auto">
+                      <table className="w-full text-sm">
+                        <thead className="bg-muted/50 sticky top-0">
+                          <tr>
+                            {(mappedRows[0] ? Object.keys(mappedRows[0]) : ["name"]).map(k => (
+                              <th key={k} className="p-2 text-left">{k}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {mappedRows.slice(0, 10).map((row, i) => (
+                            <tr key={i} className="border-t">
+                              {(mappedRows[0] ? Object.keys(mappedRows[0]) : []).map(k => (
+                                <td key={k} className="p-2">{String((row as Record<string, unknown>)[k] ?? "")}</td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <p className="text-xs text-muted-foreground">Total rows to import: {mappedRows.length}</p>
+                  </div>
+                );
+              })()}
+
+              {/* Step 5: Result */}
+              {bulkStep === 5 && bulkImportResult && (
+                <div className="space-y-4">
+                  <div className="flex gap-4">
+                    <div className="px-4 py-2 rounded-lg bg-secondary/20 text-secondary font-semibold">{bulkImportResult.created} created</div>
+                    <div className="px-4 py-2 rounded-lg bg-destructive/20 text-destructive font-semibold">{bulkImportResult.failed} failed</div>
+                  </div>
+                  {bulkImportResult.errors.length > 0 && (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <Label>Failed rows (details below)</Label>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            const escapeCsv = (v: unknown) => {
+                              const s = v != null ? String(v) : "";
+                              if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+                              return s;
+                            };
+                            const headers = bulkExcelHeaders.length > 0 ? bulkExcelHeaders : (bulkExcelRows[0] ? Object.keys(bulkExcelRows[0]) : []);
+                            const failedRowIndices = bulkImportResult!.errors.map((e) => e.row - 2);
+                            const rows = failedRowIndices
+                              .filter((i) => i >= 0 && i < bulkExcelRows.length)
+                              .map((i) => bulkExcelRows[i]);
+                            const headerLine = headers.map(escapeCsv).join(",");
+                            const dataLines = rows.map((row) => headers.map((h) => escapeCsv(row[h])).join(","));
+                            const csv = [headerLine, ...dataLines].join("\r\n");
+                            const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement("a");
+                            a.href = url;
+                            a.download = `failed-import-rows-${new Date().toISOString().slice(0, 10)}.csv`;
+                            a.click();
+                            URL.revokeObjectURL(url);
+                            toast.success("Failed rows downloaded as CSV");
+                          }}
+                        >
+                          <Download className="w-4 h-4 mr-2" />
+                          Download failed rows as CSV
+                        </Button>
+                      </div>
+                      <ul className="list-disc list-inside text-sm text-muted-foreground">
+                        {bulkImportResult.errors.map((e, i) => (
+                          <li key={i}>Row {e.row}: {e.message}</li>
+                        ))}
+                      </ul>
+                      <div className="border rounded-lg overflow-x-auto max-h-48 overflow-y-auto">
+                        <table className="w-full text-sm">
+                          <thead className="bg-muted/50 sticky top-0">
+                            <tr>
+                              <th className="p-2 text-left font-medium w-12">Row</th>
+                              <th className="p-2 text-left font-medium w-32">Error</th>
+                              {bulkExcelHeaders.map((h) => (
+                                <th key={h} className="p-2 text-left font-medium">{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {bulkImportResult.errors.map((e, i) => {
+                              const rowIndex = e.row - 2;
+                              const row = rowIndex >= 0 && rowIndex < bulkExcelRows.length ? bulkExcelRows[rowIndex] : {};
+                              return (
+                                <tr key={i} className="border-t">
+                                  <td className="p-2">{e.row}</td>
+                                  <td className="p-2 text-destructive text-xs">{e.message}</td>
+                                  {bulkExcelHeaders.map((h) => (
+                                    <td key={h} className="p-2">{String(row[h] ?? "")}</td>
+                                  ))}
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+            <DialogFooter className="border-t pt-4">
+              {bulkStep < 5 && (
+                <>
+                  {bulkStep > 1 && (
+                    <Button variant="outline" onClick={() => setBulkStep(s => s - 1)}>
+                      <ArrowLeft className="w-4 h-4 mr-2" />
+                      Back
+                    </Button>
+                  )}
+                  <div className="flex-1" />
+                  <Button
+                    disabled={
+                      bulkStep === 1 && bulkExcelRows.length === 0 ||
+                      bulkStep === 2 && bulkImportType === "particular_class" && !bulkSelectedClassId
+                    }
+                    onClick={async () => {
+                      if (bulkStep === 4) {
+                        const mappedRows = bulkExcelRows.map(row => {
+                          const out: Record<string, any> = {};
+                          Object.entries(bulkColumnMapping).forEach(([excelCol, sysField]) => {
+                            if (sysField && sysField !== BULK_IMPORT_SKIP && row[excelCol] != null) out[sysField] = row[excelCol];
+                          });
+                          return out;
+                        });
+                        setBulkImporting(true);
+                        try {
+                          const res = await studentsApi.bulkImport({
+                            importType: bulkImportType,
+                            selectedClassId: bulkImportType === "particular_class" ? bulkSelectedClassId || undefined : undefined,
+                            rows: mappedRows,
+                          });
+                          setBulkImportResult({ created: res.created, failed: res.failed, errors: res.errors });
+                          setBulkStep(5);
+                          toast.success(`Import complete: ${res.created} created, ${res.failed} failed`);
+                          await loadData();
+                        } catch (err: any) {
+                          toast.error(err?.message || "Import failed");
+                        } finally {
+                          setBulkImporting(false);
+                        }
+                      } else {
+                        setBulkStep(s => s + 1);
+                      }
+                    }}
+                  >
+                    {bulkImporting ? "Importing..." : bulkStep === 4 ? "Import" : "Next"}
+                    {bulkStep < 4 && <ArrowRight className="w-4 h-4 ml-2" />}
+                  </Button>
+                </>
+              )}
+              {bulkStep === 5 && (
+                <Button onClick={() => { setShowBulkImportDialog(false); setBulkStep(1); setBulkImportResult(null); }}>
+                  Close
+                </Button>
+              )}
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -1262,6 +1711,28 @@ export default function StudentManagement() {
             </DialogHeader>
             {editingStudent && (
               <div className="space-y-6">
+                {/* Class and Section (change section) */}
+                {classes.length > 0 && (
+                  <div className="space-y-2">
+                    <Label>Class and Section</Label>
+                    <Select
+                      value={editingStudent.classId ?? ''}
+                      onValueChange={(value) => setEditingStudent({ ...editingStudent, classId: value })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select class and section" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {classes.map((cls) => (
+                          <SelectItem key={cls.id} value={cls.id}>
+                            {cls.name}{cls.section ? ` - Section ${cls.section}` : ''}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">Change the student&apos;s class/section here</p>
+                  </div>
+                )}
                 {/* Basic Information */}
                 <div>
                   <h3 className="text-lg font-semibold mb-4">Basic Information</h3>

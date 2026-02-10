@@ -8,7 +8,7 @@ export interface User {
   email?: string;
   username?: string;
   phone?: string;
-  role: 'superadmin' | 'admin' | 'teacher';
+  role: 'superadmin' | 'admin' | 'teacher' | 'parent';
   schoolId?: string;
   schoolName?: string;
   schoolCode?: string;
@@ -17,6 +17,7 @@ export interface User {
   schoolAddress?: string;
   schoolPhone?: string;
   schoolEmail?: string;
+  classId?: string;
   className?: string;
 }
 
@@ -61,15 +62,15 @@ export interface SchoolAdmin {
 
 // Token management
 export const getToken = (): string | null => {
-  return localStorage.getItem('allpulse_token');
+  return localStorage.getItem('conventpulse_token');
 };
 
 export const setToken = (token: string): void => {
-  localStorage.setItem('allpulse_token', token);
+  localStorage.setItem('conventpulse_token', token);
 };
 
 export const removeToken = (): void => {
-  localStorage.removeItem('allpulse_token');
+  localStorage.removeItem('conventpulse_token');
 };
 
 // API Helper
@@ -138,6 +139,14 @@ export const authApi = {
     return apiRequest<AuthResponse>('/auth/teacher/login', {
       method: 'POST',
       body: JSON.stringify({ username, password }),
+    });
+  },
+
+  // Parent Login (phone only)
+  parentLogin: async (phone: string): Promise<AuthResponse> => {
+    return apiRequest<AuthResponse>('/auth/parent/login', {
+      method: 'POST',
+      body: JSON.stringify({ phone }),
     });
   },
 
@@ -292,6 +301,11 @@ export const classesApi = {
     return apiRequest<any[]>('/classes');
   },
 
+  /** All school classes for dropdowns (e.g. change section) - admin and teacher */
+  getForDropdown: async (): Promise<{ id: string; name: string; section: string }[]> => {
+    return apiRequest<any[]>('/classes/for-dropdown');
+  },
+
   create: async (data: {
     name: string;
     section?: string;
@@ -372,12 +386,14 @@ export const academicYearsApi = {
 // ============ STUDENTS API ============
 
 export const studentsApi = {
-  getAll: async (): Promise<any[]> => {
-    return apiRequest<any[]>('/students');
+  getAll: async (academicYearId?: string): Promise<any[]> => {
+    const params = academicYearId ? `?academicYearId=${encodeURIComponent(academicYearId)}` : '';
+    return apiRequest<any[]>(`/students${params}`);
   },
 
-  getByClass: async (classId: string): Promise<any[]> => {
-    return apiRequest<any[]>(`/classes/${classId}/students`);
+  getByClass: async (classId: string, academicYearId?: string): Promise<any[]> => {
+    const params = academicYearId ? `?academicYearId=${encodeURIComponent(academicYearId)}` : '';
+    return apiRequest<any[]>(`/classes/${classId}/students${params}`);
   },
 
   getPending: async (): Promise<any[]> => {
@@ -417,6 +433,17 @@ export const studentsApi = {
     });
   },
 
+  bulkImport: async (data: {
+    importType: 'all_classes' | 'particular_class' | 'teacher';
+    selectedClassId?: string;
+    rows: Array<Record<string, any>>;
+  }): Promise<{ created: number; failed: number; errors: Array<{ row: number; message: string }>; createdIds: string[] }> => {
+    return apiRequest('/students/bulk', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
   approve: async (id: string | number): Promise<{ success: boolean; admissionNumber?: string }> => {
     return apiRequest(`/students/${id}/approve`, {
       method: 'POST',
@@ -449,6 +476,7 @@ export const studentsApi = {
     parentPhone?: string;
     parentEmail?: string;
     parentName?: string;
+    photoUrl?: string;
     extra_fields?: Record<string, any>; // NEW: ID card extra fields
   }): Promise<{ success: boolean }> => {
     return apiRequest(`/students/${id}`, {
@@ -472,8 +500,11 @@ export const studentsApi = {
 
 export const registrationLinksApi = {
   create: async (data: {
-    classId: string;
-    section: string;
+    name?: string;
+    linkType?: 'class' | 'all_classes' | 'teacher' | 'others';
+    classId?: string;
+    teacherId?: string;
+    section?: string;
     fieldConfig: any[];
     expiresAt?: string;
   }): Promise<{
@@ -1109,7 +1140,8 @@ export const feesApi = {
   },
 
   updateFeeStructure: async (data: {
-    classId: string;
+    className?: string;
+    classId?: string;
     academicYearId?: string;
     totalFee: number;
     tuitionFee?: number;
@@ -1391,6 +1423,44 @@ export const notificationsApi = {
 
   markAsRead: async (notificationId: string): Promise<{ success: boolean }> => {
     return apiRequest(`/notifications/${notificationId}/read`, {
+      method: 'POST',
+    });
+  },
+};
+
+// ============ PARENTS API ============
+
+export const parentsApi = {
+  getChildren: async (): Promise<any[]> => {
+    return apiRequest<any[]>('/parents/children');
+  },
+  
+  getChildAttendance: async (studentId: string, startDate?: string, endDate?: string) => {
+    const params = new URLSearchParams();
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    const queryString = params.toString();
+    return apiRequest(`/parents/children/${studentId}/attendance${queryString ? '?' + queryString : ''}`);
+  },
+  
+  getChildHomework: async (studentId: string) => {
+    return apiRequest(`/parents/children/${studentId}/homework`);
+  },
+  
+  getChildNotifications: async (studentId: string) => {
+    return apiRequest(`/parents/children/${studentId}/notifications`);
+  },
+  
+  getChildFees: async (studentId: string) => {
+    return apiRequest(`/parents/children/${studentId}/fees`);
+  },
+  
+  getChildTestResults: async (studentId: string) => {
+    return apiRequest(`/parents/children/${studentId}/test-results`);
+  },
+  
+  markNotificationRead: async (notificationId: string) => {
+    return apiRequest(`/parents/notifications/${notificationId}/read`, {
       method: 'POST',
     });
   },

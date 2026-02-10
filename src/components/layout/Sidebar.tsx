@@ -70,7 +70,7 @@ export function Sidebar({ role, onLogout }: SidebarProps) {
           <GraduationCap className="w-6 h-6 text-primary-foreground" />
         </div>
         <div>
-          <h1 className="text-xl font-bold text-sidebar-foreground">AllPulse</h1>
+          <h1 className="text-xl font-bold text-sidebar-foreground">ConventPulse</h1>
           <p className="text-xs text-muted-foreground capitalize">{role === "superadmin" ? "Super Admin" : role} Portal</p>
         </div>
       </div>

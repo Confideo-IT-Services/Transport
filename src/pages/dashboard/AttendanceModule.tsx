@@ -45,7 +45,6 @@ import {
   ClipboardCheck, 
   Calendar as CalendarIcon, 
   Clock, 
-  Download, 
   CheckCircle2, 
   XCircle, 
   AlertCircle,
@@ -876,12 +875,6 @@ export default function AttendanceModule() {
                 : "Mark student attendance and track your own attendance"}
             </p>
           </div>
-          <div className="flex items-center gap-3">
-            <Button variant="outline">
-              <Download className="w-4 h-4 mr-2" />
-              Export Report
-            </Button>
-          </div>
         </div>
 
         <Tabs defaultValue={isAdmin ? "teachers" : "students"} className="space-y-6">
@@ -1291,7 +1284,7 @@ export default function AttendanceModule() {
                       />
                     </div>
                     {/* Send to All Parents Button */}
-                    <Button
+                    {/*<Button
                       onClick={handleSendAttendanceToAll}
                       disabled={isSendingAttendance || !selectedClassId || studentAttendancePercentages.length === 0}
                       className="ml-auto"
@@ -1307,7 +1300,7 @@ export default function AttendanceModule() {
                           Send to All Parents
                         </>
                       )}
-                    </Button>
+                    </Button>*/}
                   </div>
                 </div>
               </CardHeader>

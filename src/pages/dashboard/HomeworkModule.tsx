@@ -26,6 +26,16 @@ import {
 import { toast } from "sonner";
 import { Progress } from "@/components/ui/progress";
 import { homeworkApi, classesApi, studentsApi } from "@/lib/api";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 interface SubjectHomework {
   subjectId: string;
@@ -125,6 +135,17 @@ export default function HomeworkModule() {
   const [isLoading, setIsLoading] = useState(false);
   const [studentsInClass, setStudentsInClass] = useState<Student[]>([]);
   const [classStudentsMap, setClassStudentsMap] = useState<Record<string, Student[]>>({});
+  const [confirmDialog, setConfirmDialog] = useState<{
+    open: boolean;
+    title: string;
+    description: string;
+    onConfirm: () => void | Promise<void>;
+  }>({
+    open: false,
+    title: "",
+    description: "",
+    onConfirm: () => {},
+  });
 
   // Load classes and homework on mount
   useEffect(() => {
@@ -625,18 +646,27 @@ export default function HomeworkModule() {
       return;
     }
 
-    // Confirm before sending
-    if (!confirm(`Are you sure you want to send homework notifications to ALL parents for ${new Date(dateKey).toLocaleDateString()}?`)) {
-      return;
-    }
+    // Show confirmation dialog
+    setConfirmDialog({
+      open: true,
+      title: "Send to All Parents",
+      description: `Are you sure you want to send homework notifications to ALL parents for ${new Date(dateKey).toLocaleDateString()}?`,
+      onConfirm: async () => {
+        setConfirmDialog({ open: false, title: "", description: "", onConfirm: () => {} });
+        await performSendToAll(dateKey, homeworksForDate);
+      },
+    });
+  };
 
+  const performSendToAll = async (dateKey: string, homeworksForDate: HomeworkItem[]) => {
     try {
       setIsLoading(true);
       
       // Call backend API to send WhatsApp template messages
       const result = await homeworkApi.sendToAllParents(dateKey);
       
-      if (result.success) {
+      // Check if result exists and has success property
+      if (result && result.success) {
         toast.success(
           `✅ ${result.results.successful} out of ${result.results.total} parents received the message!`
         );
@@ -657,11 +687,39 @@ export default function HomeworkModule() {
           );
         }
       } else {
-        toast.error("Failed to send messages. Please try again.");
+        // Handle case where result.success is false (shouldn't happen, but just in case)
+        const errorMsg = result?.message || "Failed to send messages. Please try again.";
+        toast.error(errorMsg);
+        console.error('Send to all parents failed:', result);
       }
     } catch (error: any) {
       console.error('Error sending messages:', error);
-      toast.error(error?.message || "Failed to send WhatsApp messages");
+      
+      // Extract error message from various possible locations
+      let errorMessage = "Failed to send WhatsApp messages";
+      
+      if (error?.message) {
+        errorMessage = error.message;
+      } else if (error?.response?.data?.error) {
+        errorMessage = error.response.data.error;
+        // Include details if available
+        if (error.response.data.details) {
+          errorMessage += `: ${error.response.data.details}`;
+        }
+      } else if (error?.error) {
+        errorMessage = error.error;
+      }
+      
+      toast.error(errorMessage);
+      
+      // If it's a configuration error, show more helpful message
+      if (errorMessage.includes('template not configured')) {
+        toast.error("Please configure WhatsApp template in backend environment variables (WAZZAP_TEMPLATE_NAME).");
+      } else if (errorMessage.includes('No homework found')) {
+        toast.error("No homework found for this date. Please create homework first.");
+      } else if (errorMessage.includes('No students with valid parent phone numbers')) {
+        toast.error("No students with valid parent phone numbers found. Please update student records.");
+      }
     } finally {
       setIsLoading(false);
     }
@@ -698,6 +756,7 @@ export default function HomeworkModule() {
   });
 
   return (
+    <>
     <UnifiedLayout>
       <div className="space-y-6">
         <div>
@@ -933,13 +992,13 @@ export default function HomeworkModule() {
                             {homeworksForDate.length} homework{homeworksForDate.length !== 1 ? 's' : ''} created
                           </p>
                         </div>
-                        <Button 
+                        {/*<Button 
                           onClick={() => handleSendAllForDate(dateKey, homeworksForDate)}
                           className="flex items-center gap-2"
                         >
                           <MessageCircle className="w-4 h-4" />
                           Send to All Parents
-                        </Button>
+                        </Button>*/}
                       </div>
 
                       {/* Homework Table for this Date */}
@@ -1132,5 +1191,24 @@ export default function HomeworkModule() {
         </DialogContent>
       </Dialog>
     </UnifiedLayout>
+
+      {/* Confirm Dialog */}
+      <AlertDialog open={confirmDialog.open} onOpenChange={(open) => {
+        if (!open) {
+          setConfirmDialog({ open: false, title: "", description: "", onConfirm: () => {} });
+        }
+      }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{confirmDialog.title}</AlertDialogTitle>
+            <AlertDialogDescription>{confirmDialog.description}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDialog.onConfirm}>Confirm</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }

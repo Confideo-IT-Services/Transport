@@ -6,23 +6,13 @@ const app = express();
 
 // Middleware
 app.use(cors({
-  origin: function (origin, callback) {
-    // Allow requests with no origin (mobile apps, Postman, etc.)
-    if (!origin) return callback(null, true);
-    
-    const allowedOrigins = [
-      'http://localhost:5173',
-      'http://localhost:8080',
-      process.env.FRONTEND_URL
-    ].filter(Boolean);
-    
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-    
-    // Allow all origins for mobile app support
-    return callback(null, true);
-  },
+  origin: [
+    'http://localhost:5173',
+    'http://localhost:8080',
+    'http://localhost:8081', // Expo web
+    /^exp:\/\/.*/, // Allow all Expo URLs (mobile app)
+    process.env.FRONTEND_URL
+  ].filter(Boolean),
   credentials: true
 }));
 app.use(express.json());
@@ -47,6 +37,7 @@ const idCardGenerationRoutes = require('./routes/idCardGeneration');
 const otpRoutes = require('./routes/otp');
 const notificationsRoutes = require('./routes/notifications');
 const whatsappRoutes = require('./routes/whatsapp');
+const parentRoutes = require('./routes/parents');
 
 // Use routes
 app.use('/api/auth', authRoutes);
@@ -68,6 +59,7 @@ app.use('/api/id-cards', idCardGenerationRoutes);
 app.use('/api/otp', otpRoutes);
 app.use('/api/notifications', notificationsRoutes);
 app.use('/api/whatsapp', whatsappRoutes);
+app.use('/api/parents', parentRoutes);
 
 // Import background jobs (optional)
 if (process.env.ENABLE_WHATSAPP_STATUS_CHECK === 'true') {
@@ -93,7 +85,11 @@ app.use((req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 AllPulse API Server running on port ${PORT}`);
-  console.log(`📍 API Base URL: http://localhost:${PORT}/api`);
+const HOST = '0.0.0.0'; // Listen on all network interfaces
+
+app.listen(PORT, HOST, () => {
+  console.log(`🚀 ConventPulse API Server running on port ${PORT}`);
+  console.log(`📍 API Base URL (localhost): http://localhost:${PORT}/api`);
+  console.log(`📍 API Base URL (network): http://192.168.0.33:${PORT}/api`);
+  console.log(`🌐 Server accessible from all network interfaces`);
 });

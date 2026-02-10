@@ -127,7 +127,7 @@ export default function ProfilePage() {
       if (response.user) {
         setUser(response.user);
         // Also update localStorage
-        localStorage.setItem("allpulse_user", JSON.stringify(response.user));
+        localStorage.setItem("conventpulse_user", JSON.stringify(response.user));
       }
 
       toast({
@@ -164,7 +164,7 @@ export default function ProfilePage() {
       // Refresh user data to get updated school details
       const updatedUser = await authApi.verifyToken();
       setUser(updatedUser);
-      localStorage.setItem("allpulse_user", JSON.stringify(updatedUser));
+      localStorage.setItem("conventpulse_user", JSON.stringify(updatedUser));
 
       toast({
         title: "School Details Updated",

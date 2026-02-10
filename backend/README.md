@@ -1,6 +1,6 @@
-# AllPulse Backend API
+# ConventPulse Backend API
 
-Node.js/Express backend for the AllPulse School Management System.
+Node.js/Express backend for the ConventPulse School Management System.
 
 ## Prerequisites
 
@@ -124,7 +124,7 @@ npm start
 After running the schema, use these credentials:
 
 **Super Admin:**
-- Email: `superadmin@allpulse.com`
+- Email: `superadmin@conventpulse.com`
 - Password: `SuperAdmin@123`
 
 ## Deployment on EC2
