@@ -338,3 +338,4 @@ VALUES (UUID(), @school_id, 'Default ID Card', '{}', TRUE);
 
 
 
+
