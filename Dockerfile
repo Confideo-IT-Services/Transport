@@ -4,7 +4,7 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 
 # Set API URL to ALB DNS - MUST be before npm run build
-ENV VITE_API_URL=http://Allpulse-ALB-1146884340.ap-south-1.elb.amazonaws.com/api
+ENV VITE_API_URL=https://app.conventpulse.in/api
 
 COPY package*.json ./
 RUN npm ci
