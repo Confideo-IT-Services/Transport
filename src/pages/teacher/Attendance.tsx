@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/popover";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
+import { useToast } from "@/hooks/use-toast";
 
 type AttendanceStatus = "present" | "absent" | "leave";
 
@@ -38,6 +39,7 @@ interface Student {
 export default function Attendance() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { toast } = useToast();
   const [students, setStudents] = useState<Student[]>([]);
   const [historyPeriod, setHistoryPeriod] = useState("1month");
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
@@ -387,7 +389,11 @@ export default function Attendance() {
                   className="w-full sm:w-auto"
                   onClick={async () => {
                     if (!classId) {
-                      alert("No class assigned. Cannot save attendance.");
+                      toast({
+                        title: "Error",
+                        description: "No class assigned. Cannot save attendance.",
+                        variant: "destructive",
+                      });
                       return;
                     }
                     try {
@@ -397,10 +403,17 @@ export default function Attendance() {
                         date: todayStr,
                         students: students.map(s => ({ id: s.id.toString(), status: s.status }))
                       });
-                      alert("Attendance saved successfully!");
+                      toast({
+                        title: "Success",
+                        description: "Attendance saved successfully!",
+                      });
                     } catch (error: any) {
                       console.error('Error saving attendance:', error);
-                      alert(error?.message || "Failed to save attendance");
+                      toast({
+                        title: "Error",
+                        description: error?.message || "Failed to save attendance",
+                        variant: "destructive",
+                      });
                     }
                   }}
                 >

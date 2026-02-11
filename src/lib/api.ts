@@ -381,6 +381,52 @@ export const academicYearsApi = {
       method: 'POST',
     });
   },
+
+  getYearlySummary: async (yearId: string, classId: string): Promise<{
+    academicYearId: string;
+    academicYearName: string;
+    classId: string;
+    className: string;
+    studentCount: number;
+    students: Array<{
+      studentId: string;
+      name: string;
+      rollNo: string | null;
+      totalMarks: number;
+      totalMaxMarks: number;
+      testCount: number;
+      yearlyPercentage: number;
+      hasResults: boolean;
+      tcIssued: boolean;
+    }>;
+  }> => {
+    return apiRequest(`/academic-years/${yearId}/class/${classId}/yearly-summary`);
+  },
+
+  promote: async (fromYearId: string, data: {
+    toAcademicYearId: string;
+    classPromotions: Array<{
+      fromClassId: string;
+      toClassId: string | null;
+      studentIds: string[];
+    }>;
+  }): Promise<{
+    success: boolean;
+    promotedCount: number;
+    graduatedCount: number;
+    skippedCount: number;
+    total: number;
+    errors?: Array<{
+      classId: string;
+      reason: string;
+      studentCount: number;
+    }>;
+  }> => {
+    return apiRequest(`/academic-years/${fromYearId}/promote`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
 };
 
 // ============ STUDENTS API ============

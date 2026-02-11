@@ -475,6 +475,324 @@ router.post('/:id/promote-students', authenticateToken, requireAdmin, async (req
   }
 });
 
+// Get yearly percentage summary for all students in a class
+// Optimized for bulk operations (promotion use case)
+// WEIGHTING RULE: Uses "marks-weighted" aggregation
+// Formula: SUM(all marks obtained) / SUM(all max marks) × 100
+router.get('/:id/class/:classId/yearly-summary', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { id: academicYearId, classId } = req.params;
+    const schoolId = req.user.schoolId;
+
+    if (!schoolId) {
+      return res.status(400).json({ error: 'School ID not found' });
+    }
+
+    // Verify academic year exists and belongs to school
+    const [academicYears] = await db.query(
+      'SELECT id, name FROM academic_years WHERE id = ? AND school_id = ?',
+      [academicYearId, schoolId]
+    );
+
+    if (academicYears.length === 0) {
+      return res.status(404).json({ error: 'Academic year not found' });
+    }
+
+    // Verify class exists and belongs to school
+    const [classes] = await db.query(
+      'SELECT id, name, section FROM classes WHERE id = ? AND school_id = ?',
+      [classId, schoolId]
+    );
+
+    if (classes.length === 0) {
+      return res.status(404).json({ error: 'Class not found' });
+    }
+
+    // Get all students enrolled in this class for this academic year
+    // Calculate yearly percentage in a single optimized query using GROUP BY
+    // Include TC status for promotion eligibility
+    const [yearlySummary] = await db.query(
+      `SELECT 
+        s.id as studentId,
+        s.name as studentName,
+        s.roll_no as rollNo,
+        s.tc_status as tcStatus,
+        se.class_id,
+        COALESCE(SUM(tr.marks_obtained), 0) as totalMarks,
+        COALESCE(SUM(tr.max_marks), 0) as totalMaxMarks,
+        COUNT(DISTINCT tr.test_id) as testCount,
+        CASE 
+          WHEN COALESCE(SUM(tr.max_marks), 0) > 0 
+          THEN ROUND((SUM(tr.marks_obtained) / SUM(tr.max_marks)) * 100, 2)
+          ELSE 0 
+        END as yearlyPercentage
+       FROM student_enrollments se
+       JOIN students s ON se.student_id = s.id
+       LEFT JOIN test_results tr ON tr.student_id = s.id
+       LEFT JOIN tests t ON tr.test_id = t.id 
+         AND t.academic_year_id = se.academic_year_id
+         AND t.academic_year_id = ?
+       WHERE se.academic_year_id = ?
+         AND se.class_id = ?
+         AND se.school_id = ?
+         AND s.status = 'approved'
+       GROUP BY s.id, s.name, s.roll_no, s.tc_status, se.class_id
+       ORDER BY s.roll_no, s.name`,
+      [academicYearId, academicYearId, classId, schoolId]
+    );
+
+    res.json({
+      academicYearId,
+      academicYearName: academicYears[0].name,
+      classId,
+      className: `${classes[0].name}${classes[0].section ? ` ${classes[0].section}` : ''}`,
+      studentCount: yearlySummary.length,
+      students: yearlySummary.map(row => ({
+        studentId: row.studentId,
+        name: row.studentName,
+        rollNo: row.rollNo,
+        totalMarks: parseFloat(row.totalMarks),
+        totalMaxMarks: parseFloat(row.totalMaxMarks),
+        testCount: parseInt(row.testCount),
+        yearlyPercentage: parseFloat(row.yearlyPercentage),
+        hasResults: parseInt(row.testCount) > 0,
+        tcIssued: row.tcStatus === 'issued'
+      }))
+    });
+
+  } catch (error) {
+    console.error('Get yearly summary error:', error);
+    res.status(500).json({ error: 'Failed to fetch yearly summary' });
+  }
+});
+
+// Promote students to next class or graduate final class students
+// Transaction-safe, class-based promotion with manual selection
+router.post('/:fromYearId/promote', authenticateToken, requireAdmin, async (req, res) => {
+  // Start transaction
+  await db.query('START TRANSACTION');
+  
+  try {
+    const { fromYearId } = req.params;
+    const { toAcademicYearId, classPromotions } = req.body;
+    const schoolId = req.user.schoolId;
+
+    if (!schoolId) {
+      await db.query('ROLLBACK');
+      return res.status(400).json({ error: 'School ID not found' });
+    }
+
+    if (!toAcademicYearId || !classPromotions || !Array.isArray(classPromotions) || classPromotions.length === 0) {
+      await db.query('ROLLBACK');
+      return res.status(400).json({ error: 'toAcademicYearId and classPromotions array are required' });
+    }
+
+    // Validate academic years exist and belong to school
+    const [fromYear] = await db.query(
+      'SELECT id, name FROM academic_years WHERE id = ? AND school_id = ?',
+      [fromYearId, schoolId]
+    );
+
+    if (fromYear.length === 0) {
+      await db.query('ROLLBACK');
+      return res.status(404).json({ error: 'Source academic year not found' });
+    }
+
+    const [toYear] = await db.query(
+      'SELECT id, name FROM academic_years WHERE id = ? AND school_id = ?',
+      [toAcademicYearId, schoolId]
+    );
+
+    if (toYear.length === 0) {
+      await db.query('ROLLBACK');
+      return res.status(404).json({ error: 'Target academic year not found' });
+    }
+
+    // Get all classes for the school to detect final class
+    const [allClasses] = await db.query(
+      'SELECT id, name, section FROM classes WHERE school_id = ? ORDER BY name, section',
+      [schoolId]
+    );
+
+    // Extract unique class numbers and find highest
+    const classNumbers = new Set();
+    allClasses.forEach(c => {
+      const match = c.name.match(/\d+/);
+      if (match) classNumbers.add(parseInt(match[0]));
+    });
+    const highestClassNumber = classNumbers.size > 0 ? Math.max(...Array.from(classNumbers)) : 0;
+
+    let promotedCount = 0;
+    let graduatedCount = 0;
+    let skippedCount = 0;
+    const errors = [];
+
+    // Process each class promotion
+    for (const promotion of classPromotions) {
+      const { fromClassId, toClassId, studentIds } = promotion;
+
+      if (!fromClassId || !studentIds || !Array.isArray(studentIds) || studentIds.length === 0) {
+        skippedCount += studentIds?.length || 0;
+        continue;
+      }
+
+      // Validate fromClass exists and belongs to school
+      const [fromClass] = await db.query(
+        'SELECT id, name, section FROM classes WHERE id = ? AND school_id = ?',
+        [fromClassId, schoolId]
+      );
+
+      if (fromClass.length === 0) {
+        skippedCount += studentIds.length;
+        errors.push({
+          classId: fromClassId,
+          reason: 'Source class not found',
+          studentCount: studentIds.length
+        });
+        continue;
+      }
+
+      // Check if this is final class
+      const classMatch = fromClass[0].name.match(/\d+/);
+      const isFinalClass = classMatch && parseInt(classMatch[0]) === highestClassNumber;
+
+      // Validate students belong to fromYearId and fromClassId
+      const placeholders = studentIds.map(() => '?').join(',');
+      const [enrolledStudents] = await db.query(
+        `SELECT s.id, s.name, s.tc_status 
+         FROM student_enrollments se
+         JOIN students s ON se.student_id = s.id
+         WHERE se.academic_year_id = ? 
+           AND se.class_id = ? 
+           AND se.school_id = ?
+           AND s.id IN (${placeholders})
+           AND s.status = 'approved'`,
+        [fromYearId, fromClassId, schoolId, ...studentIds]
+      );
+
+      const validStudentIds = enrolledStudents.map(s => s.id);
+      const invalidCount = studentIds.length - validStudentIds.length;
+
+      if (invalidCount > 0) {
+        skippedCount += invalidCount;
+        errors.push({
+          classId: fromClassId,
+          reason: `${invalidCount} student(s) not found or not enrolled in this class/year`,
+          studentCount: invalidCount
+        });
+      }
+
+      if (validStudentIds.length === 0) {
+        continue;
+      }
+
+      // Check for duplicate enrollments in target year
+      const validPlaceholders = validStudentIds.map(() => '?').join(',');
+      const [existingEnrollments] = await db.query(
+        `SELECT student_id FROM student_enrollments 
+         WHERE academic_year_id = ? 
+           AND student_id IN (${validPlaceholders})
+           AND school_id = ?`,
+        [toAcademicYearId, ...validStudentIds, schoolId]
+      );
+
+      const existingStudentIds = new Set(existingEnrollments.map(e => e.student_id));
+      const newStudentIds = validStudentIds.filter(id => !existingStudentIds.has(id));
+
+      if (newStudentIds.length < validStudentIds.length) {
+        const duplicateCount = validStudentIds.length - newStudentIds.length;
+        skippedCount += duplicateCount;
+        errors.push({
+          classId: fromClassId,
+          reason: `${duplicateCount} student(s) already enrolled in target academic year`,
+          studentCount: duplicateCount
+        });
+      }
+
+      if (newStudentIds.length === 0) {
+        continue;
+      }
+
+      // Process promotion or graduation
+      if (isFinalClass && !toClassId) {
+        // Graduation: Mark students as graduated
+        // Note: Since students.status is ENUM('pending', 'approved', 'rejected'),
+        // we keep status as 'approved' but don't create new enrollment
+        // The absence of enrollment in next year indicates graduation
+        // In future, we can add a 'graduated_at' timestamp field if needed
+        graduatedCount += newStudentIds.length;
+      } else if (toClassId) {
+        // Promotion: Validate toClass exists
+        const [toClass] = await db.query(
+          'SELECT id, name, section FROM classes WHERE id = ? AND school_id = ?',
+          [toClassId, schoolId]
+        );
+
+        if (toClass.length === 0) {
+          skippedCount += newStudentIds.length;
+          errors.push({
+            classId: fromClassId,
+            reason: 'Target class not found',
+            studentCount: newStudentIds.length
+          });
+          continue;
+        }
+
+        // Bulk insert student_enrollments for next year
+        // Get roll numbers from current enrollment
+        const rollPlaceholders = newStudentIds.map(() => '?').join(',');
+        const [currentEnrollments] = await db.query(
+          `SELECT student_id, roll_no 
+           FROM student_enrollments 
+           WHERE academic_year_id = ? 
+             AND student_id IN (${rollPlaceholders})
+             AND school_id = ?`,
+          [fromYearId, ...newStudentIds, schoolId]
+        );
+
+        const rollMap = new Map(currentEnrollments.map(e => [e.student_id, e.roll_no]));
+
+        // Insert new enrollments
+        for (const studentId of newStudentIds) {
+          const rollNo = rollMap.get(studentId) || null;
+          await db.query(
+            `INSERT INTO student_enrollments (id, student_id, academic_year_id, class_id, roll_no, school_id)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [uuidv4(), studentId, toAcademicYearId, toClassId, rollNo, schoolId]
+          );
+        }
+
+        promotedCount += newStudentIds.length;
+      } else {
+        skippedCount += newStudentIds.length;
+        errors.push({
+          classId: fromClassId,
+          reason: 'toClassId required for non-final classes',
+          studentCount: newStudentIds.length
+        });
+      }
+    }
+
+    await db.query('COMMIT');
+    
+    console.log(`✅ Student promotion completed: ${promotedCount} promoted, ${graduatedCount} graduated, ${skippedCount} skipped`);
+
+    res.json({
+      success: true,
+      promotedCount,
+      graduatedCount,
+      skippedCount,
+      total: promotedCount + graduatedCount + skippedCount,
+      errors: errors.length > 0 ? errors : undefined
+    });
+
+  } catch (error) {
+    await db.query('ROLLBACK');
+    console.error('Promote students error:', error);
+    res.status(500).json({ error: 'Failed to promote students', details: error.message });
+  }
+});
+
 module.exports = router;
 
 

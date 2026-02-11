@@ -54,12 +54,15 @@ import {
   Send
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useConfirmDialog } from "@/hooks/use-confirm-dialog";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { feesApi, classesApi, academicYearsApi } from "@/lib/api";
 import { format } from "date-fns";
 
 export default function FeesModule() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const { dialog, confirm, close } = useConfirmDialog();
   const isAdmin = user?.role === "admin";
   
   // State
@@ -751,38 +754,44 @@ th{font-weight:600;}
   };
 
   const handleDeleteStructure = async (structureId: string) => {
-    if (!confirm('Are you sure you want to delete this fee structure? This will remove fees for all sections of this class. This action cannot be undone.')) {
-      return;
-    }
-
-    try {
-      await feesApi.deleteFeeStructure(structureId);
-      toast({
-        title: "Success",
-        description: "Fee structure deleted successfully"
-      });
-      
-      // Reload fee structure
-      const structures = await feesApi.getFeeStructure();
-      setFeeStructure(structures || []);
-      
-      // Reload student fees to reflect changes
-      const feesData = await feesApi.getStudentFees(
-        selectedClassId !== "all" ? selectedClassId : undefined, 
-        searchTerm || undefined
-      );
-      setStudentFees(feesData || []);
-      
-      // Reload summary
-      const summaryData = await feesApi.getSummary();
-      setSummary(summaryData || summary);
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error?.message || "Failed to delete fee structure",
-        variant: "destructive"
-      });
-    }
+    confirm(
+      "Delete Fee Structure",
+      "Are you sure you want to delete this fee structure? This will remove fees for all sections of this class. This action cannot be undone.",
+      async () => {
+        try {
+          await feesApi.deleteFeeStructure(structureId);
+          toast({
+            title: "Success",
+            description: "Fee structure deleted successfully"
+          });
+          
+          // Reload fee structure
+          const structures = await feesApi.getFeeStructure();
+          setFeeStructure(structures || []);
+          
+          // Reload student fees to reflect changes
+          const feesData = await feesApi.getStudentFees(
+            selectedClassId !== "all" ? selectedClassId : undefined, 
+            searchTerm || undefined
+          );
+          setStudentFees(feesData || []);
+          
+          // Reload summary
+          const summaryData = await feesApi.getSummary();
+          setSummary(summaryData || summary);
+        } catch (error: any) {
+          toast({
+            title: "Error",
+            description: error?.message || "Failed to delete fee structure",
+            variant: "destructive",
+          });
+        }
+      },
+      {
+        variant: "destructive",
+        confirmText: "Delete",
+      }
+    );
   };
 
   return (
@@ -1984,6 +1993,18 @@ th{font-weight:600;}
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        {/* Confirm Dialog */}
+        <ConfirmDialog
+          open={dialog.open}
+          onOpenChange={(open) => !open && close()}
+          title={dialog.title}
+          description={dialog.description}
+          onConfirm={dialog.onConfirm}
+          confirmText={dialog.confirmText}
+          cancelText={dialog.cancelText}
+          variant={dialog.variant}
+        />
       </div>
     </UnifiedLayout>
   );

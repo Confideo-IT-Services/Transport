@@ -76,6 +76,7 @@ interface AttendanceRecord {
 
 export default function AttendanceModule() {
   const { user } = useAuth();
+  const { dialog, confirm, close } = useConfirmDialog();
   const isAdmin = user?.role === "admin";
   const [date, setDate] = useState<Date | undefined>(new Date());
   const [historyDate, setHistoryDate] = useState<Date | undefined>(undefined);
@@ -490,50 +491,52 @@ export default function AttendanceModule() {
 
     // Confirm before sending
     const monthName = attendanceStartDate.toLocaleString('default', { month: 'long' });
-    if (!confirm(`Are you sure you want to send attendance reports for ${monthName} ${year} to ALL parents?`)) {
-      return;
-    }
+    confirm(
+      "Send Attendance Reports",
+      `Are you sure you want to send attendance reports for ${monthName} ${year} to ALL parents?`,
+      async () => {
+        try {
+          setIsSendingAttendance(true);
+          
+          const result = await attendanceApi.sendToAll({
+            month,
+            year,
+            classId: selectedClassId
+          });
 
-    try {
-      setIsSendingAttendance(true);
-      
-      const result = await attendanceApi.sendToAll({
-        month,
-        year,
-        classId: selectedClassId
-      });
+          if (result.success) {
+            toast({
+              title: "Success",
+              description: `✅ ${result.results.successful} out of ${result.results.total} parents received the attendance report!`,
+            });
 
-      if (result.success) {
-        toast({
-          title: "Success",
-          description: `✅ ${result.results.successful} out of ${result.results.total} parents received the attendance report!`,
-        });
-
-        if (result.results.failed > 0) {
-          console.warn('Some messages failed:', result.results.errors);
+            if (result.results.failed > 0) {
+              console.warn('Some messages failed:', result.results.errors);
+              toast({
+                title: "Warning",
+                description: `⚠️ ${result.results.failed} messages failed. Check console for details.`,
+                variant: "destructive",
+              });
+            }
+          } else {
+            toast({
+              title: "Error",
+              description: "Failed to send attendance reports",
+              variant: "destructive",
+            });
+          }
+        } catch (error: any) {
+          console.error('Error sending attendance reports:', error);
           toast({
-            title: "Warning",
-            description: `⚠️ ${result.results.failed} messages failed. Check console for details.`,
+            title: "Error",
+            description: error?.message || "Failed to send WhatsApp messages",
             variant: "destructive",
           });
+        } finally {
+          setIsSendingAttendance(false);
         }
-      } else {
-        toast({
-          title: "Error",
-          description: "Failed to send attendance reports",
-          variant: "destructive",
-        });
       }
-    } catch (error: any) {
-      console.error('Error sending attendance reports:', error);
-      toast({
-        title: "Error",
-        description: error?.message || "Failed to send WhatsApp messages",
-        variant: "destructive",
-      });
-    } finally {
-      setIsSendingAttendance(false);
-    }
+    );
   };
 
   // Load students when class is selected
@@ -2175,7 +2178,19 @@ export default function AttendanceModule() {
             </Button>
           </DialogFooter>
         </DialogContent>
-      </Dialog>
+        </Dialog>
+
+        {/* Confirm Dialog */}
+        <ConfirmDialog
+          open={dialog.open}
+          onOpenChange={(open) => !open && close()}
+          title={dialog.title}
+          description={dialog.description}
+          onConfirm={dialog.onConfirm}
+          confirmText={dialog.confirmText}
+          cancelText={dialog.cancelText}
+          variant={dialog.variant}
+        />
     </UnifiedLayout>
   );
 }

@@ -385,15 +385,18 @@ CREATE TABLE IF NOT EXISTS tests (
     class_id VARCHAR(36) NOT NULL,
     teacher_id VARCHAR(36) NOT NULL,
     school_id VARCHAR(36) NOT NULL,
+    academic_year_id VARCHAR(36) NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_class_id (class_id),
     INDEX idx_teacher_id (teacher_id),
     INDEX idx_school_id (school_id),
     INDEX idx_test_date (test_date),
+    INDEX idx_tests_academic_year_id (academic_year_id),
     FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE,
     FOREIGN KEY (teacher_id) REFERENCES teachers(id) ON DELETE CASCADE,
-    FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE
+    FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE,
+    FOREIGN KEY (academic_year_id) REFERENCES academic_years(id) ON DELETE RESTRICT
 );
 
 -- ============ TEST SUBJECTS TABLE ============

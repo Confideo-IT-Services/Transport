@@ -1008,4 +1008,129 @@ router.put('/:id', authenticateToken, async (req, res) => {
   }
 });
 
+// Get student yearly academic percentage
+// WEIGHTING RULE: Uses "marks-weighted" aggregation
+// Formula: SUM(all marks obtained) / SUM(all max marks) × 100
+// This means tests with more marks contribute proportionally more
+// Example: Unit Test (20/20) + Midterm (80/100) + Final (150/200) = 250/320 = 78.125%
+router.get('/:id/yearly-percentage', authenticateToken, async (req, res) => {
+  try {
+    const { id: studentId } = req.params;
+    const { academicYearId } = req.query;
+
+    if (!academicYearId) {
+      return res.status(400).json({ 
+        error: 'academicYearId query parameter is required' 
+      });
+    }
+
+    // Verify student exists and user has access
+    const schoolId = req.user.schoolId;
+    
+    // For parents: verify they own this student
+    if (req.user.role === 'parent') {
+      const [students] = await db.query(
+        'SELECT id, parent_phone, parent_email FROM students WHERE id = ? AND school_id = ?',
+        [studentId, schoolId]
+      );
+      
+      if (students.length === 0) {
+        return res.status(404).json({ error: 'Student not found' });
+      }
+
+      const student = students[0];
+      // Verify parent owns this student
+      if (req.user.phone !== student.parent_phone && req.user.email !== student.parent_email) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+    } else {
+      // For admin/teacher: verify student belongs to their school
+      const [students] = await db.query(
+        'SELECT id FROM students WHERE id = ? AND school_id = ?',
+        [studentId, schoolId]
+      );
+      
+      if (students.length === 0) {
+        return res.status(404).json({ error: 'Student not found' });
+      }
+    }
+
+    // Verify academic year exists and belongs to school
+    const [academicYears] = await db.query(
+      'SELECT id, name FROM academic_years WHERE id = ? AND school_id = ?',
+      [academicYearId, schoolId]
+    );
+
+    if (academicYears.length === 0) {
+      return res.status(404).json({ error: 'Academic year not found' });
+    }
+
+    // Verify student was enrolled in this academic year
+    const [enrollments] = await db.query(
+      `SELECT se.id, se.class_id, c.name as class_name, c.section as class_section
+       FROM student_enrollments se
+       JOIN classes c ON se.class_id = c.id
+       WHERE se.student_id = ?
+         AND se.academic_year_id = ?
+         AND se.school_id = ?`,
+      [studentId, academicYearId, schoolId]
+    );
+
+    if (enrollments.length === 0) {
+      return res.status(404).json({ 
+        error: 'Student was not enrolled in this academic year',
+        studentId,
+        academicYearId
+      });
+    }
+
+    const enrollment = enrollments[0];
+
+    // Calculate yearly percentage with enrollment verification
+    // Only count tests from the academic year where student was enrolled
+    const [results] = await db.query(
+      `SELECT 
+        SUM(tr.marks_obtained) as total_marks,
+        SUM(tr.max_marks) as total_max_marks,
+        COUNT(DISTINCT tr.test_id) as test_count
+       FROM test_results tr
+       JOIN tests t ON tr.test_id = t.id
+       JOIN student_enrollments se ON se.student_id = tr.student_id
+         AND se.academic_year_id = t.academic_year_id
+         AND se.academic_year_id = ?
+       WHERE tr.student_id = ?
+         AND t.academic_year_id = ?`,
+      [academicYearId, studentId, academicYearId]
+    );
+
+    const result = results[0];
+    const totalMarks = parseFloat(result.total_marks) || 0;
+    const totalMaxMarks = parseFloat(result.total_max_marks) || 0;
+    const testCount = parseInt(result.test_count) || 0;
+
+    // Calculate percentage (handle division by zero)
+    let yearlyPercentage = 0;
+    if (totalMaxMarks > 0) {
+      yearlyPercentage = (totalMarks / totalMaxMarks) * 100;
+      yearlyPercentage = Math.round(yearlyPercentage * 100) / 100; // Round to 2 decimal places
+    }
+
+    res.json({
+      studentId,
+      academicYearId,
+      academicYearName: academicYears[0].name,
+      enrollmentClass: `${enrollment.class_name}${enrollment.class_section ? ` ${enrollment.class_section}` : ''}`,
+      totalMarks,
+      totalMaxMarks,
+      testCount,
+      yearlyPercentage,
+      hasResults: testCount > 0
+    });
+
+  } catch (error) {
+    console.error('Get yearly percentage error:', error);
+    res.status(500).json({ error: 'Failed to fetch yearly percentage' });
+  }
+});
+
 module.exports = router;

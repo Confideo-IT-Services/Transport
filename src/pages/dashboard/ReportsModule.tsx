@@ -61,6 +61,8 @@ import {
   FileText,
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
+import { useConfirmDialog } from "@/hooks/use-confirm-dialog";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { attendanceApi, homeworkApi, studentsApi, classesApi, testsApi, timetableApi } from "@/lib/api";
 
 // Interfaces
@@ -116,6 +118,7 @@ const defaultSubjects: Subject[] = [
 export default function ReportsModule() {
   const { user } = useAuth();
   const location = useLocation();
+  const { dialog, confirm, close } = useConfirmDialog();
   const isAdmin = user?.role === "admin";
   const lastPathnameRef = useRef<string>("");
   const [activeTab, setActiveTab] = useState(isAdmin ? "analytics" : "tests");
@@ -954,42 +957,44 @@ export default function ReportsModule() {
     }
 
     // Confirm before sending
-    if (!confirm(`Are you sure you want to send test details for "${test.name}" to ALL parents?`)) {
-      return;
-    }
+    confirm(
+      "Send Test Details",
+      `Are you sure you want to send test details for "${test.name}" to ALL parents?`,
+      async () => {
+        try {
+          const result = await testsApi.sendToAllParents(test.id);
 
-    try {
-      const result = await testsApi.sendToAllParents(test.id);
+          if (result.success) {
+            toast({
+              title: "Success",
+              description: `✅ ${result.results.successful} out of ${result.results.total} parents received the test details!`,
+            });
 
-      if (result.success) {
-        toast({
-          title: "Success",
-          description: `✅ ${result.results.successful} out of ${result.results.total} parents received the test details!`,
-        });
-
-        if (result.results.failed > 0) {
-          console.warn('Some messages failed:', result.results.errors);
+            if (result.results.failed > 0) {
+              console.warn('Some messages failed:', result.results.errors);
+              toast({
+                title: "Warning",
+                description: `⚠️ ${result.results.failed} messages failed. Check console for details.`,
+                variant: "destructive",
+              });
+            }
+          } else {
+            toast({
+              title: "Error",
+              description: "Failed to send test details",
+              variant: "destructive"
+            });
+          }
+        } catch (error: any) {
+          console.error('Error sending test details:', error);
           toast({
-            title: "Warning",
-            description: `⚠️ ${result.results.failed} messages failed. Check console for details.`,
-            variant: "destructive",
+            title: "Error",
+            description: error?.response?.data?.error || error?.message || "Failed to send WhatsApp messages",
+            variant: "destructive"
           });
         }
-      } else {
-        toast({
-          title: "Error",
-          description: "Failed to send test details",
-          variant: "destructive"
-        });
       }
-    } catch (error: any) {
-      console.error('Error sending test details:', error);
-      toast({
-        title: "Error",
-        description: error?.response?.data?.error || error?.message || "Failed to send WhatsApp messages",
-        variant: "destructive"
-      });
-    }
+    );
   };
 
   // Send test result to parent
@@ -1803,6 +1808,18 @@ export default function ReportsModule() {
             </div>
           </DialogContent>
         </Dialog>
+
+        {/* Confirm Dialog */}
+        <ConfirmDialog
+          open={dialog.open}
+          onOpenChange={(open) => !open && close()}
+          title={dialog.title}
+          description={dialog.description}
+          onConfirm={dialog.onConfirm}
+          confirmText={dialog.confirmText}
+          cancelText={dialog.cancelText}
+          variant={dialog.variant}
+        />
       </div>
     </UnifiedLayout>
   );

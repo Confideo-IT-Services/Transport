@@ -11,9 +11,11 @@ import { User, Download } from "lucide-react";
 import { format } from "date-fns";
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
+import { useToast } from "@/hooks/use-toast";
 
 export default function ParentDashboard() {
   const { user } = useAuth();
+  const { toast } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
   const [children, setChildren] = useState<any[]>([]);
@@ -438,7 +440,11 @@ function ChildDetails({
       pdf.save(fileName);
     } catch (error) {
       console.error('Failed to generate PDF:', error);
-      alert('Failed to download receipt. Please try again.');
+      toast({
+        title: "Error",
+        description: "Failed to download receipt. Please try again.",
+        variant: "destructive",
+      });
     }
   };
 

@@ -47,6 +47,8 @@ import {
 } from "lucide-react";
 import { format, addDays, startOfWeek, isWithinInterval, isSameDay } from "date-fns";
 import { toast } from "@/hooks/use-toast";
+import { useConfirmDialog } from "@/hooks/use-confirm-dialog";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 
 interface TimeSlot {
   id: string;
@@ -104,6 +106,7 @@ const initialHolidays: Holiday[] = [];
 const initialLeaves: TeacherLeave[] = [];
 
 export default function Timetable() {
+  const { dialog, confirm, close } = useConfirmDialog();
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
   const [selectedClass, setSelectedClass] = useState("");
@@ -684,56 +687,58 @@ export default function Timetable() {
       return;
     }
 
-    if (!confirm(`Generate WhatsApp links for all ${teachersList.length} teachers?\n\nA dialog will open with links for each teacher. Click each link to send their timetable.`)) {
-      return;
-    }
-
-    toast({ 
-      title: "Generating Messages", 
-      description: `Preparing timetables for ${teachersList.length} teachers...` 
-    });
-
-    // Generate all messages first
-    const teacherMessages: Array<{ teacher: { id: string; name: string; phone: string }, message: string, url: string }> = [];
-    
-    for (const teacher of teachersList) {
-      if (!teacher.phone) {
-        console.warn(`Skipping ${teacher.name} - no phone number`);
-        continue;
-      }
-      
-      try {
-        const message = await generateTeacherWeeklyMessage(teacher.name);
-        const encodedMessage = encodeURIComponent(message);
-        const whatsappUrl = `https://wa.me/91${teacher.phone.replace(/\D/g, '')}?text=${encodedMessage}`;
-        
-        teacherMessages.push({
-          teacher: {
-            id: teacher.id,
-            name: teacher.name,
-            phone: teacher.phone
-          },
-          message,
-          url: whatsappUrl
-        });
-      } catch (error) {
-        console.error(`Error generating message for ${teacher.name}:`, error);
+    confirm(
+      "Generate WhatsApp Links",
+      `Generate WhatsApp links for all ${teachersList.length} teachers?\n\nA dialog will open with links for each teacher. Click each link to send their timetable.`,
+      async () => {
         toast({ 
-          title: "Error", 
-          description: `Failed to generate timetable for ${teacher.name}`,
-          variant: "destructive"
+          title: "Generating Messages", 
+          description: `Preparing timetables for ${teachersList.length} teachers...` 
+        });
+
+        // Generate all messages first
+        const teacherMessages: Array<{ teacher: { id: string; name: string; phone: string }, message: string, url: string }> = [];
+        
+        for (const teacher of teachersList) {
+          if (!teacher.phone) {
+            console.warn(`Skipping ${teacher.name} - no phone number`);
+            continue;
+          }
+          
+          try {
+            const message = await generateTeacherWeeklyMessage(teacher.name);
+            const encodedMessage = encodeURIComponent(message);
+            const whatsappUrl = `https://wa.me/91${teacher.phone.replace(/\D/g, '')}?text=${encodedMessage}`;
+            
+            teacherMessages.push({
+              teacher: {
+                id: teacher.id,
+                name: teacher.name,
+                phone: teacher.phone
+              },
+              message,
+              url: whatsappUrl
+            });
+          } catch (error) {
+            console.error(`Error generating message for ${teacher.name}:`, error);
+            toast({ 
+              title: "Error", 
+              description: `Failed to generate timetable for ${teacher.name}`,
+              variant: "destructive"
+            });
+          }
+        }
+
+        // Store in state to show in dialog
+        setGeneratedTeacherLinks(teacherMessages);
+        setIsSendAllDialogOpen(true);
+        
+        toast({ 
+          title: "Ready", 
+          description: `Generated ${teacherMessages.length} timetable messages. Click each link to send.` 
         });
       }
-    }
-
-    // Store in state to show in dialog
-    setGeneratedTeacherLinks(teacherMessages);
-    setIsSendAllDialogOpen(true);
-    
-    toast({ 
-      title: "Ready", 
-      description: `Generated ${teacherMessages.length} timetable messages. Click each link to send.` 
-    });
+    );
   };
 
   if (isLoading) {
@@ -1071,25 +1076,33 @@ export default function Timetable() {
                           size="icon"
                           className="h-6 w-6"
                           onClick={async () => {
-                            if (confirm(`Delete subject "${subject.name}"?`)) {
-                              try {
-                                await timetableApi.deleteSubject(subject.id!);
-                                // Reload subjects
-                                const subjectsData = await timetableApi.getSubjects();
-                                if (subjectsData && subjectsData.length > 0) {
+                            confirm(
+                              "Delete Subject",
+                              `Delete subject "${subject.name}"?`,
+                              async () => {
+                                try {
+                                  await timetableApi.deleteSubject(subject.id!);
+                                  // Reload subjects
+                                  const subjectsData = await timetableApi.getSubjects();
+                                  if (subjectsData && subjectsData.length > 0) {
                                   setSubjectsList(subjectsData);
                                 } else {
                                   setSubjectsList(defaultSubjects);
                                 }
                                 toast({ title: "Subject Deleted" });
-                              } catch (error: any) {
-                                toast({ 
-                                  title: "Error", 
-                                  description: error?.message || "Failed to delete subject",
-                                  variant: "destructive"
-                                });
+                                } catch (error: any) {
+                                  toast({ 
+                                    title: "Error", 
+                                    description: error?.message || "Failed to delete subject",
+                                    variant: "destructive"
+                                  });
+                                }
+                              },
+                              {
+                                variant: "destructive",
+                                confirmText: "Delete",
                               }
-                            }
+                            );
                           }}
                         >
                           <Trash2 className="w-3 h-3" />
@@ -1841,6 +1854,18 @@ export default function Timetable() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Confirm Dialog */}
+      <ConfirmDialog
+        open={dialog.open}
+        onOpenChange={(open) => !open && close()}
+        title={dialog.title}
+        description={dialog.description}
+        onConfirm={dialog.onConfirm}
+        confirmText={dialog.confirmText}
+        cancelText={dialog.cancelText}
+        variant={dialog.variant}
+      />
     </UnifiedLayout>
   );
 }
