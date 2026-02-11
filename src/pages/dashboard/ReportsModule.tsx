@@ -167,6 +167,7 @@ export default function ReportsModule() {
   // Add Marks State
   const [studentSubjectMarks, setStudentSubjectMarks] = useState<{ [studentId: string]: { [subjectId: string]: number } }>({});
   const [testResults, setTestResults] = useState<any[]>([]);
+  const [hasMultipleClasses, setHasMultipleClasses] = useState(false);
 
   const getStudentById = (id: string | number) => students.find(s => s.id === id || String(s.id) === String(id));
 
@@ -186,9 +187,11 @@ export default function ReportsModule() {
               setSelectedClass(`${assignedClass.name}${assignedClass.section ? ` - Section ${assignedClass.section}` : ''}`);
               setSelectedClassId(assignedClass.id);
             }
+            setHasMultipleClasses(classesData.length > 1); // Track if multiple classes
           } else {
             // For admin: Don't auto-select a class, leave it empty to show all tests initially
             // selectedClassId and selectedClass remain empty
+            setHasMultipleClasses(classesData.length > 1);
           }
         }
       } catch (error) {
@@ -1051,26 +1054,29 @@ export default function ReportsModule() {
             <p className="text-muted-foreground mt-1">Manage student reports, exam results, and analytics</p>
           </div>
           <div className="flex items-center gap-3">
-            <Select value={selectedClassId || ""} onValueChange={(value) => {
-              setSelectedClassId(value);
-              const cls = classes.find(c => c.id === value);
-              if (cls) {
-                setSelectedClass(`${cls.name}${cls.section ? ` - Section ${cls.section}` : ''}`);
-              } else {
-                setSelectedClass("");
-              }
-            }}>
-              <SelectTrigger className="w-48">
-                <SelectValue placeholder={isAdmin ? "All Classes" : "Select class"} />
-              </SelectTrigger>
-              <SelectContent>
-                {classes.map((cls) => (
-                  <SelectItem key={cls.id} value={cls.id}>
-                    {cls.name}{cls.section ? ` - Section ${cls.section}` : ''}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {/* Only show class selector for admin OR teacher with multiple classes */}
+            {(isAdmin || (!isAdmin && hasMultipleClasses)) && (
+              <Select value={selectedClassId || ""} onValueChange={(value) => {
+                setSelectedClassId(value);
+                const cls = classes.find(c => c.id === value);
+                if (cls) {
+                  setSelectedClass(`${cls.name}${cls.section ? ` - Section ${cls.section}` : ''}`);
+                } else {
+                  setSelectedClass("");
+                }
+              }}>
+                <SelectTrigger className="w-48">
+                  <SelectValue placeholder={isAdmin ? "All Classes" : "Select class"} />
+                </SelectTrigger>
+                <SelectContent>
+                  {classes.map((cls) => (
+                    <SelectItem key={cls.id} value={cls.id}>
+                      {cls.name}{cls.section ? ` - Section ${cls.section}` : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
           </div>
         </div>
 

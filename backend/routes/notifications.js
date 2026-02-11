@@ -157,28 +157,51 @@ router.post('/', authenticateToken, requireTeacher, async (req, res) => {
       priority,
       attachmentUrl,
       attachmentName,
-      attachmentType
+      attachmentType,
+      eventDate,
+      scheduledAt,
+      whatsappEnabled
     } = req.body;
 
+    // Validation: Required fields
     if (!title || !message || !targetType) {
       return res.status(400).json({ error: 'Title, message, and target type are required' });
+    }
+
+    // Validation: If targetType is selected_classes, targetClasses must not be empty
+    if (targetType === 'selected_classes') {
+      if (!targetClasses || !Array.isArray(targetClasses) || targetClasses.length === 0) {
+        return res.status(400).json({ error: 'Target classes required for selected_classes' });
+      }
+    }
+
+    // Validation: If scheduledAt exists, must not be in the past
+    if (scheduledAt) {
+      const scheduledDate = new Date(scheduledAt);
+      const now = new Date();
+      if (scheduledDate < now) {
+        return res.status(400).json({ error: 'Scheduled time cannot be in the past' });
+      }
     }
 
     const notificationId = uuidv4();
     const schoolId = req.user.schoolId;
     const senderId = req.user.id;
     const senderRole = req.user.role;
+    const createdBy = req.user.role === 'admin' ? req.user.id : null; // Only admins can create notifications
 
     // Start transaction
     await db.query('START TRANSACTION');
 
     try {
-      // Create notification
+      // Create notification with new fields
+      // Note: If columns don't exist yet, they will be NULL (backward compatible)
       await db.query(
         `INSERT INTO notifications 
          (id, school_id, sender_id, sender_role, title, message, target_type, 
-          target_classes, target_students, priority, attachment_url, attachment_name, attachment_type, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'sent')`,
+          target_classes, target_students, priority, attachment_url, attachment_name, attachment_type, 
+          event_date, scheduled_at, whatsapp_enabled, created_by, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'sent')`,
         [
           notificationId,
           schoolId,
@@ -187,95 +210,129 @@ router.post('/', authenticateToken, requireTeacher, async (req, res) => {
           title,
           message,
           targetType,
-          targetClasses ? JSON.stringify(targetClasses) : null,
+          targetClasses ? JSON.stringify(targetClasses) : null, // Keep JSON for backward compatibility
           targetStudents ? JSON.stringify(targetStudents) : null,
           priority || 'normal',
           attachmentUrl || null,
           attachmentName || null,
-          attachmentType || null
+          attachmentType || null,
+          eventDate || null,
+          scheduledAt || null,
+          whatsappEnabled === true ? 1 : 0, // Convert boolean to MySQL TINYINT
+          createdBy
         ]
       );
 
-      // Determine recipients based on target type
+      // If targetType is selected_classes, insert into notification_classes mapping table
+      // Note: This will fail silently if table doesn't exist yet (backward compatible)
+      if (targetType === 'selected_classes' && targetClasses && targetClasses.length > 0) {
+        try {
+          for (const classId of targetClasses) {
+            await db.query(
+              `INSERT INTO notification_classes (id, notification_id, class_id)
+               VALUES (?, ?, ?)
+               ON DUPLICATE KEY UPDATE id = id`, // Prevent duplicates
+              [uuidv4(), notificationId, classId]
+            );
+          }
+        } catch (mappingError) {
+          // If notification_classes table doesn't exist yet, log but don't fail
+          console.warn('notification_classes table not found, skipping relational mapping:', mappingError.message);
+        }
+      }
+
+      // Determine recipients based on target type (only if scheduledAt is NULL - immediate send)
       let recipients = [];
+      
+      // Only process recipients if scheduledAt is NULL (immediate notification)
+      if (!scheduledAt) {
+        if (targetType === 'all_teachers') {
+          const [teachers] = await db.query(
+            'SELECT id FROM teachers WHERE school_id = ?',
+            [schoolId]
+          );
+          recipients = teachers.map(t => ({
+            recipientType: 'teacher',
+            recipientId: t.id,
+            studentId: null
+          }));
+        } else if (targetType === 'all_classes' || targetType === 'all_parents') {
+          // Get all students (for their parents)
+          let studentsQuery = 'SELECT id FROM students WHERE school_id = ? AND status = "approved"';
+          const studentsParams = [schoolId];
 
-      if (targetType === 'all_teachers') {
-        const [teachers] = await db.query(
-          'SELECT id FROM teachers WHERE school_id = ?',
-          [schoolId]
-        );
-        recipients = teachers.map(t => ({
-          recipientType: 'teacher',
-          recipientId: t.id,
-          studentId: null
-        }));
-      } else if (targetType === 'all_classes' || targetType === 'all_parents') {
-        // Get all students (for their parents)
-        let studentsQuery = 'SELECT id FROM students WHERE school_id = ? AND status = "approved"';
-        const studentsParams = [schoolId];
+          if (targetClasses && targetClasses.length > 0) {
+            studentsQuery += ' AND class_id IN (?)';
+            studentsParams.push(targetClasses);
+          }
 
-        if (targetClasses && targetClasses.length > 0) {
-          studentsQuery += ' AND class_id IN (?)';
-          studentsParams.push(targetClasses);
+          const [students] = await db.query(studentsQuery, studentsParams);
+          recipients = students.map(s => ({
+            recipientType: 'parent',
+            recipientId: s.id, // parent_id is stored as student_id for parents
+            studentId: s.id
+          }));
+        } else if (targetType === 'selected_classes') {
+          const [students] = await db.query(
+            'SELECT id FROM students WHERE class_id IN (?) AND status = "approved"',
+            [targetClasses]
+          );
+          recipients = students.map(s => ({
+            recipientType: 'parent',
+            recipientId: s.id,
+            studentId: s.id
+          }));
+        } else if (targetType === 'specific_students') {
+          if (!targetStudents || targetStudents.length === 0) {
+            throw new Error('Target students required for specific_students');
+          }
+          recipients = targetStudents.map(studentId => ({
+            recipientType: 'parent',
+            recipientId: studentId,
+            studentId: studentId
+          }));
         }
 
-        const [students] = await db.query(studentsQuery, studentsParams);
-        recipients = students.map(s => ({
-          recipientType: 'parent',
-          recipientId: s.id, // parent_id is stored as student_id for parents
-          studentId: s.id
-        }));
-      } else if (targetType === 'selected_classes') {
-        if (!targetClasses || targetClasses.length === 0) {
-          throw new Error('Target classes required for selected_classes');
+        // Create recipient records
+        for (const recipient of recipients) {
+          await db.query(
+            `INSERT INTO notification_recipients 
+             (id, notification_id, recipient_type, recipient_id, student_id)
+             VALUES (?, ?, ?, ?, ?)`,
+            [
+              uuidv4(),
+              notificationId,
+              recipient.recipientType,
+              recipient.recipientId,
+              recipient.studentId
+            ]
+          );
         }
-        const [students] = await db.query(
-          'SELECT id FROM students WHERE class_id IN (?) AND status = "approved"',
-          [targetClasses]
-        );
-        recipients = students.map(s => ({
-          recipientType: 'parent',
-          recipientId: s.id,
-          studentId: s.id
-        }));
-      } else if (targetType === 'specific_students') {
-        if (!targetStudents || targetStudents.length === 0) {
-          throw new Error('Target students required for specific_students');
-        }
-        recipients = targetStudents.map(studentId => ({
-          recipientType: 'parent',
-          recipientId: studentId,
-          studentId: studentId
-        }));
-      }
 
-      // Create recipient records
-      for (const recipient of recipients) {
+        // Update sent count
         await db.query(
-          `INSERT INTO notification_recipients 
-           (id, notification_id, recipient_type, recipient_id, student_id)
-           VALUES (?, ?, ?, ?, ?)`,
-          [
-            uuidv4(),
-            notificationId,
-            recipient.recipientType,
-            recipient.recipientId,
-            recipient.studentId
-          ]
+          'UPDATE notifications SET sent_count = ? WHERE id = ?',
+          [recipients.length, notificationId]
         );
+      } else {
+        // Scheduled notification - set status to 'sent' but recipients will be created when scheduled time arrives
+        // (This will be handled by a future scheduler service)
+        // For now, we keep status as 'sent' but don't create recipients yet
       }
 
-      // Update sent count
-      await db.query(
-        'UPDATE notifications SET sent_count = ? WHERE id = ?',
-        [recipients.length, notificationId]
-      );
+      // Future WhatsApp integration (commented out for now)
+      // if (whatsappEnabled) {
+      //   // TODO: Call WhatsApp service here
+      //   // await whatsappService.sendNotification(notificationId, recipients);
+      // }
 
       await db.query('COMMIT');
 
       res.status(201).json({
         success: true,
-        message: `Notification sent to ${recipients.length} recipients`,
+        message: scheduledAt 
+          ? `Notification scheduled for ${new Date(scheduledAt).toLocaleString()}` 
+          : `Notification sent to ${recipients.length} recipients`,
         notificationId
       });
     } catch (error) {

@@ -91,10 +91,37 @@ async function seedCittaAISchool() {
     
     console.log('🌱 Starting CittaAI school seed...\n');
     
-    // 1. Create School
-    const schoolId = uuidv4();
     const schoolCode = 'CITTA001';
     const hashedPassword = await bcrypt.hash('password', 10);
+    
+    // Check if CittaAI school already exists
+    const [existingSchools] = await connection.query(
+      'SELECT id FROM schools WHERE code = ?',
+      [schoolCode]
+    );
+    
+    if (existingSchools.length > 0) {
+      const oldSchoolId = existingSchools[0].id;
+      console.log('⚠️  CittaAI school already exists. Cleaning up existing data...');
+      
+      // Delete all related data (CASCADE will handle most, but we need to delete users manually)
+      // Delete admin user first (users table has ON DELETE SET NULL, so we delete manually)
+      await connection.query(
+        'DELETE FROM users WHERE school_id = ? AND role = ?',
+        [oldSchoolId, 'admin']
+      );
+      
+      // Delete the school (CASCADE will delete: academic_years, subjects, teachers, classes, students, etc.)
+      await connection.query(
+        'DELETE FROM schools WHERE id = ?',
+        [oldSchoolId]
+      );
+      
+      console.log('✅ Cleaned up existing CittaAI school data');
+    }
+    
+    // 1. Create School
+    const schoolId = uuidv4();
     
     await connection.query(
       `INSERT INTO schools (id, name, code, type, location, address, phone, email, status, logo_url, created_at)
@@ -194,7 +221,7 @@ async function seedCittaAISchool() {
       const classInfo = classes[i];
       const teacherId = uuidv4();
       const teacherName = generateTeacherName();
-      const username = `teacher_${classInfo.classNum}${classInfo.section.toLowerCase()}`;
+      const username = `cittaai_teacher_${classInfo.classNum}${classInfo.section.toLowerCase()}`;
       const subjects = teacherSubjects[i % teacherSubjects.length];
       
       await connection.query(
@@ -226,7 +253,7 @@ async function seedCittaAISchool() {
     for (let i = 20; i < 30; i++) {
       const teacherId = uuidv4();
       const teacherName = generateTeacherName();
-      const username = `teacher_subj_${i - 19}`;
+      const username = `cittaai_teacher_subj_${i - 19}`;
       const subjects = teacherSubjects[i % teacherSubjects.length];
       
       await connection.query(
@@ -434,10 +461,10 @@ async function seedCittaAISchool() {
     console.log('   Email: admin@cittaai.edu');
     console.log('   Password: password\n');
     console.log('👨‍🏫 CLASS TEACHERS (20 teachers - one per class):');
-    console.log('   Username: teacher_1a, teacher_1b, teacher_2a, teacher_2b, ... teacher_10a, teacher_10b');
+    console.log('   Username: cittaai_teacher_1a, cittaai_teacher_1b, cittaai_teacher_2a, cittaai_teacher_2b, ... cittaai_teacher_10a, cittaai_teacher_10b');
     console.log('   Password: password\n');
     console.log('👨‍🏫 SUBJECT TEACHERS (10 teachers - no class assignment):');
-    console.log('   Username: teacher_subj_1, teacher_subj_2, teacher_subj_3, ... teacher_subj_10');
+    console.log('   Username: cittaai_teacher_subj_1, cittaai_teacher_subj_2, cittaai_teacher_subj_3, ... cittaai_teacher_subj_10');
     console.log('   Password: password\n');
     console.log('═══════════════════════════════════════════════════════════════');
     console.log('📊 DATA SUMMARY');

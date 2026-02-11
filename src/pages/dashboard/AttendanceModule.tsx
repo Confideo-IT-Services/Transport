@@ -57,6 +57,8 @@ import {
 import { cn } from "@/lib/utils";
 import { format, isSameDay, startOfMonth } from "date-fns";
 import { toast } from "@/hooks/use-toast";
+import { useConfirmDialog } from "@/hooks/use-confirm-dialog";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 
 interface Student {
   id: number;
@@ -83,6 +85,7 @@ export default function AttendanceModule() {
   const [selectedClass, setSelectedClass] = useState("");
   const [selectedClassId, setSelectedClassId] = useState("");
   const [classes, setClasses] = useState<any[]>([]);
+  const [hasMultipleClasses, setHasMultipleClasses] = useState(false);
   const [studentAttendance, setStudentAttendance] = useState<Student[]>([]);
   const [isSelfCheckedIn, setIsSelfCheckedIn] = useState(false);
   const [checkInTime, setCheckInTime] = useState<string | null>(null);
@@ -209,6 +212,7 @@ export default function AttendanceModule() {
           setClasses(classesData);
           setSelectedClass(`${assignedClass.name}${assignedClass.section ? ` - Section ${assignedClass.section}` : ''}`);
           setSelectedClassId(assignedClass.id);
+          setHasMultipleClasses(classesData.length > 1); // Track if multiple classes
         } else {
           // Try fallback: check user.className
           if (user?.className) {
@@ -1127,7 +1131,8 @@ export default function AttendanceModule() {
                       {isAdmin ? "Class Attendance" : "My Class Attendance"} - {format(today, "dd/MM/yyyy")}
                     </CardTitle>
                     <div className="flex items-center gap-2">
-                      {isAdmin && (
+                      {/* Only show class selector for admin OR teacher with multiple classes */}
+                      {(isAdmin || (!isAdmin && hasMultipleClasses)) && (
                         <Select 
                           value={selectedClassId} 
                           onValueChange={(value) => {
@@ -1705,8 +1710,8 @@ export default function AttendanceModule() {
 
           {/* History */}
           <TabsContent value="history" className="space-y-4">
-            {/* Class Selector for Admin */}
-            {isAdmin && (
+            {/* Class Selector - Only show if admin OR teacher with multiple classes */}
+            {(isAdmin || (!isAdmin && hasMultipleClasses)) && (
               <Card>
                 <CardContent className="pt-6">
                   <div className="flex items-center gap-4">

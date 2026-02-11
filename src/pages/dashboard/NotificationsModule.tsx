@@ -36,6 +36,7 @@ import {
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { notificationsApi, classesApi, uploadApi, Notification, SentNotification, NotificationTemplate } from "@/lib/api";
+import { Checkbox } from "@/components/ui/checkbox";
 
 export default function NotificationsModule() {
   const { user } = useAuth();
@@ -67,6 +68,9 @@ export default function NotificationsModule() {
   const [viewingAttachment, setViewingAttachment] = useState(false);
   const [selectedSentNotification, setSelectedSentNotification] = useState<SentNotification | null>(null);
   const [viewingSentAttachment, setViewingSentAttachment] = useState(false);
+  const [eventDate, setEventDate] = useState("");
+  const [scheduledAt, setScheduledAt] = useState("");
+  const [whatsappEnabled, setWhatsappEnabled] = useState(false);
 
   // Fetch data on mount
   useEffect(() => {
@@ -212,6 +216,9 @@ export default function NotificationsModule() {
         attachmentUrl: attachmentUrl || undefined,
         attachmentName: attachmentInfo?.name || undefined,
         attachmentType: attachmentInfo?.type || undefined,
+        eventDate: eventDate || undefined,
+        scheduledAt: scheduledAt || undefined,
+        whatsappEnabled: whatsappEnabled,
       });
 
       toast({
@@ -228,6 +235,9 @@ export default function NotificationsModule() {
       setSelectedFile(null);
       setAttachmentUrl(null);
       setAttachmentInfo(null);
+      setEventDate("");
+      setScheduledAt("");
+      setWhatsappEnabled(false);
       
       // Refresh data
       await fetchData();
@@ -436,6 +446,47 @@ export default function NotificationsModule() {
                   </Select>
                 </div>
               )}
+
+              {/* Event Date Field */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Event Date (Optional)</label>
+                <Input
+                  type="date"
+                  value={eventDate}
+                  onChange={(e) => setEventDate(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  This is the actual event date (for future reminders)
+                </p>
+              </div>
+
+              {/* Scheduled At Field */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Schedule Sending (Optional)</label>
+                <Input
+                  type="datetime-local"
+                  value={scheduledAt}
+                  onChange={(e) => setScheduledAt(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  If empty, notification will be sent immediately
+                </p>
+              </div>
+
+              {/* WhatsApp Option */}
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id="whatsapp-enabled"
+                  checked={whatsappEnabled}
+                  onCheckedChange={(checked) => setWhatsappEnabled(checked === true)}
+                />
+                <label
+                  htmlFor="whatsapp-enabled"
+                  className="text-sm text-muted-foreground cursor-pointer"
+                >
+                  Also send via WhatsApp (Coming Soon)
+                </label>
+              </div>
 
               <Button 
                 className="w-full" 

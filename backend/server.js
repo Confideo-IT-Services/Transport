@@ -17,6 +17,13 @@ app.use(cors({
 }));
 app.use(express.json());
 
+// Security Note: 
+// - All routes use authenticateToken middleware which ensures school_id is in req.user
+// - Consider using SecureQueryBuilder (backend/utils/query-builder.js) for new routes
+// - Audit logging available via backend/utils/audit-logger.js
+// - Run security audits: node backend/scripts/audit-data-isolation.js
+// - See backend/SECURITY_GUIDE.md for details
+
 // Import routes
 const authRoutes = require('./routes/auth');
 const schoolsRoutes = require('./routes/schools');

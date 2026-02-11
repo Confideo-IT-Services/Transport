@@ -49,6 +49,7 @@ export default function UnifiedDashboard() {
   const [activityFilterDate, setActivityFilterDate] = useState<string>(""); // Date filter for activities
   const [activityFilterClass, setActivityFilterClass] = useState<string>("all"); // Class filter for activities
   const [activityFilterSection, setActivityFilterSection] = useState<string>("all"); // Section filter for activities
+  const [openDropdown, setOpenDropdown] = useState<string | null>(null); // Track which dropdown is open
   
   useEffect(() => {
     const loadData = async () => {
@@ -519,6 +520,15 @@ export default function UnifiedDashboard() {
                     onValueChange={(value) => {
                       setActivityFilterClass(value);
                       setActivityFilterSection("all"); // Reset section when class changes
+                      setOpenDropdown(null); // Close after selection
+                    }}
+                    open={openDropdown === "class"}
+                    onOpenChange={(open) => {
+                      if (open) {
+                        setOpenDropdown("class"); // Open this dropdown, close others
+                      } else {
+                        setOpenDropdown(null); // Close this dropdown
+                      }
                     }}
                   >
                     <SelectTrigger id="activity-class-filter" className="w-32">
@@ -543,7 +553,18 @@ export default function UnifiedDashboard() {
                     </Label>
                     <Select
                       value={activityFilterSection}
-                      onValueChange={setActivityFilterSection}
+                      onValueChange={(value) => {
+                        setActivityFilterSection(value);
+                        setOpenDropdown(null); // Close after selection
+                      }}
+                      open={openDropdown === "section"}
+                      onOpenChange={(open) => {
+                        if (open) {
+                          setOpenDropdown("section"); // Open this dropdown, close others
+                        } else {
+                          setOpenDropdown(null); // Close this dropdown
+                        }
+                      }}
                     >
                       <SelectTrigger id="activity-section-filter" className="w-28">
                         <SelectValue placeholder="All" />

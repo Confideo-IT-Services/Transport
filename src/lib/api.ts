@@ -490,9 +490,49 @@ export const studentsApi = {
     });
   },
 
-  approve: async (id: string | number): Promise<{ success: boolean; admissionNumber?: string }> => {
+  quickEntry: async (students: Array<{
+    name: string;
+    parentPhone: string;
+    parentName?: string;
+    dateOfBirth?: string;
+    gender?: 'male' | 'female' | 'other';
+  }>): Promise<{ 
+    success: boolean; 
+    created: number; 
+    failed: number; 
+    students: Array<{ id: string; name: string; tempAdmissionNumber: string }>;
+    errors?: Array<{ index: number; name: string; error: string }>;
+  }> => {
+    return apiRequest('/students/quick-entry', {
+      method: 'POST',
+      body: JSON.stringify({ students }),
+    });
+  },
+
+  approve: async (
+    id: string | number, 
+    data?: { classId?: string; rollNo?: string | number }
+  ): Promise<{ success: boolean; admissionNumber?: string; message?: string }> => {
     return apiRequest(`/students/${id}/approve`, {
       method: 'POST',
+      body: data ? JSON.stringify(data) : undefined,
+    });
+  },
+
+  bulkApprove: async (approvals: Array<{
+    studentId: string;
+    classId: string;
+    rollNo?: string | number;
+  }>): Promise<{
+    success: boolean;
+    approved: number;
+    failed: number;
+    results: Array<{ studentId: string; success: boolean; admissionNumber: string }>;
+    errors?: Array<{ studentId: string; error: string }>;
+  }> => {
+    return apiRequest('/students/bulk-approve', {
+      method: 'POST',
+      body: JSON.stringify({ approvals }),
     });
   },
 
@@ -1460,6 +1500,9 @@ export const notificationsApi = {
     attachmentUrl?: string;
     attachmentName?: string;
     attachmentType?: string;
+    eventDate?: string;
+    scheduledAt?: string;
+    whatsappEnabled?: boolean;
   }): Promise<{ success: boolean; message: string; notificationId: string }> => {
     return apiRequest('/notifications', {
       method: 'POST',

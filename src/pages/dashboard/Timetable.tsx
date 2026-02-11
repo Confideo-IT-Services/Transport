@@ -112,6 +112,7 @@ export default function Timetable() {
   const [selectedClass, setSelectedClass] = useState("");
   const [selectedClassId, setSelectedClassId] = useState("");
   const [classes, setClasses] = useState<any[]>([]);
+  const [hasMultipleClasses, setHasMultipleClasses] = useState(false);
   const [timeSlots, setTimeSlots] = useState<TimeSlot[]>(initialTimeSlots);
   const [timetableData, setTimetableData] = useState<TimetableEntry[]>(initialTimetableData);
   const [holidays, setHolidays] = useState<Holiday[]>(initialHolidays);
@@ -230,6 +231,7 @@ export default function Timetable() {
               setSelectedClass(`${teacherClass.name}${teacherClass.section ? `-${teacherClass.section}` : ''}`);
               setSelectedClassId(teacherClass.id);
               setClasses(classesData); // Store for reference
+              setHasMultipleClasses(classesData.length > 1); // Track if multiple classes
             }
           } catch (error) {
             console.error('Error loading teacher class:', error);
@@ -768,30 +770,32 @@ export default function Timetable() {
             </p>
           </div>
           <div className="flex items-center gap-3 flex-wrap">
-            {isAdmin ? (
-              <>
-                <Select value={selectedClass} onValueChange={(value) => {
-                  setSelectedClass(value);
-                  const classData = classes.find(c => `${c.name}${c.section ? `-${c.section}` : ''}` === value);
-                  setSelectedClassId(classData?.id || "");
-                }}>
-                  <SelectTrigger className="w-32">
-                    <SelectValue placeholder="Select class" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-card">
-                    {classes.map((cls) => (
-                      <SelectItem key={cls.id} value={`${cls.name}${cls.section ? `-${cls.section}` : ''}`}>
-                        {cls.name}{cls.section ? ` - Section ${cls.section}` : ''}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button variant="outline" onClick={sendToAllTeachers}>
-                  <MessageCircle className="w-4 h-4 mr-2" />
-                  Send to All
-                </Button>
-              </>
-            ) : (
+            {/* Class Selector - Only show if admin OR teacher with multiple classes */}
+            {(isAdmin || (!isAdmin && hasMultipleClasses)) && (
+              <Select value={selectedClass} onValueChange={(value) => {
+                setSelectedClass(value);
+                const classData = classes.find(c => `${c.name}${c.section ? `-${c.section}` : ''}` === value);
+                setSelectedClassId(classData?.id || "");
+              }}>
+                <SelectTrigger className="w-32">
+                  <SelectValue placeholder="Select class" />
+                </SelectTrigger>
+                <SelectContent className="bg-card">
+                  {classes.map((cls) => (
+                    <SelectItem key={cls.id} value={`${cls.name}${cls.section ? `-${cls.section}` : ''}`}>
+                      {cls.name}{cls.section ? ` - Section ${cls.section}` : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            {isAdmin && (
+              <Button variant="outline" onClick={sendToAllTeachers}>
+                <MessageCircle className="w-4 h-4 mr-2" />
+                Send to All
+              </Button>
+            )}
+            {!isAdmin && !hasMultipleClasses && (
               <Badge variant="secondary" className="text-xs">
                 <Eye className="w-3 h-3 mr-1" />
                 View Only

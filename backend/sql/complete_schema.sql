@@ -544,6 +544,10 @@ CREATE TABLE IF NOT EXISTS notifications (
     priority ENUM('normal', 'urgent') DEFAULT 'normal',
     status ENUM('draft', 'sent', 'failed') DEFAULT 'sent',
     sent_count INT DEFAULT 0 COMMENT 'Number of recipients who received the notification',
+    event_date DATE NULL COMMENT 'Event date for future reminders',
+    scheduled_at DATETIME NULL COMMENT 'Scheduled sending time',
+    whatsapp_enabled BOOLEAN DEFAULT FALSE COMMENT 'Flag for WhatsApp integration',
+    created_by VARCHAR(36) NULL COMMENT 'Admin user who created the notification',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_school_id (school_id),
@@ -551,8 +555,45 @@ CREATE TABLE IF NOT EXISTS notifications (
     INDEX idx_target_type (target_type),
     INDEX idx_created_at (created_at),
     FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE,
-    FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE
+    FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
 );
+
+-- ============ NOTIFICATION CLASSES MAPPING TABLE ============
+CREATE TABLE IF NOT EXISTS notification_classes (
+    id VARCHAR(36) PRIMARY KEY,
+    notification_id VARCHAR(36) NOT NULL,
+    class_id VARCHAR(36) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_notification_id (notification_id),
+    INDEX idx_class_id (class_id),
+    FOREIGN KEY (notification_id) REFERENCES notifications(id) ON DELETE CASCADE,
+    FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE,
+    UNIQUE KEY unique_notification_class (notification_id, class_id)
+);
+
+-- ============ AUDIT LOGS TABLE ============
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id VARCHAR(36) PRIMARY KEY,
+    school_id VARCHAR(36) NOT NULL,
+    user_id VARCHAR(36) NULL,
+    action ENUM('SELECT', 'INSERT', 'UPDATE', 'DELETE') NOT NULL,
+    table_name VARCHAR(100) NOT NULL,
+    record_id VARCHAR(36) NULL,
+    old_values JSON NULL COMMENT 'Previous values before update/delete',
+    new_values JSON NULL COMMENT 'New values after insert/update',
+    ip_address VARCHAR(45) NULL COMMENT 'IPv4 or IPv6 address',
+    user_agent TEXT NULL COMMENT 'Browser/client user agent',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_school_id (school_id),
+    INDEX idx_user_id (user_id),
+    INDEX idx_action (action),
+    INDEX idx_table_name (table_name),
+    INDEX idx_created_at (created_at),
+    INDEX idx_school_action (school_id, action),
+    FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============ NOTIFICATION RECIPIENTS TABLE ============
 CREATE TABLE IF NOT EXISTS notification_recipients (

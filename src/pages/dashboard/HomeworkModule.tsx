@@ -132,6 +132,7 @@ export default function HomeworkModule() {
   const [isCompletionDialogOpen, setIsCompletionDialogOpen] = useState(false);
   const [classes, setClasses] = useState<any[]>([]);
   const [selectedClassId, setSelectedClassId] = useState("");
+  const [hasMultipleClasses, setHasMultipleClasses] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [studentsInClass, setStudentsInClass] = useState<Student[]>([]);
   const [classStudentsMap, setClassStudentsMap] = useState<Record<string, Student[]>>({});
@@ -159,6 +160,9 @@ export default function HomeworkModule() {
         // Auto-select first class for teachers
         if (!isAdmin && classesData && classesData.length > 0) {
           setSelectedClassId(classesData[0].id);
+          setHasMultipleClasses(classesData.length > 1); // Track if multiple classes
+        } else if (isAdmin) {
+          setHasMultipleClasses(classesData && classesData.length > 1);
         }
         
         // Load homework
@@ -863,8 +867,8 @@ export default function HomeworkModule() {
                 </div>
               )}
 
-              {/* Class Selection (for admins) */}
-              {isAdmin && (
+              {/* Class Selection - Only show if admin OR teacher has multiple classes */}
+              {(isAdmin || (!isAdmin && hasMultipleClasses)) && (
                 <div className="space-y-2 mb-6">
                   <Label>Select Class *</Label>
                   <Select value={selectedClassId} onValueChange={setSelectedClassId}>
