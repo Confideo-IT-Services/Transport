@@ -14,7 +14,7 @@ import {
   Bell
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
-import { classesApi, studentsApi, teachersApi, homeworkApi, attendanceApi, testsApi } from "@/lib/api";
+import { classesApi, studentsApi, teachersApi, homeworkApi, attendanceApi, testsApi, timetableApi } from "@/lib/api";
 import { format, isSameDay, parseISO } from "date-fns";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -41,6 +41,11 @@ export default function UnifiedDashboard() {
   const [teacherStudents, setTeacherStudents] = useState<any[]>([]);
   const [todayAttendance, setTodayAttendance] = useState<any>(null);
   const [homeworkCount, setHomeworkCount] = useState(0);
+  const [todaySchedule, setTodaySchedule] = useState<any[]>([]);
+  const [timeSlots, setTimeSlots] = useState<any[]>([]);
+  const [holidays, setHolidays] = useState<any[]>([]);
+  const [isTodayHoliday, setIsTodayHoliday] = useState(false);
+  const [holidayName, setHolidayName] = useState<string | null>(null);
   
   // Admin-specific state for attendance overview
   const [attendanceData, setAttendanceData] = useState<{ name: string; value: number; color: string }[]>([]);
@@ -267,6 +272,80 @@ export default function UnifiedDashboard() {
               // Load homework count
               const homeworkData = await homeworkApi.getAll();
               setHomeworkCount(homeworkData?.length || 0);
+
+              // Load time slots and today's schedule
+              try {
+                const today = new Date();
+                const todayDayName = getTodayDayName();
+                
+                // Load holidays first
+                const holidaysData = await timetableApi.getHolidays();
+                setHolidays(holidaysData || []);
+                
+                // Check if today is a holiday
+                const todayIsHoliday = holidaysData.some((h: any) => {
+                  const holidayDate = new Date(h.date);
+                  return isSameDay(holidayDate, today);
+                });
+                const todayHolidayName = holidaysData.find((h: any) => {
+                  const holidayDate = new Date(h.date);
+                  return isSameDay(holidayDate, today);
+                })?.name || null;
+                
+                setIsTodayHoliday(todayIsHoliday);
+                setHolidayName(todayHolidayName);
+                
+                // If today is a holiday, don't load schedule
+                if (todayIsHoliday) {
+                  setTodaySchedule([]);
+                  setTimeSlots([]);
+                  return;
+                }
+                
+                // Load schedule only if not a holiday
+                const [slotsData, timetableData] = await Promise.all([
+                  timetableApi.getTimeSlots(),
+                  timetableApi.getTimetableByClass(assignedClass.id)
+                ]);
+                
+                setTimeSlots(slotsData || []);
+                
+                // Filter entries for today and this teacher
+                const todayEntries = (timetableData || []).filter((entry: any) => {
+                  const matchesDay = entry.day === todayDayName;
+                  const matchesTeacher = entry.teacherName === user?.name || entry.teacherName === user?.username;
+                  return matchesDay && matchesTeacher;
+                });
+
+                // Sort by time slot and format for display
+                const scheduleData = todayEntries
+                  .map((entry: any) => {
+                    const slot = (slotsData || []).find((s: any) => s.id === entry.slotId);
+                    if (!slot) return null;
+                    
+                    return {
+                      period: `Period ${slot.displayOrder || 'N/A'}`,
+                      time: `${slot.startTime} - ${slot.endTime}`,
+                      subject: entry.subjectName || entry.subjectCode,
+                      class: assignedClass.name + (assignedClass.section ? ` ${assignedClass.section}` : ''),
+                      startTime: slot.startTime,
+                      displayOrder: slot.displayOrder || 999
+                    };
+                  })
+                  .filter((item: any) => item !== null)
+                  .sort((a: any, b: any) => {
+                    // Sort by displayOrder first, then by startTime
+                    if (a.displayOrder !== b.displayOrder) {
+                      return a.displayOrder - b.displayOrder;
+                    }
+                    return a.startTime.localeCompare(b.startTime);
+                  });
+
+                setTodaySchedule(scheduleData);
+              } catch (error) {
+                console.error('Error loading today\'s schedule:', error);
+                setTodaySchedule([]);
+              }
             }
           } catch (error) {
             console.error('Error loading teacher data:', error);
@@ -282,6 +361,29 @@ export default function UnifiedDashboard() {
     loadData();
   }, [isAdmin]);
   
+  // Get today's day name (Monday, Tuesday, etc.)
+  const getTodayDayName = () => {
+    const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    return days[new Date().getDay()];
+  };
+
+  // Check if a date is a holiday
+  const checkIfHoliday = (date: Date) => {
+    return holidays.some((h: any) => {
+      const holidayDate = new Date(h.date);
+      return isSameDay(holidayDate, date);
+    });
+  };
+
+  // Get holiday name for a date
+  const getHolidayNameForDate = (date: Date) => {
+    const holiday = holidays.find((h: any) => {
+      const holidayDate = new Date(h.date);
+      return isSameDay(holidayDate, date);
+    });
+    return holiday?.name || null;
+  };
+
   // Calculate stats for admin
   const totalClasses = (classes && Array.isArray(classes)) ? classes.length : 0;
   const totalStudents = (students && Array.isArray(students)) ? students.filter(s => s && s.status === 'approved').length : 0;
@@ -444,9 +546,48 @@ export default function UnifiedDashboard() {
                   </div>
                 )
               ) : (
-                <div className="flex items-center justify-center h-[250px]">
-                  <p className="text-muted-foreground">Schedule data will be available here</p>
-                </div>
+                loading ? (
+                  <div className="flex items-center justify-center h-[250px]">
+                    <p className="text-muted-foreground">Loading schedule...</p>
+                  </div>
+                ) : isTodayHoliday ? (
+                  <div className="flex flex-col items-center justify-center h-[250px] space-y-3">
+                    <div className="w-16 h-16 rounded-full bg-amber-100 flex items-center justify-center">
+                      <Calendar className="w-8 h-8 text-amber-600" />
+                    </div>
+                    <div className="text-center">
+                      <h3 className="text-lg font-semibold text-foreground">It's a Holiday!</h3>
+                      <p className="text-sm text-muted-foreground mt-1">{holidayName || "No classes today"}</p>
+                    </div>
+                  </div>
+                ) : todaySchedule.length > 0 ? (
+                  <div className="space-y-3">
+                    {todaySchedule.map((item: any, index: number) => (
+                      <div 
+                        key={index} 
+                        className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/50 transition-colors"
+                      >
+                        <div className="flex items-center gap-3 flex-1">
+                          <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center">
+                            <Clock className="w-5 h-5 text-primary" />
+                          </div>
+                          <div className="flex-1">
+                            <p className="font-medium text-sm">{item.subject}</p>
+                            <p className="text-xs text-muted-foreground">{item.class}</p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-sm font-medium">{item.time}</p>
+                          <p className="text-xs text-muted-foreground">{item.period}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-center h-[250px]">
+                    <p className="text-muted-foreground">No classes scheduled for today</p>
+                  </div>
+                )
               )}
             </CardContent>
           </Card>

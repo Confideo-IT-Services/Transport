@@ -67,3 +67,4 @@ DESCRIBE notification_classes;
 -- ALTER TABLE notifications DROP COLUMN scheduled_at;
 -- ALTER TABLE notifications DROP COLUMN event_date;
 
+

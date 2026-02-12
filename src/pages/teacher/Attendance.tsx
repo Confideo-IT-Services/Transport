@@ -4,6 +4,7 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { useAuth } from "@/contexts/AuthContext";
 import { studentsApi, attendanceApi, classesApi } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Calendar as CalendarIcon, Check, X, Clock, Save, Search } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
@@ -45,8 +46,10 @@ export default function Attendance() {
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
   const [historyStudents, setHistoryStudents] = useState<Student[] | null>(null);
   const [attendanceHistory, setAttendanceHistory] = useState<any[]>([]);
+  const [rawAttendanceHistory, setRawAttendanceHistory] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [classId, setClassId] = useState<string>("");
+  const [attendanceThreshold, setAttendanceThreshold] = useState<string>("");
 
   // Load students on mount
   useEffect(() => {
@@ -176,6 +179,9 @@ export default function Attendance() {
           format(endDate, "yyyy-MM-dd")
         );
 
+        // Store raw history data for percentage calculations
+        setRawAttendanceHistory(historyData || []);
+
         // Transform data for chart (group by week)
         if (historyData && Array.isArray(historyData)) {
           // Group by week and calculate stats
@@ -255,6 +261,44 @@ export default function Attendance() {
     absent: historyStudents.filter((s) => s.status === "absent").length,
     leave: historyStudents.filter((s) => s.status === "leave").length,
   } : null;
+
+  // Calculate filtered students based on attendance threshold
+  const getFilteredHistoryStudents = () => {
+    if (!historyStudents) return [];
+    
+    let filtered = historyStudents;
+
+    if (attendanceThreshold && !isNaN(Number(attendanceThreshold))) {
+      const threshold = Number(attendanceThreshold);
+      
+      filtered = historyStudents.filter((student) => {
+        // Calculate this student's attendance percentage from raw history
+        let totalDays = 0;
+        let totalPresent = 0;
+        
+        rawAttendanceHistory.forEach((record: any) => {
+          if (record.students && Array.isArray(record.students)) {
+            const studentRecord = record.students.find((s: any) => 
+              s.id === student.id || s.id?.toString() === student.id.toString()
+            );
+            if (studentRecord) {
+              totalDays++;
+              if (studentRecord.status === "present") {
+                totalPresent++;
+              }
+            }
+          }
+        });
+        
+        const percentage = totalDays > 0 ? (totalPresent / totalDays) * 100 : 0;
+        return percentage <= threshold;
+      });
+    }
+
+    return filtered;
+  };
+
+  const filteredHistoryStudents = getFilteredHistoryStudents();
 
   return (
     <DashboardLayout role="teacher" userName="Sarah Johnson" onLogout={handleLogout}>
@@ -467,6 +511,34 @@ export default function Attendance() {
                   Clear Date
                 </Button>
               )}
+
+              {/* Attendance Percentage Filter */}
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  placeholder="≤ %"
+                  value={attendanceThreshold}
+                  onChange={(e) => setAttendanceThreshold(e.target.value)}
+                  className="w-20 px-2 py-2 border rounded-md text-sm"
+                />
+                <span className="text-sm text-muted-foreground">Attendance %</span>
+              </div>
+
+              {/* Send Message Button */}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  toast({
+                    title: "Coming Soon",
+                    description: "Send message functionality will be added soon.",
+                  });
+                }}
+              >
+                Send Message
+              </Button>
             </div>
 
             {/* Date-specific Attendance */}
@@ -480,15 +552,21 @@ export default function Attendance() {
                 {/* Stats for selected date */}
                 <div className="grid grid-cols-3 gap-4 mt-4 mb-6">
                   <div className="bg-success/10 rounded-lg p-3 text-center border border-success/20">
-                    <p className="text-xl font-bold text-success">{historyStats?.present || 0}</p>
+                    <p className="text-xl font-bold text-success">
+                      {filteredHistoryStudents.filter(s => s.status === "present").length}
+                    </p>
                     <p className="text-xs text-muted-foreground">Present</p>
                   </div>
                   <div className="bg-destructive/10 rounded-lg p-3 text-center border border-destructive/20">
-                    <p className="text-xl font-bold text-destructive">{historyStats?.absent || 0}</p>
+                    <p className="text-xl font-bold text-destructive">
+                      {filteredHistoryStudents.filter(s => s.status === "absent").length}
+                    </p>
                     <p className="text-xs text-muted-foreground">Absent</p>
                   </div>
                   <div className="bg-warning/10 rounded-lg p-3 text-center border border-warning/20">
-                    <p className="text-xl font-bold text-warning">{historyStats?.leave || 0}</p>
+                    <p className="text-xl font-bold text-warning">
+                      {filteredHistoryStudents.filter(s => s.status === "leave").length}
+                    </p>
                     <p className="text-xs text-muted-foreground">Leave</p>
                   </div>
                 </div>
@@ -504,7 +582,7 @@ export default function Attendance() {
                       </tr>
                     </thead>
                     <tbody>
-                      {historyStudents.map((student) => (
+                      {filteredHistoryStudents.map((student) => (
                         <tr key={student.id}>
                           <td>
                             <span className="badge badge-info">{student.rollNo}</span>

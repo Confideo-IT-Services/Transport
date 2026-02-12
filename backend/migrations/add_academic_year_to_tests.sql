@@ -23,3 +23,4 @@ CREATE INDEX idx_tests_academic_year_id ON tests(academic_year_id);
 
 
 
+

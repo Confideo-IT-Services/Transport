@@ -52,7 +52,8 @@ import {
   LogIn,
   LogOut,
   Info,
-  TrendingUp
+  TrendingUp,
+  Send
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format, isSameDay, startOfMonth } from "date-fns";
@@ -108,9 +109,12 @@ export default function AttendanceModule() {
   const [studentAttendancePercentages, setStudentAttendancePercentages] = useState<any[]>([]);
   const [isLoadingPercentages, setIsLoadingPercentages] = useState(false);
   const [isSendingAttendance, setIsSendingAttendance] = useState(false);
+  const [percentageFilter, setPercentageFilter] = useState<string>("");
   const [markingTeacherId, setMarkingTeacherId] = useState<string | null>(null);
   const [teacherStatus, setTeacherStatus] = useState<'present' | 'absent' | 'late' | 'leave'>('present');
   const [teacherRemarks, setTeacherRemarks] = useState('');
+  const [timeSlots, setTimeSlots] = useState<any[]>([]);
+  const [lateCutoffTime, setLateCutoffTime] = useState<string | null>(null);
   const [isViewHistoryOpen, setIsViewHistoryOpen] = useState(false);
   const [selectedTeacherForHistory, setSelectedTeacherForHistory] = useState<{ id: string; name: string } | null>(null);
   const [teacherHistory, setTeacherHistory] = useState<any[]>([]);
@@ -123,6 +127,7 @@ export default function AttendanceModule() {
   const [historyEndDate, setHistoryEndDate] = useState<Date | undefined>(new Date());
   const [selectedHistoryRecord, setSelectedHistoryRecord] = useState<any | null>(null);
   const [isLoadingHistoryDate, setIsLoadingHistoryDate] = useState(false);
+  const [historyStatusFilter, setHistoryStatusFilter] = useState<"all" | "present" | "absent" | "leave">("all");
   const [searchParams, setSearchParams] = useSearchParams();
 
   // Memoize today's date string to prevent infinite loops
@@ -157,6 +162,26 @@ export default function AttendanceModule() {
         description: error?.message || "Failed to mark teacher attendance",
         variant: "destructive"
       });
+    }
+  };
+
+  // Helper function to check if teacher is late based on check-in time
+  const isTeacherLateByTime = (checkInTime: string | null, cutoffTime: string | null): boolean => {
+    if (!checkInTime || !cutoffTime) return false;
+    
+    try {
+      // Parse times (format: "HH:MM")
+      const [checkInHours, checkInMinutes] = checkInTime.split(':').map(Number);
+      const [cutoffHours, cutoffMinutes] = cutoffTime.split(':').map(Number);
+      
+      const checkInTotal = checkInHours * 60 + checkInMinutes;
+      const cutoffTotal = cutoffHours * 60 + cutoffMinutes;
+      
+      // If check-in is after cutoff time, teacher is late
+      return checkInTotal > cutoffTotal;
+    } catch (error) {
+      console.error('Error parsing time:', error);
+      return false;
     }
   };
 
@@ -264,6 +289,44 @@ export default function AttendanceModule() {
     };
     loadTeacherAttendance();
   }, [isAdmin, todayStr]);
+
+  // Load time slots and calculate late cutoff time
+  useEffect(() => {
+    const loadTimeSlots = async () => {
+      if (!isAdmin) return;
+      try {
+        const slots = await timetableApi.getTimeSlots();
+        setTimeSlots(slots || []);
+        
+        // Find first class time slot (earliest start time)
+        const classSlots = (slots || []).filter((s: any) => s.type === 'class');
+        if (classSlots.length > 0) {
+          // Sort by start time to get the earliest
+          const sortedSlots = [...classSlots].sort((a, b) => {
+            const [aHours, aMinutes] = a.startTime.split(':').map(Number);
+            const [bHours, bMinutes] = b.startTime.split(':').map(Number);
+            const aTotal = aHours * 60 + aMinutes;
+            const bTotal = bHours * 60 + bMinutes;
+            return aTotal - bTotal;
+          });
+          
+          const firstPeriodStart = sortedSlots[0].startTime; // e.g., "09:30"
+          
+          // Add 30 minutes to first period start time
+          const [hours, minutes] = firstPeriodStart.split(':').map(Number);
+          const totalMinutes = hours * 60 + minutes + 30; // Add 30 minutes
+          const cutoffHours = Math.floor(totalMinutes / 60);
+          const cutoffMinutes = totalMinutes % 60;
+          const cutoffTime = `${String(cutoffHours).padStart(2, '0')}:${String(cutoffMinutes).padStart(2, '0')}`;
+          
+          setLateCutoffTime(cutoffTime); // e.g., "10:00"
+        }
+      } catch (error) {
+        console.error('Error loading time slots:', error);
+      }
+    };
+    loadTimeSlots();
+  }, [isAdmin]);
 
   // Load teacher's own attendance for check-in/check-out
   useEffect(() => {
@@ -707,6 +770,7 @@ export default function AttendanceModule() {
     const loadAttendanceForDate = async () => {
       if (!historyDate || !selectedClassId) {
         setSelectedHistoryRecord(null);
+        setHistoryStatusFilter("all"); // Reset filter when date is cleared
         return;
       }
 
@@ -726,12 +790,15 @@ export default function AttendanceModule() {
             students: attendanceData.students || [],
             markedAt: new Date()
           });
+          setHistoryStatusFilter("all"); // Reset filter when new date is loaded
         } else {
           setSelectedHistoryRecord(null);
+          setHistoryStatusFilter("all");
         }
       } catch (error: any) {
         console.error('Error loading attendance for selected date:', error);
         setSelectedHistoryRecord(null);
+        setHistoryStatusFilter("all");
         // Only show error if it's not a 404 (no record exists)
         if (error?.response?.status && error.response.status !== 404) {
           toast({
@@ -942,7 +1009,18 @@ export default function AttendanceModule() {
                         <Clock className="w-6 h-6 text-primary" />
                       </div>
                       <div>
-                        <p className="text-2xl font-bold">{teacherAttendance.filter(t => t.status === "late").length}</p>
+                        <p className="text-2xl font-bold">
+                          {teacherAttendance.filter(t => {
+                            // Check if teacher has "late" status
+                            const hasLateStatus = t.status === "late";
+                            
+                            // Check if teacher is late based on check-in time
+                            const checkIn = t.checkIn || t.checkInTime;
+                            const isLateByCheckIn = isTeacherLateByTime(checkIn, lateCutoffTime);
+                            
+                            return hasLateStatus || isLateByCheckIn;
+                          }).length}
+                        </p>
                         <p className="text-sm text-muted-foreground">Late</p>
                       </div>
                     </div>
@@ -988,15 +1066,21 @@ export default function AttendanceModule() {
                               <Badge 
                                 variant={
                                   teacher.status === "present" ? "default" :
-                                  teacher.status === "late" ? "secondary" :
+                                  teacher.status === "late" || isTeacherLateByTime(teacher.checkIn || teacher.checkInTime, lateCutoffTime) ? "secondary" :
                                   teacher.status === "leave" ? "outline" : "destructive"
                                 }
                                 className={
-                                  teacher.status === "present" ? "bg-secondary" : 
-                                  teacher.status === "late" ? "bg-accent text-accent-foreground" : ""
+                                  teacher.status === "present" && !isTeacherLateByTime(teacher.checkIn || teacher.checkInTime, lateCutoffTime) ? "bg-secondary" : 
+                                  teacher.status === "late" || isTeacherLateByTime(teacher.checkIn || teacher.checkInTime, lateCutoffTime) ? "bg-accent text-accent-foreground" : ""
                                 }
                               >
-                                {teacher.status === "not-marked" ? "Not Marked" : teacher.status}
+                                {(() => {
+                                  const checkIn = teacher.checkIn || teacher.checkInTime;
+                                  const isLate = isTeacherLateByTime(checkIn, lateCutoffTime);
+                                  if (teacher.status === "not-marked") return "Not Marked";
+                                  if (isLate && teacher.status !== "late") return "Late";
+                                  return teacher.status;
+                                })()}
                               </Badge>
                             </TableCell>
                             <TableCell className="text-right">
@@ -1291,6 +1375,34 @@ export default function AttendanceModule() {
                         className="w-40"
                       />
                     </div>
+                    {/* Attendance Percentage Filter */}
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        placeholder="≤ %"
+                        value={percentageFilter}
+                        onChange={(e) => setPercentageFilter(e.target.value)}
+                        className="w-20 px-2 py-2 border rounded-md text-sm"
+                      />
+                      <span className="text-sm text-muted-foreground">Attendance %</span>
+                    </div>
+
+                    {/* Send Message Button */}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        toast({
+                          title: "Coming Soon",
+                          description: "Send message functionality will be added soon.",
+                        });
+                      }}
+                    >
+                      <Send className="w-4 h-4 mr-2" />
+                      Send Message
+                    </Button>
                     {/* Send to All Parents Button */}
                     {/*<Button
                       onClick={handleSendAttendanceToAll}
@@ -1324,49 +1436,64 @@ export default function AttendanceModule() {
                     <p>No students found for this class</p>
                   </div>
                 ) : (
-                  <div className="overflow-x-auto">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead className="w-20">Roll No</TableHead>
-                          <TableHead>Student Name</TableHead>
-                          <TableHead className="text-center w-32">Attendance %</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {studentAttendancePercentages.map((student) => {
-                          const getBadgeVariant = (percentage: number) => {
-                            if (percentage === 0) return "outline";
-                            if (percentage >= 90) return "default";
-                            if (percentage >= 75) return "default";
-                            return "default";
-                          };
+                  (() => {
+                    // Filter students based on attendance percentage threshold
+                    let filteredStudents = studentAttendancePercentages;
+                    
+                    if (percentageFilter && !isNaN(Number(percentageFilter))) {
+                      const threshold = Number(percentageFilter);
+                      filteredStudents = studentAttendancePercentages.filter((student) => {
+                        const percentage = student.percentage || 0;
+                        return percentage <= threshold;
+                      });
+                    }
 
-                          const getBadgeClassName = (percentage: number) => {
-                            if (percentage === 0) return "bg-muted text-muted-foreground";
-                            if (percentage >= 90) return "bg-green-500 hover:bg-green-600 text-white";
-                            if (percentage >= 75) return "bg-yellow-500 hover:bg-yellow-600 text-white";
-                            return "bg-red-500 hover:bg-red-600 text-white";
-                          };
-
-                          return (
-                            <TableRow key={student.id}>
-                              <TableCell className="font-medium">{student.rollNo || '-'}</TableCell>
-                              <TableCell>{student.name}</TableCell>
-                              <TableCell className="text-center">
-                                <Badge
-                                  variant={getBadgeVariant(student.percentage)}
-                                  className={getBadgeClassName(student.percentage)}
-                                >
-                                  {student.percentage}%
-                                </Badge>
-                              </TableCell>
+                    return (
+                      <div className="overflow-x-auto">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead className="w-20">Roll No</TableHead>
+                              <TableHead>Student Name</TableHead>
+                              <TableHead className="text-center w-32">Attendance %</TableHead>
                             </TableRow>
-                          );
-                        })}
-                      </TableBody>
-                    </Table>
-                  </div>
+                          </TableHeader>
+                          <TableBody>
+                            {filteredStudents.map((student) => {
+                              const getBadgeVariant = (percentage: number) => {
+                                if (percentage === 0) return "outline";
+                                if (percentage >= 90) return "default";
+                                if (percentage >= 75) return "default";
+                                return "default";
+                              };
+
+                              const getBadgeClassName = (percentage: number) => {
+                                if (percentage === 0) return "bg-muted text-muted-foreground";
+                                if (percentage >= 90) return "bg-green-500 hover:bg-green-600 text-white";
+                                if (percentage >= 75) return "bg-yellow-500 hover:bg-yellow-600 text-white";
+                                return "bg-red-500 hover:bg-red-600 text-white";
+                              };
+
+                              return (
+                                <TableRow key={student.id}>
+                                  <TableCell className="font-medium">{student.rollNo || '-'}</TableCell>
+                                  <TableCell>{student.name}</TableCell>
+                                  <TableCell className="text-center">
+                                    <Badge
+                                      variant={getBadgeVariant(student.percentage)}
+                                      className={getBadgeClassName(student.percentage)}
+                                    >
+                                      {student.percentage}%
+                                    </Badge>
+                                  </TableCell>
+                                </TableRow>
+                              );
+                            })}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    );
+                  })()
                 )}
               </CardContent>
             </Card>
@@ -1813,15 +1940,30 @@ export default function AttendanceModule() {
                       <div className="space-y-4">
                         {/* Stats */}
                         <div className="grid grid-cols-3 gap-3">
-                          <div className="text-center p-3 rounded-lg bg-secondary/10">
+                          <div 
+                            className={`text-center p-3 rounded-lg bg-secondary/10 cursor-pointer transition-all hover:bg-secondary/20 ${
+                              historyStatusFilter === "present" ? "ring-2 ring-secondary" : ""
+                            }`}
+                            onClick={() => setHistoryStatusFilter(historyStatusFilter === "present" ? "all" : "present")}
+                          >
                             <p className="text-2xl font-bold text-secondary">{historyPresent}</p>
                             <p className="text-xs text-muted-foreground">Present</p>
                           </div>
-                          <div className="text-center p-3 rounded-lg bg-destructive/10">
+                          <div 
+                            className={`text-center p-3 rounded-lg bg-destructive/10 cursor-pointer transition-all hover:bg-destructive/20 ${
+                              historyStatusFilter === "absent" ? "ring-2 ring-destructive" : ""
+                            }`}
+                            onClick={() => setHistoryStatusFilter(historyStatusFilter === "absent" ? "all" : "absent")}
+                          >
                             <p className="text-2xl font-bold text-destructive">{historyAbsent}</p>
                             <p className="text-xs text-muted-foreground">Absent</p>
                           </div>
-                          <div className="text-center p-3 rounded-lg bg-accent/10">
+                          <div 
+                            className={`text-center p-3 rounded-lg bg-accent/10 cursor-pointer transition-all hover:bg-accent/20 ${
+                              historyStatusFilter === "leave" ? "ring-2 ring-accent" : ""
+                            }`}
+                            onClick={() => setHistoryStatusFilter(historyStatusFilter === "leave" ? "all" : "leave")}
+                          >
                             <p className="text-2xl font-bold text-accent">{historyLeave}</p>
                             <p className="text-xs text-muted-foreground">Leave</p>
                           </div>
@@ -1838,27 +1980,44 @@ export default function AttendanceModule() {
                               </TableRow>
                             </TableHeader>
                             <TableBody>
-                              {record.students.map((s: any) => {
-                                const student = studentAttendance.find(st => 
-                                  String(st.id) === String(s.id) || st.id === s.id
-                                );
-                                return (
-                                  <TableRow key={s.id}>
-                                    <TableCell>{s.rollNo || student?.rollNo || s.id}</TableCell>
-                                    <TableCell>{s.name || student?.name || `Student ${s.id}`}</TableCell>
-                                    <TableCell className="text-right">
-                                      <Badge 
-                                        className={
-                                          s.status === "present" ? "bg-secondary" : 
-                                          s.status === "absent" ? "bg-destructive" : "bg-accent"
-                                        }
-                                      >
-                                        {s.status}
-                                      </Badge>
+                              {(() => {
+                                // Filter students based on selected status
+                                let filteredStudents = record.students;
+                                
+                                if (historyStatusFilter !== "all") {
+                                  filteredStudents = record.students.filter((s: any) => s.status === historyStatusFilter);
+                                }
+
+                                return filteredStudents.length === 0 ? (
+                                  <TableRow>
+                                    <TableCell colSpan={3} className="text-center py-8 text-muted-foreground">
+                                      No students found with status: {historyStatusFilter}
                                     </TableCell>
                                   </TableRow>
+                                ) : (
+                                  filteredStudents.map((s: any) => {
+                                    const student = studentAttendance.find(st => 
+                                      String(st.id) === String(s.id) || st.id === s.id
+                                    );
+                                    return (
+                                      <TableRow key={s.id}>
+                                        <TableCell>{s.rollNo || student?.rollNo || s.id}</TableCell>
+                                        <TableCell>{s.name || student?.name || `Student ${s.id}`}</TableCell>
+                                        <TableCell className="text-right">
+                                          <Badge 
+                                            className={
+                                              s.status === "present" ? "bg-secondary" : 
+                                              s.status === "absent" ? "bg-destructive" : "bg-accent"
+                                            }
+                                          >
+                                            {s.status}
+                                          </Badge>
+                                        </TableCell>
+                                      </TableRow>
+                                    );
+                                  })
                                 );
-                              })}
+                              })()}
                             </TableBody>
                           </Table>
                         </div>

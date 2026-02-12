@@ -1110,6 +1110,7 @@ export default function HomeworkModule() {
                       <th className="text-left p-4 font-medium text-muted-foreground">Completed</th>
                       <th className="text-left p-4 font-medium text-muted-foreground">Frequency</th>
                       <th className="text-left p-4 font-medium text-muted-foreground">Status</th>
+                      <th className="text-left p-4 font-medium text-muted-foreground">Reminder</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
@@ -1137,6 +1138,18 @@ export default function HomeworkModule() {
                           }`}>
                             {student.percentage >= 75 ? "Excellent" : student.percentage >= 50 ? "Average" : "Needs Attention"}
                           </span>
+                        </td>
+                        <td className="p-4">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 w-8 p-0"
+                            onClick={() => {
+                              toast.info("Reminder functionality will be added soon.");
+                            }}
+                          >
+                            <Send className="w-4 h-4" />
+                          </Button>
                         </td>
                       </tr>
                     ))}

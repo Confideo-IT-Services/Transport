@@ -1281,6 +1281,7 @@ export const feesApi = {
     totalPending: number;
     fullyPaidCount: number;
     unpaidCount: number;
+    partiallyPaidCount: number;
   }> => {
     return apiRequest('/fees/summary');
   },

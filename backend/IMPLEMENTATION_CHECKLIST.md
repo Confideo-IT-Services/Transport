@@ -67,3 +67,4 @@ mysql -h host -u user -p allpulse -e "SELECT TABLE_NAME, CONSTRAINT_NAME FROM in
 - When in doubt, use SecureQueryBuilder
 - Always log critical operations
 
+

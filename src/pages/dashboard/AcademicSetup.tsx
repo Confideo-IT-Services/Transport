@@ -103,9 +103,6 @@ export default function AcademicSetup() {
     endDate: "",
   });
 
-  // Promotion state (for auto-promote on new academic year creation)
-  const [promoteStudents, setPromoteStudents] = useState(false);
-  const [isPromoting, setIsPromoting] = useState(false);
 
   // Edit academic year state
   const [isEditAcademicYearOpen, setIsEditAcademicYearOpen] = useState(false);
@@ -470,47 +467,19 @@ export default function AcademicSetup() {
 
     try {
       // Call API to create academic year
-      const result = await academicYearsApi.create({
+      await academicYearsApi.create({
         name: newAcademicYear.name.trim(),
         startDate: newAcademicYear.startDate,
         endDate: newAcademicYear.endDate,
       });
       
-      // If promotion is enabled, promote students
-      if (promoteStudents && result.yearId) {
-        setIsPromoting(true);
-        try {
-          const promotionResult = await academicYearsApi.promoteStudents(result.yearId);
-          
-          toast({
-            title: "Success",
-            description: `Academic year created successfully! ${promotionResult.promoted} students promoted to next class.${promotionResult.skipped > 0 ? ` ${promotionResult.skipped} students skipped.` : ''}`,
-          });
-
-          // Show errors if any
-          if (promotionResult.errors && promotionResult.errors.length > 0) {
-            console.warn('Promotion errors:', promotionResult.errors);
-          }
-        } catch (promoError: any) {
-          toast({
-            title: "Warning",
-            description: "Academic year created but student promotion failed. You can promote manually later.",
-            variant: "destructive",
-          });
-          console.error('Promotion error:', promoError);
-        } finally {
-          setIsPromoting(false);
-        }
-      } else {
-        toast({
-          title: "Success",
-          description: "Academic year created successfully",
-        });
-      }
+      toast({
+        title: "Success",
+        description: "Academic year created successfully",
+      });
 
       // Reset form and close dialog
       setNewAcademicYear({ name: "", startDate: "", endDate: "" });
-      setPromoteStudents(false);
       setIsAddAcademicYearOpen(false);
 
       // Reload academic years to show the new year
@@ -735,7 +704,7 @@ export default function AcademicSetup() {
             <TabsTrigger value="years">Academic Years</TabsTrigger>
             <TabsTrigger value="classes">Classes & Sections</TabsTrigger>
             <TabsTrigger value="class-teachers">Class Teacher Assignment</TabsTrigger>
-            <TabsTrigger value="teachers">Teacher Assignments</TabsTrigger>
+            <TabsTrigger value="teachers">Teacher-Subject Assignments</TabsTrigger>
           </TabsList>
 
           {/* Academic Years */}
@@ -782,27 +751,10 @@ export default function AcademicSetup() {
                           onChange={(e) => setNewAcademicYear(prev => ({ ...prev, endDate: e.target.value }))}
                         />
                       </div>
-                      <div className="flex items-center space-x-2">
-                        <input
-                          type="checkbox"
-                          id="promote-students"
-                          checked={promoteStudents}
-                          onChange={(e) => setPromoteStudents(e.target.checked)}
-                          className="rounded border-gray-300"
-                        />
-                        <Label htmlFor="promote-students" className="text-sm font-medium cursor-pointer">
-                          Automatically promote students to next class
-                        </Label>
-                      </div>
-                      {isPromoting && (
-                        <div className="text-sm text-blue-600">
-                          Promoting students...
-                        </div>
-                      )}
                       <Button 
                         className="w-full" 
                         onClick={handleCreateAcademicYear}
-                        disabled={!newAcademicYear.name.trim() || !newAcademicYear.startDate || !newAcademicYear.endDate || isPromoting}
+                        disabled={!newAcademicYear.name.trim() || !newAcademicYear.startDate || !newAcademicYear.endDate}
                       >
                         Create Academic Year
                       </Button>
@@ -996,7 +948,6 @@ export default function AcademicSetup() {
                             </div>
                             <div className="flex-1">
                               <h3 className="font-semibold text-lg">{cls.name}</h3>
-                              <p className="text-sm text-muted-foreground">Class Teacher: {cls.sections[0]?.classTeacher}</p>
                             </div>
                             <div className="text-right">
                               <p className="text-2xl font-bold text-primary">{cls.sections.length}</p>
@@ -1251,7 +1202,7 @@ export default function AcademicSetup() {
           <TabsContent value="teachers" className="space-y-4">
             <div className="flex justify-between items-center">
               <div>
-                <h2 className="text-lg font-medium">Teacher Assignments</h2>
+                <h2 className="text-lg font-medium">Teacher-Subject Assignments</h2>
                 <p className="text-sm text-muted-foreground">Add teachers and assign subjects they teach</p>
               </div>
               {isAdmin && (

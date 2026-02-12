@@ -106,3 +106,4 @@ CREATE TABLE IF NOT EXISTS notification_classes (
 -- ALTER TABLE notifications DROP COLUMN scheduled_at;
 -- ALTER TABLE notifications DROP COLUMN event_date;
 
+

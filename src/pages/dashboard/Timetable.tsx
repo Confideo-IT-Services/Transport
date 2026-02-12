@@ -510,6 +510,30 @@ export default function Timetable() {
         return;
       }
 
+      // Check if teacher is on approved leave for that selected day
+      if (selectedEntry) {
+        const weekStart = startOfWeek(new Date(), { weekStartsOn: 1 });
+        const selectedDate = addDays(weekStart, days.indexOf(selectedEntry.day));
+
+        const onLeave = teacherLeaves.some(leave =>
+          leave.teacherName === editEntry.teacherName &&
+          leave.status === "approved" &&
+          isWithinInterval(selectedDate, {
+            start: leave.startDate,
+            end: leave.endDate
+          })
+        );
+
+        if (onLeave) {
+          toast({
+            title: "Teacher on Leave",
+            description: `${editEntry.teacherName} is on approved leave for ${selectedEntry.day}. Cannot assign.`,
+            variant: "destructive"
+          });
+          return;
+        }
+      }
+
       console.log('Updating timetable entry:', {
         classId: selectedClassId,
         slotId: selectedEntry.slotId,
@@ -957,12 +981,16 @@ export default function Timetable() {
                                   }
                                 }}
                               >
-                                <p className="font-medium text-sm">{getSubjectName(entry.subjectCode)}</p>
-                                <p className={`text-xs mt-0.5 ${teacherOnLeave ? "text-red-600" : "opacity-75"}`}>
+                                <p className="font-medium text-sm flex items-center justify-center gap-1">
+                                  {getSubjectName(entry.subjectCode)}
+                                  {teacherOnLeave && (
+                                    <span className="w-2 h-2 rounded-full bg-red-500 inline-block" />
+                                  )}
+                                </p>
+                                <p className={`text-xs mt-0.5 ${teacherOnLeave ? "text-red-600 font-medium" : "opacity-75"}`}>
                                   {entry.teacherName}
                                   {teacherOnLeave && (
-                                    <span className="block text-red-500 font-medium">
-                                      <UserX className="w-3 h-3 inline mr-1" />
+                                    <span className="block text-red-500">
                                       On Leave
                                     </span>
                                   )}
@@ -1519,39 +1547,6 @@ export default function Timetable() {
                 </Table>
               </CardContent>
             </Card>
-
-            {/* WhatsApp Notification Section */}
-            {isAdmin && (
-              <Card className="mt-6">
-                <CardHeader>
-                  <CardTitle className="text-lg flex items-center gap-2">
-                    <MessageCircle className="w-5 h-5 text-green-600" />
-                    Send Timetable via WhatsApp
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-muted-foreground mb-4">
-                    Send weekly timetable to teachers including holidays and their leave status.
-                  </p>
-                  <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-                    {teachersList.map((teacher) => (
-                      <div 
-                        key={teacher.name}
-                        className="flex items-center justify-between p-3 rounded-lg border border-border"
-                      >
-                        <div>
-                          <p className="font-medium">{teacher.name}</p>
-                          <p className="text-xs text-muted-foreground">+91 {teacher.phone}</p>
-                        </div>
-                        <Button size="sm" variant="outline" onClick={() => sendWhatsAppMessage(teacher.name)}>
-                          <Send className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            )}
           </TabsContent>
 
           {/* Time Slots Settings */}
