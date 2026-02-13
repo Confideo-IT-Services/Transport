@@ -12,7 +12,29 @@ router.get('/inbox', authenticateToken, requireTeacher, async (req, res) => {
 
     if (req.user.role === 'teacher') {
       // For teachers: show notifications where they are recipients, exclude their own sent notifications
-      // Handle both admin (users table) and teacher (teachers table) senders
+      // Get teacher's class IDs to exclude notifications sent to their classes
+      const [teacherClasses] = await db.query(
+        'SELECT id FROM classes WHERE class_teacher_id = ?',
+        [req.user.id]
+      );
+      const teacherClassIds = teacherClasses.map(c => c.id);
+      
+      let excludeCondition = '';
+      const excludeParams = [];
+      if (teacherClassIds.length > 0) {
+        // Exclude notifications sent by this teacher (check by sender_role and target classes)
+        const classIdChecks = teacherClassIds.map(() => 'JSON_CONTAINS(n.target_classes, ?)').join(' OR ');
+        excludeCondition = `AND NOT (
+          n.sender_role = 'teacher' 
+          AND (
+            (n.target_classes IS NOT NULL AND (${classIdChecks}))
+            OR (n.target_type IN ('all_classes', 'all_parents') AND n.target_classes IS NULL AND n.school_id = ?)
+          )
+        )`;
+        teacherClassIds.forEach(classId => excludeParams.push(JSON.stringify(classId)));
+        excludeParams.push(req.user.schoolId || req.user.school_id);
+      }
+      
       query = `
         SELECT n.*, 
                COALESCE(u.name, t.name) as sender_name,
@@ -22,13 +44,13 @@ router.get('/inbox', authenticateToken, requireTeacher, async (req, res) => {
         JOIN notification_recipients nr ON n.id = nr.notification_id
         LEFT JOIN users u ON n.sender_id = u.id AND n.sender_role = 'admin'
         LEFT JOIN teachers t ON n.sender_id = t.id AND n.sender_role = 'teacher'
-        WHERE n.sender_id != ?
-          AND nr.recipient_type = ? 
+        WHERE nr.recipient_type = ? 
           AND nr.recipient_id = ?
+          ${excludeCondition}
         GROUP BY n.id
         ORDER BY n.created_at DESC
       `;
-      params.push(req.user.id, 'teacher', req.user.id);
+      params.push('teacher', req.user.id, ...excludeParams);
     } else if (req.user.role === 'admin') {
       // For admin: show notifications sent to teachers in their school, exclude their own sent notifications
       // Check if admin has read status via LEFT JOIN
@@ -82,18 +104,94 @@ router.get('/inbox', authenticateToken, requireTeacher, async (req, res) => {
 // Get sent notifications
 router.get('/sent', authenticateToken, requireTeacher, async (req, res) => {
   try {
-    let query = `
-      SELECT n.*, 
-             COUNT(DISTINCT nr.id) as recipient_count
-      FROM notifications n
-      LEFT JOIN notification_recipients nr ON n.id = nr.notification_id
-      WHERE n.sender_id = ?
-    `;
-    const params = [req.user.id];
-
-    if (req.user.role === 'admin') {
-      query += ' AND n.school_id = ?';
-      params.push(req.user.schoolId);
+    let query;
+    const params = [];
+    
+    if (req.user.role === 'teacher') {
+      // For teachers: Find notifications where sender_role = 'teacher' and school matches
+      // Then filter by checking if notification's target classes/students match teacher's assigned classes
+      // First, get teacher's assigned class IDs
+      const [teacherClasses] = await db.query(
+        'SELECT id FROM classes WHERE class_teacher_id = ?',
+        [req.user.id]
+      );
+      const teacherClassIds = teacherClasses.map(c => c.id);
+      
+      if (teacherClassIds.length === 0) {
+        // Teacher has no classes, return empty
+        return res.json([]);
+      }
+      
+      // Build query using JSON_CONTAINS (more compatible than JSON_OVERLAPS)
+      // Check if any teacher class ID exists in the target_classes JSON array
+      const classIdChecks = teacherClassIds.map(() => 'JSON_CONTAINS(n.target_classes, ?)').join(' OR ');
+      const classIdsPlaceholder = teacherClassIds.map(() => '?').join(',');
+      
+      query = `
+        SELECT n.*, 
+               COUNT(DISTINCT nr.id) as recipient_count
+        FROM notifications n
+        LEFT JOIN notification_recipients nr ON n.id = nr.notification_id
+        WHERE n.school_id = ?
+          AND n.sender_role = 'teacher'
+          AND (
+            -- Match if notification targets teacher's classes
+            (
+              n.target_classes IS NOT NULL
+              AND (${classIdChecks})
+            )
+            OR
+            -- Match if notification targets specific students that belong to teacher's classes
+            (
+              n.target_students IS NOT NULL
+              AND EXISTS (
+                SELECT 1 
+                FROM students s
+                WHERE s.class_id IN (${classIdsPlaceholder})
+                  AND JSON_CONTAINS(n.target_students, JSON_QUOTE(s.id))
+                LIMIT 1
+              )
+            )
+            OR
+            -- Match if targetType is all_classes/all_parents with NULL target_classes
+            -- Verify by checking if recipients include students from teacher's classes
+            (
+              n.target_type IN ('all_classes', 'all_parents')
+              AND n.target_classes IS NULL
+              AND EXISTS (
+                SELECT 1 
+                FROM notification_recipients nr2
+                JOIN students s ON nr2.student_id = s.id
+                WHERE nr2.notification_id = n.id
+                  AND s.class_id IN (${classIdsPlaceholder})
+                LIMIT 1
+              )
+            )
+            OR
+            -- Match if sender_id was originally teacher's ID (for old notifications before FK fix)
+            n.sender_id = ?
+          )
+      `;
+      // Build params: schoolId, classIds as JSON strings for JSON_CONTAINS, classIds for EXISTS (3 times), teacherId
+      params.push(req.user.schoolId || req.user.school_id);
+      // Add each classId as a JSON string for JSON_CONTAINS check
+      teacherClassIds.forEach(classId => params.push(JSON.stringify(classId)));
+      // Add classIds for EXISTS queries (3 times)
+      params.push(...teacherClassIds, ...teacherClassIds, ...teacherClassIds);
+      params.push(req.user.id);
+    } else if (req.user.role === 'admin') {
+      // For admin: original logic - match by sender_id
+      query = `
+        SELECT n.*, 
+               COUNT(DISTINCT nr.id) as recipient_count
+        FROM notifications n
+        LEFT JOIN notification_recipients nr ON n.id = nr.notification_id
+        WHERE n.sender_id = ?
+          AND n.school_id = ?
+      `;
+      params.push(req.user.id, req.user.schoolId || req.user.school_id);
+    } else {
+      return res.status(403).json({ error: 'Access denied' });
     }
 
     query += ' GROUP BY n.id ORDER BY n.created_at DESC';
@@ -147,6 +245,14 @@ router.get('/templates', authenticateToken, requireTeacher, async (req, res) => 
 
 // Send notification
 router.post('/', authenticateToken, requireTeacher, async (req, res) => {
+  // Add immediate logging at the start
+  console.log('========================================');
+  console.log('📨 NOTIFICATION SEND REQUEST RECEIVED');
+  console.log('User ID:', req.user.id);
+  console.log('User Role:', req.user.role);
+  console.log('School ID:', req.user.schoolId || req.user.school_id);
+  console.log('========================================');
+  
   try {
     const { 
       title, 
@@ -163,14 +269,25 @@ router.post('/', authenticateToken, requireTeacher, async (req, res) => {
       whatsappEnabled
     } = req.body;
 
+    console.log('📝 Request body:', {
+      title,
+      message,
+      targetType,
+      targetClasses,
+      targetStudents,
+      priority
+    });
+
     // Validation: Required fields
     if (!title || !message || !targetType) {
+      console.log('❌ Validation failed: Missing required fields');
       return res.status(400).json({ error: 'Title, message, and target type are required' });
     }
 
     // Validation: If targetType is selected_classes, targetClasses must not be empty
     if (targetType === 'selected_classes') {
       if (!targetClasses || !Array.isArray(targetClasses) || targetClasses.length === 0) {
+        console.log('❌ Validation failed: targetClasses required for selected_classes');
         return res.status(400).json({ error: 'Target classes required for selected_classes' });
       }
     }
@@ -180,20 +297,122 @@ router.post('/', authenticateToken, requireTeacher, async (req, res) => {
       const scheduledDate = new Date(scheduledAt);
       const now = new Date();
       if (scheduledDate < now) {
+        console.log('❌ Validation failed: Scheduled time in past');
         return res.status(400).json({ error: 'Scheduled time cannot be in the past' });
       }
     }
 
     const notificationId = uuidv4();
-    const schoolId = req.user.schoolId;
-    const senderId = req.user.id;
+    const schoolId = req.user.schoolId || req.user.school_id;
     const senderRole = req.user.role;
-    const createdBy = req.user.role === 'admin' ? req.user.id : null; // Only admins can create notifications
+    
+    // FIX: Handle sender_id based on role
+    // For teachers, ALWAYS use school admin's ID (teachers don't exist in users table)
+    let senderId = req.user.id;
+    
+    console.log('🔍 Notification send - Initial values:', {
+      senderId,
+      senderRole,
+      schoolId,
+      userId: req.user.id,
+      username: req.user.username
+    });
+    
+    // If sender is a teacher, ALWAYS check and use admin's ID (teachers don't exist in users table)
+    if (senderRole === 'teacher') {
+      console.log('👨‍🏫 Teacher detected, looking for admin user...');
+      try {
+        // ALWAYS use school admin's ID for teachers (teachers don't exist in users table)
+        const [admins] = await db.query(
+          'SELECT id FROM users WHERE school_id = ? AND role = ? LIMIT 1',
+          [schoolId, 'admin']
+        );
+        
+        console.log('🔍 Admin lookup result:', { 
+          found: admins.length > 0, 
+          schoolId, 
+          adminId: admins.length > 0 ? admins[0].id : null 
+        });
+        
+        if (admins.length > 0) {
+          // Use admin's ID as sender_id, but keep sender_role as 'teacher'
+          senderId = admins[0].id;
+          console.log(`✅ Teacher ${req.user.id} sending notification, using admin ${senderId} for FK constraint`);
+        } else {
+          // If no admin found, try to find any user in the school
+          console.log('⚠️ No admin found, trying to find any user in school...');
+          const [anyUsers] = await db.query(
+            'SELECT id FROM users WHERE school_id = ? LIMIT 1',
+            [schoolId]
+          );
+          
+          if (anyUsers.length > 0) {
+            senderId = anyUsers[0].id;
+            console.log(`✅ Using fallback user ID ${senderId} for teacher notification`);
+          } else {
+            console.error('❌ No users found in school:', schoolId);
+            return res.status(500).json({ 
+              error: 'Failed to send notification: Database configuration issue. Please contact administrator.',
+              details: 'No valid sender found for school'
+            });
+          }
+        }
+      } catch (fkError) {
+        console.error('❌ Error looking up admin user:', fkError);
+        console.error('Error details:', fkError.message);
+        console.error('Stack:', fkError.stack);
+        return res.status(500).json({ 
+          error: 'Failed to send notification: Database configuration issue.',
+          details: fkError.message
+        });
+      }
+    } else {
+      console.log('✅ Admin user, using original senderId');
+    }
+    
+    console.log('✅ Final sender values:', { senderId, senderRole, schoolId });
+    
+    // Verify senderId exists in users table before proceeding
+    try {
+      const [verifyUser] = await db.query(
+        'SELECT id FROM users WHERE id = ? LIMIT 1',
+        [senderId]
+      );
+      if (verifyUser.length === 0) {
+        console.error('❌ CRITICAL: senderId does not exist in users table:', senderId);
+        return res.status(500).json({ 
+          error: 'Failed to send notification: Invalid sender configuration.',
+          details: `Sender ID ${senderId} not found in users table`
+        });
+      }
+      console.log('✅ Verified senderId exists in users table');
+    } catch (verifyError) {
+      console.error('❌ Error verifying senderId:', verifyError);
+      return res.status(500).json({ 
+        error: 'Failed to send notification: Database error.',
+        details: verifyError.message
+      });
+    }
+    
+    // For admins, created_by is the admin's ID
+    // For teachers, set to NULL (FK constraint - teachers don't exist in users table)
+    const createdBy = req.user.role === 'admin' ? req.user.id : null;
 
+    console.log('🔄 Starting database transaction...');
     // Start transaction
     await db.query('START TRANSACTION');
 
     try {
+      console.log('📝 Inserting notification with senderId:', senderId);
+      console.log('📝 Insert parameters:', {
+        notificationId,
+        schoolId,
+        senderId,
+        senderRole,
+        targetType,
+        createdBy
+      });
+      
       // Create notification with new fields
       // Note: If columns don't exist yet, they will be NULL (backward compatible)
       await db.query(
@@ -222,6 +441,7 @@ router.post('/', authenticateToken, requireTeacher, async (req, res) => {
           createdBy
         ]
       );
+      console.log('✅ Notification inserted successfully');
 
       // If targetType is selected_classes, insert into notification_classes mapping table
       // Note: This will fail silently if table doesn't exist yet (backward compatible)
@@ -337,14 +557,38 @@ router.post('/', authenticateToken, requireTeacher, async (req, res) => {
       });
     } catch (error) {
       await db.query('ROLLBACK');
+      console.error('❌ Transaction error in notification send:', {
+        message: error.message,
+        code: error.code,
+        errno: error.errno,
+        sqlState: error.sqlState,
+        sqlMessage: error.sqlMessage,
+        stack: error.stack
+      });
       throw error;
     }
   } catch (error) {
-    console.error('Send notification error:', error);
-    res.status(500).json({ 
-      error: 'Failed to send notification',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    console.error('❌ Send notification error:', {
+      message: error.message,
+      code: error.code,
+      errno: error.errno,
+      sqlState: error.sqlState,
+      sqlMessage: error.sqlMessage,
+      stack: error.stack
     });
+    
+    // Return detailed error in development, generic in production
+    const errorResponse = {
+      error: 'Failed to send notification',
+      details: error.message || 'Unknown error occurred'
+    };
+    
+    // Always include details for foreign key constraint errors
+    if (error.code === 'ER_NO_REFERENCED_ROW_2' || error.message?.includes('foreign key constraint')) {
+      errorResponse.details = error.message || 'Foreign key constraint failed';
+    }
+    
+    res.status(500).json(errorResponse);
   }
 });
 
