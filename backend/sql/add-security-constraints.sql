@@ -148,3 +148,5 @@ SHOW INDEXES FROM teachers WHERE Column_name = 'school_id';
 SELECT '✅ Security constraints added successfully!' as status;
 
 
+
+

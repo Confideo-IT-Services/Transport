@@ -25,6 +25,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { SkeletonStatCard, SkeletonChart, SkeletonList } from "@/components/ui/skeleton";
+import { toast } from "sonner";
 
 export default function UnifiedDashboard() {
   const { user } = useAuth();
@@ -126,6 +128,7 @@ export default function UnifiedDashboard() {
           } catch (error) {
             console.error('Error loading attendance overview:', error);
             setAttendanceData([]);
+            toast.error('Failed to load attendance overview. Please refresh the page.');
           }
           
           // Fetch recent activities
@@ -267,6 +270,7 @@ export default function UnifiedDashboard() {
               } catch (error) {
                 console.error('Error loading attendance:', error);
                 setTodayAttendance(null);
+                toast.error('Failed to load today\'s attendance.');
               }
 
               // Load homework count
@@ -349,10 +353,13 @@ export default function UnifiedDashboard() {
             }
           } catch (error) {
             console.error('Error loading teacher data:', error);
+            toast.error('Failed to load teacher dashboard data. Please refresh the page.');
           }
         }
       } catch (error) {
         console.error('Error loading dashboard data:', error);
+        const errorMessage = error instanceof Error ? error.message : 'Failed to load dashboard data';
+        toast.error(errorMessage + ' Please refresh the page.');
       } finally {
         setLoading(false);
       }
@@ -428,11 +435,18 @@ export default function UnifiedDashboard() {
 
         {/* Stats Grid - Different for each role */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {isAdmin ? (
+          {loading ? (
+            <>
+              <SkeletonStatCard />
+              <SkeletonStatCard />
+              <SkeletonStatCard />
+              <SkeletonStatCard />
+            </>
+          ) : isAdmin ? (
             <>
               <StatCard
                 title="Total Classes"
-                value={loading ? "..." : totalClasses.toString()}
+                value={totalClasses.toString()}
                 icon={BookOpen}
                 trend=""
                 trendUp={true}
@@ -441,7 +455,7 @@ export default function UnifiedDashboard() {
               />
               <StatCard
                 title="Total Students"
-                value={loading ? "..." : totalStudents.toString()}
+                value={totalStudents.toString()}
                 icon={GraduationCap}
                 trend=""
                 trendUp={true}
@@ -450,7 +464,7 @@ export default function UnifiedDashboard() {
               />
               <StatCard
                 title="Total Teachers"
-                value={loading ? "..." : totalTeachers.toString()}
+                value={totalTeachers.toString()}
                 icon={Users}
                 trend=""
                 trendUp={true}
@@ -459,7 +473,7 @@ export default function UnifiedDashboard() {
               />
               <StatCard
                 title="Pending Approvals"
-                value={loading ? "..." : pendingApprovals.toString()}
+                value={pendingApprovals.toString()}
                 icon={Clock}
                 trend=""
                 trendUp={false}
@@ -521,9 +535,7 @@ export default function UnifiedDashboard() {
             <CardContent>
               {isAdmin ? (
                 loading ? (
-                  <div className="flex items-center justify-center h-[250px]">
-                    <p className="text-muted-foreground">Loading...</p>
-                  </div>
+                  <SkeletonChart />
                 ) : adminClassData.length > 0 ? (
                   <ResponsiveContainer width="100%" height={250}>
                     <BarChart data={adminClassData}>
@@ -547,9 +559,7 @@ export default function UnifiedDashboard() {
                 )
               ) : (
                 loading ? (
-                  <div className="flex items-center justify-center h-[250px]">
-                    <p className="text-muted-foreground">Loading schedule...</p>
-                  </div>
+                  <SkeletonList items={6} />
                 ) : isTodayHoliday ? (
                   <div className="flex flex-col items-center justify-center h-[250px] space-y-3">
                     <div className="w-16 h-16 rounded-full bg-amber-100 flex items-center justify-center">
@@ -600,7 +610,9 @@ export default function UnifiedDashboard() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              {attendanceData.length > 0 ? (
+              {loading ? (
+                <SkeletonChart />
+              ) : attendanceData.length > 0 ? (
                 <>
                   <div className="flex items-center justify-center">
                     <ResponsiveContainer width="100%" height={250}>
@@ -767,7 +779,9 @@ export default function UnifiedDashboard() {
             </div>
           </CardHeader>
           <CardContent>
-            {(() => {
+            {loading ? (
+              <SkeletonList items={5} />
+            ) : (() => {
               // Filter activities by class, section, and date
               let filteredActivities = allActivities;
               

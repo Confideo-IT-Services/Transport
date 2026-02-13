@@ -12,6 +12,8 @@ import { format } from "date-fns";
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { useToast } from "@/hooks/use-toast";
+import { toast } from "sonner";
+import { SkeletonList, SkeletonCard } from "@/components/ui/skeleton";
 
 export default function ParentDashboard() {
   const { user } = useAuth();
@@ -49,10 +51,8 @@ export default function ParentDashboard() {
       }
     } catch (error) {
       console.error('Failed to load children:', error);
-      // Show error to user
-      if (error instanceof Error) {
-        console.error('Error details:', error.message);
-      }
+      const errorMessage = error instanceof Error ? error.message : 'Failed to load children';
+      toast.error(errorMessage + ' Please refresh the page or contact support if the issue persists.');
     } finally {
       setLoading(false);
     }
@@ -61,11 +61,11 @@ export default function ParentDashboard() {
   if (loading) {
     return (
       <UnifiedLayout role="parent">
-        <div className="flex items-center justify-center h-64">
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
-            <p className="text-muted-foreground">Loading...</p>
+        <div className="space-y-6">
+          <div>
+            <SkeletonCard />
           </div>
+          <SkeletonList items={3} />
         </div>
       </UnifiedLayout>
     );
@@ -218,6 +218,8 @@ function ChildDetails({
       setTestResults(resultsData);
     } catch (error) {
       console.error('Failed to load child data:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Failed to load data';
+      toast.error(errorMessage + ' Please try again.');
     } finally {
       setLoading(false);
     }
@@ -231,6 +233,7 @@ function ChildDetails({
       );
     } catch (error) {
       console.error('Failed to mark notification as read:', error);
+      toast.error('Failed to mark notification as read. Please try again.');
     }
   };
 

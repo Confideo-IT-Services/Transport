@@ -69,6 +69,20 @@ function mapStudentToResponse(s) {
   const submittedData = s.submitted_data != null && typeof s.submitted_data === 'string'
     ? (() => { try { return JSON.parse(s.submitted_data); } catch (e) { return null; } })()
     : s.submitted_data;
+  
+  // Parse extra_fields JSON if it exists
+  let extraFields = {};
+  if (s.extra_fields) {
+    try {
+      extraFields = typeof s.extra_fields === 'string' 
+        ? JSON.parse(s.extra_fields) 
+        : s.extra_fields;
+    } catch (e) {
+      console.error('Error parsing extra_fields:', e);
+      extraFields = {};
+    }
+  }
+  
   return {
     id: s.id,
     name: s.name,
@@ -95,6 +109,7 @@ function mapStudentToResponse(s) {
     submittedData: submittedData,
     fatherName: submittedData?.fatherName ?? null,
     motherName: submittedData?.motherName ?? null,
+    extra_fields: extraFields,
   };
 }
 
@@ -110,7 +125,7 @@ router.get('/', authenticateToken, requireAdmin, async (req, res) => {
           `SELECT e.id as enrollment_id, e.student_id, e.academic_year_id, e.class_id, e.roll_no,
                   s.id, s.name, s.parent_phone, s.parent_email, s.parent_name, s.address, s.date_of_birth,
                   s.gender, s.blood_group, s.photo_url, s.status, s.tc_status, s.admission_number,
-                  s.registration_code, s.submitted_data, s.created_at,
+                  s.registration_code, s.submitted_data, s.extra_fields, s.created_at,
                   c.name as class_name, c.section as class_section
            FROM student_enrollments e
            JOIN students s ON s.id = e.student_id AND s.school_id = ?
@@ -143,7 +158,7 @@ router.get('/', authenticateToken, requireAdmin, async (req, res) => {
             const [after] = await db.query(
               `SELECT e.student_id, e.class_id, e.roll_no, s.id, s.name, s.parent_phone, s.parent_email, s.parent_name,
                       s.address, s.date_of_birth, s.gender, s.blood_group, s.photo_url, s.status, s.tc_status,
-                      s.admission_number, s.registration_code, s.submitted_data, s.created_at,
+                      s.admission_number, s.registration_code, s.submitted_data, s.extra_fields, s.created_at,
                       c.name as class_name, c.section as class_section
                FROM student_enrollments e
                JOIN students s ON s.id = e.student_id

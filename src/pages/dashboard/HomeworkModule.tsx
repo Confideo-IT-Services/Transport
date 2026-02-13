@@ -26,6 +26,7 @@ import {
 import { toast } from "sonner";
 import { Progress } from "@/components/ui/progress";
 import { homeworkApi, classesApi, studentsApi } from "@/lib/api";
+import { format } from "date-fns";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -340,6 +341,11 @@ export default function HomeworkModule() {
       return;
     }
 
+    // Proceed with homework creation
+    await proceedWithHomeworkCreation(isDraft);
+  };
+
+  const proceedWithHomeworkCreation = async (isDraft: boolean) => {
     try {
       setIsLoading(true);
       // Create separate homework entries for each subject (backend supports one subject per homework)
@@ -1226,6 +1232,7 @@ export default function HomeworkModule() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
     </>
   );
 }

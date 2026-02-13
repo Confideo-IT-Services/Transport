@@ -45,6 +45,7 @@ const otpRoutes = require('./routes/otp');
 const notificationsRoutes = require('./routes/notifications');
 const whatsappRoutes = require('./routes/whatsapp');
 const parentRoutes = require('./routes/parents');
+const visitorRequestsRoutes = require('./routes/visitorRequests');
 
 // Use routes
 app.use('/api/auth', authRoutes);
@@ -67,6 +68,7 @@ app.use('/api/otp', otpRoutes);
 app.use('/api/notifications', notificationsRoutes);
 app.use('/api/whatsapp', whatsappRoutes);
 app.use('/api/parents', parentRoutes);
+app.use('/api/visitor-requests', visitorRequestsRoutes);
 
 // Import background jobs (optional)
 if (process.env.ENABLE_WHATSAPP_STATUS_CHECK === 'true') {

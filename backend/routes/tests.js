@@ -18,8 +18,9 @@ router.get('/', authenticateToken, requireTeacher, async (req, res) => {
     const params = [];
 
     if (req.user.role === 'teacher') {
-      query += ' WHERE t.teacher_id = ?';
-      params.push(req.user.id);
+      // For teachers: show tests they created OR tests for classes where they are class teacher
+      query += ` WHERE (t.teacher_id = ? OR c.class_teacher_id = ?)`;
+      params.push(req.user.id, req.user.id);
     } else if (req.user.role === 'admin') {
       query += ' WHERE t.school_id = ?';
       params.push(req.user.schoolId);

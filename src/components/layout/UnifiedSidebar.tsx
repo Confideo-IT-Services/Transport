@@ -18,6 +18,7 @@ import {
   FileText,
   ChevronDown,
   ChevronRight,
+  UserPlus,
 } from "lucide-react";
 
 interface NavItem {
@@ -67,6 +68,12 @@ const adminNavSections: NavSection[] = [
         icon: GraduationCap,
         roles: ["admin"]
       },
+      { 
+        label: "Exit Formalities", 
+        href: "/dashboard/exit-formalities", 
+        icon: FileText,
+        roles: ["admin"]
+      },
     ]
   },
   {
@@ -82,6 +89,12 @@ const adminNavSections: NavSection[] = [
         label: "Attendance", 
         href: "/dashboard/attendance", 
         icon: ClipboardCheck,
+        roles: ["admin"]
+      },
+      { 
+        label: "Visitor Management", 
+        href: "/dashboard/visitor-management", 
+        icon: UserPlus,
         roles: ["admin"]
       },
     ]
@@ -178,6 +191,12 @@ const teacherNavSections: NavSection[] = [
         icon: BookOpen,
         roles: ["teacher"]
       },
+      { 
+        label: "Visitor Management", 
+        href: "/dashboard/visitor-management", 
+        icon: UserPlus,
+        roles: ["teacher"]
+      },
     ]
   },
   {
@@ -245,6 +264,12 @@ const parentNavItems: NavItem[] = [
     label: "Fees", 
     href: "/parent/dashboard/fees", 
     icon: IndianRupee,
+    roles: ["parent"]
+  },
+  { 
+    label: "Visitor Management", 
+    href: "/parent/dashboard/visitor-management", 
+    icon: UserPlus,
     roles: ["parent"]
   },
   { 

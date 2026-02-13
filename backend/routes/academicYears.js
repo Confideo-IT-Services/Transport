@@ -2,10 +2,10 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const router = express.Router();
 const db = require('../config/database');
-const { authenticateToken, requireAdmin } = require('../middleware/auth');
+const { authenticateToken, requireAdmin, requireTeacher } = require('../middleware/auth');
 
-// Get all academic years (filtered by school for admin)
-router.get('/', authenticateToken, requireAdmin, async (req, res) => {
+// Get all academic years (filtered by school for admin and teacher)
+router.get('/', authenticateToken, requireTeacher, async (req, res) => {
   try {
     const schoolId = req.user.schoolId;
     if (!schoolId) {
@@ -34,8 +34,8 @@ router.get('/', authenticateToken, requireAdmin, async (req, res) => {
   }
 });
 
-// Get active academic year
-router.get('/active', authenticateToken, requireAdmin, async (req, res) => {
+// Get active academic year (accessible to admin and teacher)
+router.get('/active', authenticateToken, requireTeacher, async (req, res) => {
   try {
     const schoolId = req.user.schoolId;
     if (!schoolId) {

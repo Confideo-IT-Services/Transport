@@ -73,10 +73,32 @@ export const removeToken = (): void => {
   localStorage.removeItem('conventpulse_token');
 };
 
-// API Helper
+// Retry configuration
+const MAX_RETRIES = 3;
+const RETRY_DELAY = 1000; // 1 second
+const RETRYABLE_STATUS_CODES = [408, 429, 500, 502, 503, 504];
+
+// Sleep helper for retry delays
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+// Check if error is retryable
+const isRetryableError = (error: any, status?: number): boolean => {
+  // Network errors are retryable
+  if (error instanceof TypeError && error.message.includes('fetch')) {
+    return true;
+  }
+  // Specific HTTP status codes are retryable
+  if (status && RETRYABLE_STATUS_CODES.includes(status)) {
+    return true;
+  }
+  return false;
+};
+
+// API Helper with retry logic
 const apiRequest = async <T>(
   endpoint: string,
-  options: RequestInit = {}
+  options: RequestInit = {},
+  retryCount = 0
 ): Promise<T> => {
   const token = getToken();
   
@@ -93,6 +115,25 @@ const apiRequest = async <T>(
     });
 
     if (!response.ok) {
+      // Handle authentication errors (don't retry)
+      if (response.status === 401 || response.status === 403) {
+        // Clear auth state
+        removeToken();
+        localStorage.removeItem("conventpulse_user");
+        
+        // Dispatch custom event for AuthContext to handle
+        window.dispatchEvent(new CustomEvent('auth:logout'));
+        
+        const errorData = await response.json().catch(() => ({ error: 'Unauthorized' }));
+        throw new Error(errorData.error || 'Session expired. Please login again.');
+      }
+      
+      // Check if error is retryable
+      if (retryCount < MAX_RETRIES && isRetryableError(null, response.status)) {
+        await sleep(RETRY_DELAY * (retryCount + 1)); // Exponential backoff
+        return apiRequest<T>(endpoint, options, retryCount + 1);
+      }
+      
       const errorData = await response.json().catch(() => ({ error: 'Request failed' }));
       const errorMessage = errorData.details 
         ? `${errorData.error}: ${errorData.details}` 
@@ -106,8 +147,12 @@ const apiRequest = async <T>(
 
     return response.json();
   } catch (error) {
-    // Check if it's a network/connection error
+    // Check if it's a network/connection error (retryable)
     if (error instanceof TypeError && error.message.includes('fetch')) {
+      if (retryCount < MAX_RETRIES) {
+        await sleep(RETRY_DELAY * (retryCount + 1)); // Exponential backoff
+        return apiRequest<T>(endpoint, options, retryCount + 1);
+      }
       throw new Error('Unable to connect to server. Please check if the backend is running and the database is connected.');
     }
     // Re-throw other errors
@@ -1555,3 +1600,52 @@ export const parentsApi = {
     });
   },
 };
+
+// ============ VISITOR REQUESTS API ============
+
+export const visitorRequestsApi = {
+  // Parent: Create visitor request
+  create: async (data: {
+    studentId: string;
+    classId: string;
+    visitorName: string;
+    visitorRelation: string;
+    visitReason: 'enquiry' | 'pickup' | 'other';
+    otherReason?: string;
+  }): Promise<{ success: boolean; requestId: string }> => {
+    return apiRequest('/visitor-requests', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  // Parent: Get their visitor requests
+  getMyRequests: async (): Promise<any[]> => {
+    return apiRequest<any[]>('/visitor-requests/my-requests');
+  },
+
+  // Teacher: Get visitor requests for their class
+  getTeacherRequests: async (): Promise<any[]> => {
+    return apiRequest<any[]>('/visitor-requests/teacher');
+  },
+
+  // Teacher: Accept visitor request
+  teacherAccept: async (requestId: string): Promise<{ success: boolean }> => {
+    return apiRequest(`/visitor-requests/${requestId}/teacher-accept`, {
+      method: 'PATCH',
+    });
+  },
+
+  // Admin: Get all visitor requests
+  getAdminRequests: async (): Promise<any[]> => {
+    return apiRequest<any[]>('/visitor-requests/admin');
+  },
+
+  // Admin: Accept visitor request
+  adminAccept: async (requestId: string): Promise<{ success: boolean }> => {
+    return apiRequest(`/visitor-requests/${requestId}/admin-accept`, {
+      method: 'PATCH',
+    });
+  },
+};
+

@@ -1024,26 +1024,10 @@ export default function StudentManagement() {
                       </td>
                       <td className="p-4 text-muted-foreground">{student.parentPhone}</td>
                       <td className="p-4">
-                        {user?.role === 'admin' && !isReadOnlyYear ? (
-                          <Select
-                            value={student.tcStatus || 'none'}
-                            onValueChange={(value) => handleUpdateTcStatus(student.id, value as 'none' | 'applied' | 'issued')}
-                          >
-                            <SelectTrigger className="w-36">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="none">None</SelectItem>
-                              <SelectItem value="applied">TC Applied</SelectItem>
-                              <SelectItem value="issued">TC Issued</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        ) : (
-                          <span className="text-sm text-muted-foreground">
-                            {student.tcStatus === 'applied' ? 'TC Applied' : 
-                             student.tcStatus === 'issued' ? 'TC Issued' : 'None'}
-                          </span>
-                        )}
+                        <span className="text-sm text-muted-foreground">
+                          {student.tcStatus === 'applied' ? 'TC Applied' : 
+                           student.tcStatus === 'issued' ? 'TC Issued' : 'NA'}
+                        </span>
                       </td>
                       <td className="p-4">
                         <div className="flex gap-2">
