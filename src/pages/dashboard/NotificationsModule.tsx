@@ -198,7 +198,14 @@ export default function NotificationsModule() {
       if (recipient === 'all-teachers') {
         targetType = 'all_teachers';
       } else if (recipient === 'all-parents') {
-        targetType = 'all_classes';
+        // For teachers: use their assigned classes only
+        // For admins: use all classes (targetClasses will be undefined, which means all)
+        if (!isAdmin && classes.length > 0) {
+          targetType = 'selected_classes';
+          targetClasses = classes.map(cls => cls.id);
+        } else {
+          targetType = 'all_classes';
+        }
       } else if (recipient.startsWith('class-')) {
         targetType = 'selected_classes';
         const classId = recipient.replace('class-', '');

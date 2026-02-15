@@ -1594,6 +1594,14 @@ export const parentsApi = {
     return apiRequest(`/parents/children/${studentId}/test-results`);
   },
   
+  getChildTests: async (studentId: string): Promise<any[]> => {
+    return apiRequest<any[]>(`/parents/children/${studentId}/tests`);
+  },
+  
+  getChildTestDetails: async (studentId: string, testId: string): Promise<any> => {
+    return apiRequest<any>(`/parents/children/${studentId}/tests/${testId}`);
+  },
+  
   markNotificationRead: async (notificationId: string) => {
     return apiRequest(`/parents/notifications/${notificationId}/read`, {
       method: 'POST',
