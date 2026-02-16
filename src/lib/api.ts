@@ -954,6 +954,27 @@ export const homeworkApi = {
     });
   },
 
+  // Update homework
+  update: async (id: string, data: {
+    title?: string;
+    description?: string;
+    subject?: string;
+    classId?: string;
+    dueDate?: string;
+  }): Promise<{ success: boolean }> => {
+    return apiRequest(`/homework/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
+  // Delete homework
+  delete: async (id: string): Promise<{ success: boolean }> => {
+    return apiRequest(`/homework/${id}`, {
+      method: 'DELETE',
+    });
+  },
+
   // Send homework to all parents for a specific date
   sendToAllParents: async (date: string): Promise<{
     success: boolean;

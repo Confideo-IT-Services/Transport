@@ -1,10 +1,11 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Navigate } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { StatCard } from "@/components/dashboard/StatCard";
 import { QuickAction } from "@/components/dashboard/QuickAction";
 import { Building2, Users, GraduationCap, UserCog, Plus, Settings, BarChart3, Shield } from "lucide-react";
 import { schoolsApi } from "@/lib/api";
+import { useAuth } from "@/contexts/AuthContext";
 import {
   AreaChart,
   Area,
@@ -19,6 +20,7 @@ import {
 
 export default function SuperAdminDashboard() {
   const navigate = useNavigate();
+  const { user, isAuthenticated, isLoading } = useAuth();
   const [stats, setStats] = useState({
     totalSchools: 0,
     totalStudents: 0,
@@ -26,7 +28,24 @@ export default function SuperAdminDashboard() {
     totalAdmins: 0,
   });
   const [schools, setSchools] = useState<any[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingData, setIsLoadingData] = useState(true);
+
+  // Redirect if not authenticated or not superadmin
+  if (!isLoading && (!isAuthenticated || user?.role !== 'superadmin')) {
+    return <Navigate to="/superadmin/login" replace />;
+  }
+
+  // Show loading while checking authentication
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
+          <p className="text-muted-foreground">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   useEffect(() => {
     loadData();
@@ -34,7 +53,7 @@ export default function SuperAdminDashboard() {
 
   const loadData = async () => {
     try {
-      setIsLoading(true);
+      setIsLoadingData(true);
       const schoolsData = await schoolsApi.getAll();
       setSchools(schoolsData);
 
@@ -54,7 +73,7 @@ export default function SuperAdminDashboard() {
       console.error('Failed to load dashboard data:', error);
       // Keep stats at 0 if API fails
     } finally {
-      setIsLoading(false);
+      setIsLoadingData(false);
     }
   };
 

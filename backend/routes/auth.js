@@ -290,14 +290,14 @@ router.get('/verify', authenticateToken, async (req, res) => {
         email: dbUser.email,
         phone: dbUser.phone,
         role: dbUser.role,
-        schoolId: dbUser.school_id,
-        schoolName: dbUser.school_name,
-        schoolCode: dbUser.school_code,
-        schoolType: dbUser.school_type,
-        schoolLocation: dbUser.school_location,
-        schoolAddress: dbUser.school_address,
-        schoolPhone: dbUser.school_phone,
-        schoolEmail: dbUser.school_email
+        schoolId: dbUser.school_id || null, // Allow null for superadmin
+        schoolName: dbUser.school_name || null,
+        schoolCode: dbUser.school_code || null,
+        schoolType: dbUser.school_type || null,
+        schoolLocation: dbUser.school_location || null,
+        schoolAddress: dbUser.school_address || null,
+        schoolPhone: dbUser.school_phone || null,
+        schoolEmail: dbUser.school_email || null
       });
     }
   } catch (error) {

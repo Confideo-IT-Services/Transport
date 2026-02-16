@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Send, BookOpen, Calendar, Clock, CheckCircle, Plus, MessageCircle, Save, Filter, X, TrendingUp, Users } from "lucide-react";
+import { Send, BookOpen, Calendar, Clock, CheckCircle, Plus, MessageCircle, Save, Filter, X, TrendingUp, Users, Pencil, Trash2 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
@@ -147,6 +147,15 @@ export default function HomeworkModule() {
     title: "",
     description: "",
     onConfirm: () => {},
+  });
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [editingHomework, setEditingHomework] = useState<HomeworkItem | null>(null);
+  const [editForm, setEditForm] = useState({
+    title: '',
+    description: '',
+    subject: '',
+    classId: '',
+    dueDate: '',
   });
 
   // Load classes and homework on mount
@@ -423,6 +432,132 @@ export default function HomeworkModule() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleEdit = (hw: HomeworkItem) => {
+    // Get the first subject (since backend stores one subject per homework)
+    const firstSubject = hw.subjects[0];
+    setEditingHomework(hw);
+    setEditForm({
+      title: hw.subjects.map(s => `${s.subjectName}: ${s.description}`).join('; ') || '',
+      description: firstSubject?.description || '',
+      subject: firstSubject?.subjectName || '',
+      classId: hw.classId || selectedClassId,
+      dueDate: hw.dueDate || '',
+    });
+    setIsEditDialogOpen(true);
+  };
+
+  const handleUpdate = async () => {
+    if (!editingHomework) return;
+
+    if (!editForm.subject || !editForm.classId) {
+      toast.error("Please fill in all required fields");
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      // Update homework via API
+      await homeworkApi.update(editingHomework.id.toString(), {
+        title: editForm.title || `${editForm.subject}: ${editForm.description}`,
+        description: editForm.description,
+        subject: editForm.subject,
+        classId: editForm.classId,
+        dueDate: editForm.dueDate || undefined,
+      });
+
+      // Reload homework data
+      const homeworkData = await homeworkApi.getAll();
+      
+      // Fetch students for each unique class in homework
+      const uniqueClassIds = [...new Set(homeworkData.map((h: any) => h.classId).filter(Boolean))];
+      const studentsMap: Record<string, Student[]> = {};
+      
+      for (const classId of uniqueClassIds) {
+        try {
+          const classStudents = await studentsApi.getByClass(classId);
+          studentsMap[classId] = classStudents.map((s: any, index: number) => {
+            const idStr = String(s.id);
+            const isUuid = typeof s.id === 'string' && (idStr.length > 10 || idStr.includes('-'));
+            const numericId = isUuid ? (index + 1) : (parseInt(s.id) || index + 1);
+            return {
+              id: numericId,
+              uuid: idStr,
+              name: s.name,
+              rollNo: s.rollNo || s.roll_no || String(index + 1).padStart(2, '0'),
+              completed: false
+            };
+          });
+        } catch (error) {
+          console.error(`Error loading students for class ${classId}:`, error);
+          studentsMap[classId] = [];
+        }
+      }
+      
+      // Transform homework data to match frontend format
+      const transformedHomework = await Promise.all(
+        homeworkData.map(async (h: any) => {
+          const classStudents = studentsMap[h.classId] || [];
+          const completions = await homeworkApi.getCompletions(h.id);
+          const completionMap = new Map(completions.map(c => [c.studentId, c.completed]));
+          
+          const students = classStudents.map(s => ({
+            ...s,
+            completed: completionMap.get(s.uuid) || false
+          }));
+          
+          return {
+            id: parseInt(h.id) || Date.now(),
+            subjects: [{
+              subjectId: h.subject?.toLowerCase().replace(/\s+/g, "-") || "subject",
+              subjectName: h.subject || "Subject",
+              description: h.description || ""
+            }],
+            dueDate: h.dueDate || new Date().toISOString().split('T')[0],
+            status: h.status || "active",
+            createdAt: h.createdAt || new Date().toISOString().split('T')[0],
+            sentToParents: false,
+            students: students,
+            classId: h.classId
+          };
+        })
+      );
+      
+      setHomework(transformedHomework);
+      toast.success("Homework updated successfully!");
+      setIsEditDialogOpen(false);
+      setEditingHomework(null);
+    } catch (error: any) {
+      console.error('Error updating homework:', error);
+      toast.error(error?.message || "Failed to update homework");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleDelete = async (hw: HomeworkItem) => {
+    setConfirmDialog({
+      open: true,
+      title: "Delete Homework",
+      description: `Are you sure you want to delete this homework? This action cannot be undone.`,
+      onConfirm: async () => {
+        try {
+          setIsLoading(true);
+          await homeworkApi.delete(hw.id.toString());
+          
+          // Remove from local state
+          setHomework(homework.filter(h => h.id !== hw.id));
+          toast.success("Homework deleted successfully!");
+          setConfirmDialog({ open: false, title: "", description: "", onConfirm: () => {} });
+        } catch (error: any) {
+          console.error('Error deleting homework:', error);
+          toast.error(error?.message || "Failed to delete homework");
+        } finally {
+          setIsLoading(false);
+        }
+      },
+    });
   };
 
   const handleSendToParents = (hw: HomeworkItem) => {
@@ -1061,10 +1196,32 @@ export default function HomeworkModule() {
                                     </span>
                                   </td>
                                   <td className="p-4">
-                                    <Button size="sm" variant="outline" onClick={() => openCompletionDialog(hw)}>
-                                      <Users className="w-4 h-4 mr-1" />
-                                      Update
-                                    </Button>
+                                    <div className="flex items-center gap-2">
+                                      <Button 
+                                        size="sm" 
+                                        variant="outline" 
+                                        onClick={() => openCompletionDialog(hw)}
+                                      >
+                                        <Users className="w-4 h-4 mr-1" />
+                                        Update
+                                      </Button>
+                                      <Button 
+                                        size="sm" 
+                                        variant="outline" 
+                                        onClick={() => handleEdit(hw)}
+                                      >
+                                        <Pencil className="w-4 h-4 mr-1" />
+                                        Edit
+                                      </Button>
+                                      <Button 
+                                        size="sm" 
+                                        variant="destructive" 
+                                        onClick={() => handleDelete(hw)}
+                                      >
+                                        <Trash2 className="w-4 h-4 mr-1" />
+                                        Delete
+                                      </Button>
+                                    </div>
                                   </td>
                                 </tr>
                               );
@@ -1214,6 +1371,68 @@ export default function HomeworkModule() {
         </DialogContent>
       </Dialog>
     </UnifiedLayout>
+
+      {/* Edit Homework Dialog */}
+      <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Edit Homework</DialogTitle>
+            <DialogDescription>Update homework details</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 pt-4">
+            <div className="space-y-2">
+              <Label>Subject *</Label>
+              <Input
+                value={editForm.subject}
+                onChange={(e) => setEditForm({ ...editForm, subject: e.target.value })}
+                placeholder="e.g., Mathematics"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Description *</Label>
+              <Textarea
+                value={editForm.description}
+                onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+                placeholder="Enter homework description..."
+                rows={4}
+              />
+            </div>
+            {(isAdmin || (!isAdmin && hasMultipleClasses)) && (
+              <div className="space-y-2">
+                <Label>Class *</Label>
+                <Select value={editForm.classId} onValueChange={(value) => setEditForm({ ...editForm, classId: value })}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a class" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {classes.map((cls) => (
+                      <SelectItem key={cls.id} value={cls.id}>
+                        {cls.name}{cls.section ? ` - Section ${cls.section}` : ''}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            <div className="space-y-2">
+              <Label>Due Date *</Label>
+              <Input
+                type="date"
+                value={editForm.dueDate}
+                onChange={(e) => setEditForm({ ...editForm, dueDate: e.target.value })}
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-4">
+              <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleUpdate} disabled={isLoading}>
+                {isLoading ? "Updating..." : "Update Homework"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Confirm Dialog */}
       <AlertDialog open={confirmDialog.open} onOpenChange={(open) => {

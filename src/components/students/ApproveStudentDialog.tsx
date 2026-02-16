@@ -23,15 +23,23 @@ export function ApproveStudentDialog({
   const [classes, setClasses] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingClasses, setLoadingClasses] = useState(false);
+  const [hasExistingClass, setHasExistingClass] = useState(false);
 
   useEffect(() => {
-    if (open) {
+    if (open && student) {
       loadClasses();
-      // Reset form
-      setClassId('');
-      setRollNo('');
+      // Check if student already has a class
+      if (student.class_id || student.classId) {
+        const existingClassId = student.class_id || student.classId;
+        setClassId(existingClassId);
+        setHasExistingClass(true);
+      } else {
+        setClassId('');
+        setHasExistingClass(false);
+      }
+      setRollNo(student.roll_no || student.rollNo || '');
     }
-  }, [open]);
+  }, [open, student]);
 
   const loadClasses = async () => {
     setLoadingClasses(true);
@@ -46,7 +54,8 @@ export function ApproveStudentDialog({
   };
 
   const handleApprove = async () => {
-    if (!classId) {
+    // Only require class selection if student doesn't have one
+    if (!hasExistingClass && !classId) {
       toast.error('Please select a class');
       return;
     }
@@ -54,7 +63,7 @@ export function ApproveStudentDialog({
     setLoading(true);
     try {
       const result = await studentsApi.approve(student.id, { 
-        classId, 
+        classId: classId || student.class_id || student.classId, // Use existing if no new selection
         rollNo: rollNo || undefined 
       });
       toast.success(result.message || 'Student approved and enrolled');
@@ -93,25 +102,57 @@ export function ApproveStudentDialog({
               </div>
             </div>
 
-            <div>
-              <Label>Assign to Class *</Label>
-              <Select 
-                value={classId} 
-                onValueChange={setClassId}
-                disabled={loadingClasses}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder={loadingClasses ? "Loading classes..." : "Select class"} />
-                </SelectTrigger>
-                <SelectContent>
-                  {classes.map(cls => (
-                    <SelectItem key={cls.id} value={cls.id}>
-                      {cls.name}{cls.section ? ` - ${cls.section}` : ''}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            {/* Only show class selector if student doesn't have a class */}
+            {!hasExistingClass ? (
+              <div>
+                <Label>Assign to Class *</Label>
+                <Select 
+                  value={classId} 
+                  onValueChange={setClassId}
+                  disabled={loadingClasses}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder={loadingClasses ? "Loading classes..." : "Select class"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {classes.map(cls => (
+                      <SelectItem key={cls.id} value={cls.id}>
+                        {cls.name}{cls.section ? ` - ${cls.section}` : ''}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : (
+              <div>
+                <Label>Class (Already Assigned)</Label>
+                <div className="mt-1 p-3 bg-muted rounded-md">
+                  <p className="text-sm font-medium">
+                    {(() => {
+                      const assignedClass = classes.find(c => c.id === (student.class_id || student.classId));
+                      return assignedClass 
+                        ? `${assignedClass.name}${assignedClass.section ? ` - ${assignedClass.section}` : ''}`
+                        : 'Class assigned';
+                    })()}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Class was assigned during registration
+                  </p>
+                </div>
+                {/* Allow changing class if needed */}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-2"
+                  onClick={() => {
+                    setHasExistingClass(false);
+                    setClassId('');
+                  }}
+                >
+                  Change Class
+                </Button>
+              </div>
+            )}
 
             <div>
               <Label>Roll Number (Optional)</Label>
@@ -131,7 +172,11 @@ export function ApproveStudentDialog({
             <Button variant="outline" onClick={onClose} className="flex-1" disabled={loading}>
               Cancel
             </Button>
-            <Button onClick={handleApprove} disabled={loading || !classId} className="flex-1">
+            <Button 
+              onClick={handleApprove} 
+              disabled={loading || (!hasExistingClass && !classId)} 
+              className="flex-1"
+            >
               {loading ? 'Approving...' : 'Approve & Enroll'}
             </Button>
           </div>

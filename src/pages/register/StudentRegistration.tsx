@@ -382,11 +382,13 @@ export default function StudentRegistration() {
       return;
     }
 
-    // For all_classes links, student must select class and section
+    // For all_classes links, class selection is required
     const isAllClasses = linkData.linkType === 'all_classes';
     const effectiveClassId = isAllClasses ? selectedClassId : linkData.classId;
+    
+    // Validate class is selected
     if (!effectiveClassId) {
-      toast.error("Please select class and section");
+      toast.error("Class assignment is required for this registration");
       return;
     }
 

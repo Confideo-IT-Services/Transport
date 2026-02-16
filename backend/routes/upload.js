@@ -70,7 +70,13 @@ router.post('/photo', uploadImages.single('photo'), async (req, res) => {
       console.error('❌ S3 not configured:', {
         hasBucket: !!BUCKET_NAME,
         hasCredentials: !!(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY),
-        hasClient: !!s3Client
+        hasClient: !!s3Client,
+        envVars: {
+          AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID ? '***SET***' : 'NOT SET',
+          AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY ? '***SET***' : 'NOT SET',
+          AWS_S3_BUCKET_NAME: process.env.AWS_S3_BUCKET_NAME || 'NOT SET',
+          AWS_REGION: process.env.AWS_REGION || 'NOT SET (default: ap-south-1)'
+        }
       });
       return res.status(503).json({
         error: 'Failed to upload photo',
@@ -180,7 +186,8 @@ router.post('/id-template', uploadImages.single('template'), async (req, res) =>
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
-    if (!isS3Configured()) {
+    if (!isS3Configured() || !s3Client) {
+      console.error('❌ S3 not configured for ID template upload');
       return res.status(503).json({
         error: 'Failed to upload ID template',
         details: 'S3 storage is not configured. Set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and AWS_S3_BUCKET_NAME in the server .env file.',
@@ -283,7 +290,8 @@ router.post('/id-layout', uploadJson.single('layout'), async (req, res) => {
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
-    if (!isS3Configured()) {
+    if (!isS3Configured() || !s3Client) {
+      console.error('❌ S3 not configured for layout upload');
       return res.status(503).json({
         error: 'Failed to upload layout',
         details: 'S3 storage is not configured. Set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and AWS_S3_BUCKET_NAME in the server .env file.',
@@ -360,8 +368,12 @@ router.post('/notification-attachment', uploadNotificationFile.single('attachmen
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
-    if (!BUCKET_NAME) {
-      return res.status(500).json({ error: 'S3 bucket not configured' });
+    if (!isS3Configured() || !s3Client || !BUCKET_NAME) {
+      console.error('❌ S3 not configured for notification attachment upload');
+      return res.status(503).json({ 
+        error: 'S3 bucket not configured',
+        details: 'S3 storage is not configured. Set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and AWS_S3_BUCKET_NAME in the server .env file.'
+      });
     }
 
     console.log('📤 Processing notification attachment upload:', {

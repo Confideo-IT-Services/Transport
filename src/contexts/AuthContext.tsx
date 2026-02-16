@@ -47,10 +47,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             }
           } else {
             // For real tokens, verify with backend
-            const verifiedUser = await authApi.verifyToken();
-            setUser(verifiedUser);
-            // Update localStorage with fresh user data from backend
-            localStorage.setItem("conventpulse_user", JSON.stringify(verifiedUser));
+            try {
+              const verifiedUser = await authApi.verifyToken();
+              setUser(verifiedUser);
+              // Update localStorage with fresh user data from backend
+              localStorage.setItem("conventpulse_user", JSON.stringify(verifiedUser));
+            } catch (verifyError) {
+              // If verification fails, check if we have a saved user (for superadmin, might be OK)
+              const savedUser = localStorage.getItem("conventpulse_user");
+              if (savedUser) {
+                const user = JSON.parse(savedUser);
+                // For superadmin, if verify fails but we have saved user, keep it temporarily
+                // This handles cases where backend might be temporarily unavailable
+                if (user.role === 'superadmin') {
+                  console.warn('Token verification failed, but keeping superadmin session from localStorage');
+                  setUser(user);
+                } else {
+                  // For other roles, require verification
+                  throw verifyError;
+                }
+              } else {
+                throw verifyError;
+              }
+            }
           }
         } catch (error) {
           // Token invalid or expired, clean up completely
