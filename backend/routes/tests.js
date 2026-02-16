@@ -355,7 +355,7 @@ router.get('/:id/results', authenticateToken, requireTeacher, async (req, res) =
        JOIN students s ON tr.student_id = s.id
        JOIN subjects sub ON tr.subject_id = sub.id
        WHERE tr.test_id = ?
-       ORDER BY s.roll_no, sub.name`,
+       ORDER BY CAST(s.roll_no AS UNSIGNED), sub.name`,
       [id]
     );
 

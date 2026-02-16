@@ -483,8 +483,11 @@ export const studentsApi = {
   },
 
   getByClass: async (classId: string, academicYearId?: string): Promise<any[]> => {
-    const params = academicYearId ? `?academicYearId=${encodeURIComponent(academicYearId)}` : '';
-    return apiRequest<any[]>(`/classes/${classId}/students${params}`);
+    const params = new URLSearchParams();
+    if (academicYearId) params.append('academicYearId', academicYearId);
+    // Add timestamp to prevent caching
+    params.append('_t', Date.now().toString());
+    return apiRequest<any[]>(`/classes/${classId}/students?${params.toString()}`);
   },
 
   getPending: async (): Promise<any[]> => {

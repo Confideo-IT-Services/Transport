@@ -646,7 +646,7 @@ router.get('/students', authenticateToken, async (req, res) => {
       params.push(searchPattern, searchPattern);
     }
 
-    query += ' ORDER BY s.roll_no, s.name';
+    query += ' ORDER BY CAST(s.roll_no AS UNSIGNED), s.name';
 
     const [results] = await db.query(query, params);
 

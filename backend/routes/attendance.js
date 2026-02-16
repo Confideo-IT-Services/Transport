@@ -40,7 +40,7 @@ router.get('/students/:classId', authenticateToken, async (req, res) => {
        FROM attendance a
        JOIN students s ON a.student_id = s.id
        WHERE a.class_id = ? AND a.date = ?
-       ORDER BY s.roll_no`,
+       ORDER BY CAST(s.roll_no AS UNSIGNED)`,
       [classId, date]
     );
 
@@ -48,7 +48,7 @@ router.get('/students/:classId', authenticateToken, async (req, res) => {
     const [students] = await db.query(
       `SELECT id, name, roll_no FROM students 
        WHERE class_id = ? AND status = 'approved' 
-       ORDER BY roll_no`,
+       ORDER BY CAST(roll_no AS UNSIGNED)`,
       [classId]
     );
 

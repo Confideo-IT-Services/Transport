@@ -65,7 +65,13 @@ router.post('/photo', uploadImages.single('photo'), async (req, res) => {
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
-    if (!isS3Configured()) {
+    // Check S3 configuration
+    if (!isS3Configured() || !s3Client) {
+      console.error('❌ S3 not configured:', {
+        hasBucket: !!BUCKET_NAME,
+        hasCredentials: !!(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY),
+        hasClient: !!s3Client
+      });
       return res.status(503).json({
         error: 'Failed to upload photo',
         details: 'S3 storage is not configured. Set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and AWS_S3_BUCKET_NAME in the server .env file.',
@@ -76,6 +82,13 @@ router.post('/photo', uploadImages.single('photo'), async (req, res) => {
       originalName: req.file.originalname,
       mimetype: req.file.mimetype,
       size: req.file.size
+    });
+
+    console.log('🔍 S3 Configuration Check:', {
+      isConfigured: isS3Configured(),
+      hasBucket: !!BUCKET_NAME,
+      hasClient: !!s3Client,
+      region: process.env.AWS_REGION || 'ap-south-1'
     });
 
     // Convert image to PNG format and resize/optimize
@@ -90,7 +103,7 @@ router.post('/photo', uploadImages.single('photo'), async (req, res) => {
     // Generate unique filename - store in media/photos/ folder
     const fileName = `media/photos/${uuidv4()}.png`;
     const contentType = 'image/png';
-    const region = process.env.AWS_REGION || 'us-east-1';
+    const region = process.env.AWS_REGION || 'ap-south-1';
 
     // Upload to S3 - try with ACL first, fallback without if ACL is disabled
     let command;
@@ -140,11 +153,22 @@ router.post('/photo', uploadImages.single('photo'), async (req, res) => {
     console.error('Error details:', {
       code: error.code,
       message: error.message,
-      name: error.name
+      name: error.name,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
+    
+    // Provide more detailed error information in development
+    const errorDetails = process.env.NODE_ENV === 'development' 
+      ? {
+          message: error.message,
+          code: error.code,
+          name: error.name
+        }
+      : undefined;
+    
     res.status(500).json({ 
       error: 'Failed to upload photo',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      details: errorDetails
     });
   }
 });
