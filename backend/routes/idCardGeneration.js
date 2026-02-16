@@ -104,7 +104,10 @@ router.get('/students/:schoolId', authenticateToken, requireSuperAdmin, async (r
     }
 
     const layout = normalizeLayout(templateLayout || templateData, template);
-    const fieldMappings = layout.fieldMappings || {};
+    // Prefer fieldMappings from DB (template_data) so template builder mappings are never lost when S3 layout is used
+    const dbMappings = templateData.fieldMappings || templateData.field_mappings || {};
+    const fieldMappings = { ...(layout.fieldMappings || {}), ...dbMappings };
+    layout.fieldMappings = fieldMappings;
 
     // Fetch all approved students
     const [students] = await db.query(
@@ -335,7 +338,10 @@ router.get('/preview/:studentId/:templateId', authenticateToken, requireSuperAdm
 
     // Normalize layout (same as main endpoint)
     const layout = normalizeLayout(templateLayout || templateData, t);
-    const fieldMappings = layout.fieldMappings || {};
+    // Prefer fieldMappings from DB (template_data) so template builder mappings are never lost
+    const dbMappingsPreview = templateData.fieldMappings || templateData.field_mappings || {};
+    const fieldMappings = { ...(layout.fieldMappings || {}), ...dbMappingsPreview };
+    layout.fieldMappings = fieldMappings;
 
     // Parse student extra_fields
     let extraFields = {};
@@ -453,5 +459,29 @@ router.get('/preview/:studentId/:templateId', authenticateToken, requireSuperAdm
   }
 });
 
-module.exports = router;
+// Proxy image for PDF generation (avoids CORS when images are on S3/external)
+router.get('/proxy-image', authenticateToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const url = req.query.url;
+    if (!url || typeof url !== 'string') {
+      return res.status(400).json({ error: 'Missing url query' });
+    }
+    const decoded = decodeURIComponent(url);
+    if (!decoded.startsWith('http://') && !decoded.startsWith('https://')) {
+      return res.status(400).json({ error: 'Invalid url' });
+    }
+    const response = await fetch(decoded, { headers: { 'Accept': 'image/*' } });
+    if (!response.ok) {
+      return res.status(response.status).send(response.statusText);
+    }
+    const contentType = response.headers.get('content-type') || 'image/png';
+    res.set('Content-Type', contentType);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    res.send(buffer);
+  } catch (error) {
+    console.error('Proxy image error:', error);
+    res.status(500).json({ error: 'Failed to fetch image' });
+  }
+});
 
+module.exports = router;

@@ -31,8 +31,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import jsPDF from "jspdf";
 import * as XLSX from "xlsx";
-import html2canvas from "html2canvas";
-import { createRoot } from "react-dom/client";
 import { 
   Printer, 
   Download, 
@@ -53,11 +51,13 @@ import {
   idCardTemplatesApi, 
   idCardGenerationApi, 
   studentsApi,
+  getToken,
   StudentForIDCard,
   IDCardTemplate 
 } from "@/lib/api";
 import { IDCardRenderer } from "@/components/idcards/IDCardRenderer";
-import { IDCardLayout, normalizeLayout, PX_PER_MM } from "@/lib/idCardLayout";
+import { IDCardLayout, normalizeLayout, PX_PER_MM, resolveElementValue } from "@/lib/idCardLayout";
+import type { IDCardElement } from "@/lib/idCardLayout";
 
 interface Student extends StudentForIDCard {
   selected: boolean;
@@ -76,8 +76,12 @@ export default function IDCardGeneration() {
   const [templateLayout, setTemplateLayout] = useState<IDCardLayout | null>(null);
   const [templateMetadata, setTemplateMetadata] = useState<any>(null);
   const [searchTerm, setSearchTerm] = useState("");
+  const ALL_CLASSES_VALUE = "__all__";
+  const [selectedClassFilter, setSelectedClassFilter] = useState(ALL_CLASSES_VALUE);
+  const [pdfSheetSize, setPdfSheetSize] = useState<"A4" | "12x18" | "13x19">("A4");
   const [isLoading, setIsLoading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
   
   // Dialogs
   const [showViewDialog, setShowViewDialog] = useState(false);
@@ -85,6 +89,7 @@ export default function IDCardGeneration() {
   const [showPreviewDialog, setShowPreviewDialog] = useState(false);
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [previewStudent, setPreviewStudent] = useState<Student | null>(null);
+  const [previewLayout, setPreviewLayout] = useState<IDCardLayout | null>(null);
 
   useEffect(() => {
     loadSchools();
@@ -142,30 +147,38 @@ export default function IDCardGeneration() {
     try {
       setIsLoading(true);
       const data = await idCardGenerationApi.getStudents(selectedSchool, selectedTemplateId);
-      
-      // Process students with resolved fields
-      const studentsWithSelection = data.students.map(s => ({ 
+      const rawStudents = Array.isArray(data.students) ? data.students : [];
+      // Normalize so name/admissionNumber/rollNo are always strings (avoid crash on filter/render)
+      const studentsWithSelection = rawStudents.map((s: any) => ({ 
         ...s, 
+        name: s.name != null ? String(s.name) : "",
+        admissionNumber: s.admissionNumber ?? s.admission_number ?? "",
+        rollNo: s.rollNo ?? s.roll_no ?? "",
+        class: s.class ?? s.className ?? s.class_name ?? "",
+        className: s.className ?? s.class_name ?? s.class ?? "",
+        photoUrl: s.photoUrl ?? s.photo_url ?? "",
         selected: false 
       }));
       setStudents(studentsWithSelection);
+      setSelectedClassFilter(ALL_CLASSES_VALUE);
       
       // Show warnings for missing fields
-      if (data.missing_fields.length > 0) {
-        const missingCount = data.missing_fields.length;
+      const missingFields = Array.isArray(data.missing_fields) ? data.missing_fields : [];
+      if (missingFields.length > 0) {
         toast.warning(
-          `${missingCount} student(s) have missing optional fields. ID cards will still generate.`,
+          `${missingFields.length} student(s) have missing optional fields. ID cards will still generate.`,
           { duration: 5000 }
         );
       }
       
       // Store template layout and metadata
-      const normalizedLayout = normalizeLayout(data.template_layout, {
+      const meta = data.template_metadata || {};
+      const normalizedLayout = normalizeLayout(data.template_layout ?? null, {
         name: selectedTemplate?.name || "Template",
-        width_mm: data.template_metadata?.card_width || selectedTemplate?.cardWidth || 54,
-        height_mm: data.template_metadata?.card_height || selectedTemplate?.cardHeight || 86,
-        orientation: (data.template_metadata?.orientation || selectedTemplate?.orientation || "portrait") as any,
-        backgroundImageUrl: data.template_metadata?.background_image_url || selectedTemplate?.backgroundImageUrl,
+        width_mm: meta.card_width ?? selectedTemplate?.cardWidth ?? 54,
+        height_mm: meta.card_height ?? selectedTemplate?.cardHeight ?? 86,
+        orientation: (meta.orientation ?? selectedTemplate?.orientation ?? "portrait") as any,
+        backgroundImageUrl: meta.background_image_url ?? selectedTemplate?.backgroundImageUrl,
       });
       
       console.log('Loaded template layout:', {
@@ -175,7 +188,7 @@ export default function IDCardGeneration() {
       });
       
       setTemplateLayout(normalizedLayout);
-      setTemplateMetadata(data.template_metadata);
+      setTemplateMetadata(meta);
       
       toast.success(`Loaded ${studentsWithSelection.length} students`);
     } catch (error: any) {
@@ -185,16 +198,36 @@ export default function IDCardGeneration() {
     }
   };
 
+  const classOptions = Array.from(
+    new Set(
+      students
+        .map(s => String(s.class ?? s.className ?? "").trim())
+        .filter(Boolean)
+    )
+  ).sort();
+
   const filteredStudents = students.filter(s => {
-    const matchesSearch = 
-      s.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      s.admissionNumber?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      s.rollNo?.toLowerCase().includes(searchTerm.toLowerCase());
-    return matchesSearch;
+    const name = (s.name ?? "").toString();
+    const admission = (s.admissionNumber ?? s.admission_number ?? "").toString();
+    const roll = (s.rollNo ?? s.roll_no ?? "").toString();
+    const term = searchTerm.trim().toLowerCase();
+    const matchesSearch = !term ||
+      name.toLowerCase().includes(term) ||
+      admission.toLowerCase().includes(term) ||
+      roll.toLowerCase().includes(term);
+    const studentClass = (s.class ?? s.className ?? "").toString().trim();
+    const matchesClass = selectedClassFilter === ALL_CLASSES_VALUE || studentClass === selectedClassFilter;
+    return matchesSearch && matchesClass;
   });
 
   const selectedStudents = students.filter(s => s.selected);
   const selectedCount = selectedStudents.length;
+
+  // Fixed counts: A4 = 10 (5×2), 12×18 & 13×19 = 25 (5×5)
+  const getCardsPerPage = (sheet: "A4" | "12x18" | "13x19") => {
+    if (sheet === "A4") return { cols: 5, rows: 2, total: 10 };
+    return { cols: 5, rows: 5, total: 25 };
+  };
 
   const toggleSelectAll = () => {
     const allSelected = filteredStudents.every(s => s.selected);
@@ -227,8 +260,31 @@ export default function IDCardGeneration() {
       toast.error("Please select a template first");
       return;
     }
-    setPreviewStudent(student);
     setShowPreviewDialog(true);
+    setPreviewStudent(null);
+    setPreviewLayout(null);
+    setPreviewLoading(true);
+    try {
+      const data = await idCardGenerationApi.getPreviewData(student.id, selectedTemplateId);
+      setPreviewStudent(data.student as Student);
+      const layout = data.template?.templateData;
+      if (layout) {
+        setPreviewLayout(normalizeLayout(layout, {
+          name: data.template?.name || "Template",
+          width_mm: data.template?.cardWidth || 54,
+          height_mm: data.template?.cardHeight || 86,
+          orientation: (data.template?.orientation || "portrait") as any,
+          backgroundImageUrl: data.template?.backgroundImageUrl,
+        }));
+      } else {
+        setPreviewLayout(templateLayout);
+      }
+    } catch (error: any) {
+      toast.error(error.message || "Failed to load preview");
+      setShowPreviewDialog(false);
+    } finally {
+      setPreviewLoading(false);
+    }
   };
 
   const handleUpdateStudent = async (updatedData: Partial<Student>) => {
@@ -250,57 +306,221 @@ export default function IDCardGeneration() {
     }
   };
 
-  const renderIDCard = (student: Student, template: IDCardTemplate | null) => {
-    if (!templateLayout) return null;
-    return <IDCardRenderer layout={templateLayout} student={student} renderHeightPx={400} />;
+  const renderIDCard = (student: Student, layout: IDCardLayout | null) => {
+    if (!layout) return null;
+    return <IDCardRenderer layout={layout} student={student} renderHeightPx={400} />;
   };
 
-  const waitForImages = async (rootEl: HTMLElement) => {
-    const imgs = Array.from(rootEl.querySelectorAll("img"));
-    await Promise.all(
-      imgs.map(
-        (img) =>
-          new Promise<void>((resolve) => {
-            if ((img as HTMLImageElement).complete) return resolve();
-            img.addEventListener("load", () => resolve(), { once: true });
-            img.addEventListener("error", () => resolve(), { once: true });
-          })
-      )
-    );
+  /** Fetch image URL to base64 data URL for jsPDF. Tries direct fetch, then backend proxy if CORS blocks. */
+  const fetchImageAsDataUrl = async (url: string): Promise<string | null> => {
+    if (!url || !url.startsWith("http")) return null;
+    const blobToDataUrl = (blob: Blob): Promise<string> =>
+      new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    try {
+      const res = await fetch(url, { mode: "cors", credentials: "omit" });
+      if (res.ok) return await blobToDataUrl(await res.blob());
+    } catch {
+      // CORS or network error – try backend proxy
+    }
+    try {
+      const apiBase = import.meta.env.VITE_API_URL || "http://localhost:3000/api";
+      const token = getToken();
+      const res = await fetch(
+        `${apiBase}/id-cards/proxy-image?url=${encodeURIComponent(url)}`,
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+      );
+      if (res.ok) return await blobToDataUrl(await res.blob());
+    } catch {
+      // ignore
+    }
+    return null;
   };
 
-  const renderCardToPngDataUrl = async (layout: IDCardLayout, student: Student) => {
-    const heightPx = layout.height_mm * PX_PER_MM;
-    const widthPx = layout.width_mm * PX_PER_MM;
-
-    const host = document.createElement("div");
-    host.style.position = "fixed";
-    host.style.left = "-100000px";
-    host.style.top = "0";
-    host.style.width = `${widthPx}px`;
-    host.style.height = `${heightPx}px`;
-    host.style.background = "transparent";
-    document.body.appendChild(host);
-
-    const root = createRoot(host);
-    root.render(<IDCardRenderer layout={layout} student={student} renderHeightPx={heightPx} />);
-
-    // Let React paint + images begin loading
-    await new Promise((r) => setTimeout(r, 50));
-    await waitForImages(host);
-
-    const target = host.firstElementChild as HTMLElement;
-    const canvas = await html2canvas(target, {
-      backgroundColor: null,
-      scale: 2,
-      useCORS: true,
-      allowTaint: true,  // Allow cross-origin images
-      logging: false,     // Disable console logs
+  /** Load a data URL into an Image for canvas drawing */
+  const loadImage = (dataUrl: string): Promise<HTMLImageElement> =>
+    new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = dataUrl;
     });
 
-    root.unmount();
-    host.remove();
+  /** DPI used for PDF card bitmaps so zoomed view stays sharp */
+  const PDF_DPI = 300;
+
+  /** Render a single card to a 300 DPI canvas and return PNG data URL for embedding in PDF */
+  const renderCardToHighResDataUrl = async (
+    layout: IDCardLayout,
+    student: Student,
+    cardWidthMm: number,
+    cardHeightMm: number,
+    imageCache: Map<string, string | null>
+  ): Promise<string> => {
+    const w = (cardWidthMm / 25.4) * PDF_DPI;
+    const h = (cardHeightMm / 25.4) * PDF_DPI;
+    const scale = PDF_DPI / 96;
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(w);
+    canvas.height = Math.round(h);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return "";
+
+    // Background
+    if (layout.backgroundImageUrl) {
+      let dataUrl = imageCache.get(layout.backgroundImageUrl);
+      if (dataUrl === undefined) {
+        dataUrl = await fetchImageAsDataUrl(layout.backgroundImageUrl);
+        imageCache.set(layout.backgroundImageUrl, dataUrl);
+      }
+      if (dataUrl) {
+        try {
+          const img = await loadImage(dataUrl);
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        } catch {
+          // skip background
+        }
+      }
+    }
+
+    for (const el of layout.elements || []) {
+      const elX = (w * (el.x_percent || 0)) / 100;
+      const elY = (h * (el.y_percent || 0)) / 100;
+      const elW = (w * (el.width_percent || 0)) / 100;
+      const elH = (h * (el.height_percent || 0)) / 100;
+      if (elW <= 0 || elH <= 0) continue;
+
+      if (el.type === "text") {
+        const value = resolveElementValue(layout, student, el as IDCardElement);
+        if (!value) continue;
+        const fontSizePx = (el.fontSize || 14) * scale;
+        ctx.font = `${el.fontWeight === "bold" ? "bold " : ""}${fontSizePx}px helvetica, Arial, sans-serif`;
+        ctx.fillStyle = el.color && /^#([0-9A-Fa-f]{6})$/.test(el.color) ? el.color : "#000000";
+        ctx.textBaseline = "top";
+        const lineHeight = fontSizePx * 1.2;
+        const words = value.split(/\s+/);
+        let line = "";
+        let y = elY;
+        for (const word of words) {
+          const test = line ? line + " " + word : word;
+          const metrics = ctx.measureText(test);
+          if (metrics.width > elW && line) {
+            ctx.fillText(line, elX, y, elW);
+            line = word;
+            y += lineHeight;
+          } else {
+            line = test;
+          }
+        }
+        if (line) ctx.fillText(line, elX, y, elW);
+        continue;
+      }
+
+      if (el.type === "photo" || el.type === "logo") {
+        const url = resolveElementValue(layout, student, el as IDCardElement);
+        if (!url) continue;
+        let dataUrl = imageCache.get(url);
+        if (dataUrl === undefined) {
+          dataUrl = await fetchImageAsDataUrl(url);
+          imageCache.set(url, dataUrl);
+        }
+        if (dataUrl) {
+          try {
+            const img = await loadImage(dataUrl);
+            ctx.drawImage(img, elX, elY, elW, elH);
+          } catch {
+            // skip image
+          }
+        }
+      }
+    }
+
     return canvas.toDataURL("image/png");
+  };
+
+  /** Draw a single ID card on the PDF using jsPDF (no html2canvas = no blank/CORS issues) */
+  const drawCardOnPdf = async (
+    pdf: jsPDF,
+    layout: IDCardLayout,
+    student: Student,
+    cardX: number,
+    cardY: number,
+    cardW: number,
+    cardH: number,
+    imageCache: Map<string, string | null>
+  ) => {
+    // Background image
+    if (layout.backgroundImageUrl) {
+      let dataUrl = imageCache.get(layout.backgroundImageUrl);
+      if (dataUrl === undefined) {
+        dataUrl = await fetchImageAsDataUrl(layout.backgroundImageUrl);
+        imageCache.set(layout.backgroundImageUrl, dataUrl);
+      }
+      if (dataUrl) {
+        const fmt = dataUrl.startsWith("data:image/png") ? "PNG" : "JPEG";
+        try {
+          pdf.addImage(dataUrl, fmt, cardX, cardY, cardW, cardH);
+        } catch {
+          try {
+            pdf.addImage(dataUrl, fmt === "PNG" ? "JPEG" : "PNG", cardX, cardY, cardW, cardH);
+          } catch {
+            // skip background
+          }
+        }
+      }
+    }
+
+    const fontSizePt = (px: number) => Math.max(6, (px || 14) * 0.75);
+
+    for (const el of layout.elements || []) {
+      const elX = cardX + (cardW * (el.x_percent || 0)) / 100;
+      const elY = cardY + (cardH * (el.y_percent || 0)) / 100;
+      const elW = (cardW * (el.width_percent || 0)) / 100;
+      const elH = (cardH * (el.height_percent || 0)) / 100;
+      if (elW <= 0 || elH <= 0) continue;
+
+      if (el.type === "text") {
+        const value = resolveElementValue(layout, student, el as IDCardElement);
+        if (!value) continue;
+        const pt = fontSizePt(el.fontSize || 14);
+        pdf.setFontSize(pt);
+        const hex = el.color && /^#([0-9A-Fa-f]{6})$/.test(el.color) ? el.color : "#000000";
+        pdf.setTextColor(hex);
+        pdf.setFont("helvetica", el.fontWeight === "bold" ? "bold" : "normal");
+        try {
+          pdf.text(value, elX, elY + Math.min(elH - 1, pt * 0.35), { maxWidth: elW });
+        } catch {
+          pdf.text(value, elX, elY + elH * 0.5, { maxWidth: elW });
+        }
+        continue;
+      }
+
+      if (el.type === "photo" || el.type === "logo") {
+        const url = resolveElementValue(layout, student, el as IDCardElement);
+        if (!url) continue;
+        let dataUrl = imageCache.get(url);
+        if (dataUrl === undefined) {
+          dataUrl = await fetchImageAsDataUrl(url);
+          imageCache.set(url, dataUrl);
+        }
+        if (dataUrl) {
+          const fmt = dataUrl.startsWith("data:image/png") ? "PNG" : "JPEG";
+          try {
+            pdf.addImage(dataUrl, fmt, elX, elY, elW, elH);
+          } catch {
+            try {
+              pdf.addImage(dataUrl, fmt === "PNG" ? "JPEG" : "PNG", elX, elY, elW, elH);
+            } catch {
+              // skip image
+            }
+          }
+        }
+      }
+    }
   };
 
   const handleGeneratePDF = async () => {
@@ -316,41 +536,73 @@ export default function IDCardGeneration() {
 
     try {
       setIsGenerating(true);
-      
-      // Calculate layout (mm)
-      const cardWidth = templateLayout.width_mm;
-      const cardHeight = templateLayout.height_mm;
-      const sheetSize = selectedTemplate.sheetSize;
+
+      const sheetSize = pdfSheetSize;
       const orientation = selectedTemplate.orientation;
 
-      let sheetWidth = 210; // A4 width in mm
-      let sheetHeight = 297; // A4 height in mm
-      
-      if (sheetSize === "13x19") {
+      // Fixed card size from template (same on all sheets)
+      const cardWidth = templateLayout.width_mm;
+      const cardHeight = templateLayout.height_mm;
+
+      let sheetWidth: number;
+      let sheetHeight: number;
+      let cardsPerRow: number;
+      let cardsPerColumn: number;
+      let marginLeft: number;
+      let marginRight: number;
+      let marginTop: number;
+      let marginBottom: number;
+      let gap: number;
+
+      if (sheetSize === "A4") {
+        gap = 3;
+        sheetWidth = 297;
+        sheetHeight = 210;
+        cardsPerRow = 5;
+        cardsPerColumn = 2;
+        const m = Math.max(2, Math.min((297 - 5 * cardWidth - 4 * gap) / 2, (210 - 2 * cardHeight - 1 * gap) / 2));
+        marginLeft = marginRight = marginTop = marginBottom = m;
+      } else if (sheetSize === "12x18") {
+        // 12×18: Top/Bottom 7mm, Left/Right 9mm, gap 2mm
+        marginTop = marginBottom = 7;
+        marginLeft = marginRight = 9;
+        gap = 2;
+        sheetWidth = 305;
+        sheetHeight = 457;
+        if (orientation === "landscape") {
+          sheetWidth = 457;
+          sheetHeight = 305;
+        }
+        cardsPerRow = 5;
+        cardsPerColumn = 5;
+      } else {
+        gap = 3;
         sheetWidth = 330;
         sheetHeight = 483;
-      }
-      
-      if (orientation === "landscape") {
-        [sheetWidth, sheetHeight] = [sheetHeight, sheetWidth];
+        if (orientation === "landscape") {
+          sheetWidth = 483;
+          sheetHeight = 330;
+        }
+        cardsPerRow = 5;
+        cardsPerColumn = 5;
+        const m = Math.max(2, Math.min((sheetWidth - 5 * cardWidth - 4 * gap) / 2, (sheetHeight - 5 * cardHeight - 4 * gap) / 2));
+        marginLeft = marginRight = marginTop = marginBottom = m;
       }
 
-      const margin = 10;
-      const gap = 3;
-      const availableWidth = sheetWidth - (margin * 2);
-      const availableHeight = sheetHeight - (margin * 2);
-      
-      const cardsPerRow = Math.floor((availableWidth + gap) / (cardWidth + gap));
-      const cardsPerColumn = Math.floor((availableHeight + gap) / (cardHeight + gap));
       const cardsPerPage = cardsPerRow * cardsPerColumn;
 
-      // Create PDF
+      const a4Landscape = sheetSize === "A4";
+      const pdfFormat =
+        sheetSize === "13x19" ? (orientation === "landscape" ? [483, 330] : [330, 483])
+        : sheetSize === "12x18" ? (orientation === "landscape" ? [457, 305] : [305, 457])
+        : "a4";
       const pdf = new jsPDF({
-        orientation: orientation === "landscape" ? "landscape" : "portrait",
+        orientation: a4Landscape || orientation === "landscape" ? "landscape" : "portrait",
         unit: "mm",
-        format: sheetSize === "13x19" ? [330, 483] : "a4",
+        format: pdfFormat,
       });
 
+      const imageCache = new Map<string, string | null>();
       const pages = Math.ceil(selectedCount / cardsPerPage);
 
       for (let page = 0; page < pages; page++) {
@@ -365,12 +617,33 @@ export default function IDCardGeneration() {
           const student = pageStudents[index];
           const row = Math.floor(index / cardsPerRow);
           const col = index % cardsPerRow;
+          const x = marginLeft + col * (cardWidth + gap);
+          const y = marginTop + row * (cardHeight + gap);
 
-          const x = margin + col * (cardWidth + gap);
-          const y = margin + row * (cardHeight + gap);
-
-          const dataUrl = await renderCardToPngDataUrl(templateLayout, student);
-          pdf.addImage(dataUrl, "PNG", x, y, cardWidth, cardHeight);
+          const cardDataUrl = await renderCardToHighResDataUrl(
+            templateLayout,
+            student,
+            cardWidth,
+            cardHeight,
+            imageCache
+          );
+          if (cardDataUrl) {
+            try {
+              pdf.addImage(cardDataUrl, "PNG", x, y, cardWidth, cardHeight);
+            } catch {
+              try {
+                pdf.addImage(cardDataUrl, "JPEG", x, y, cardWidth, cardHeight);
+              } catch {
+                await drawCardOnPdf(pdf, templateLayout, student, x, y, cardWidth, cardHeight, imageCache);
+              }
+            }
+          } else {
+            await drawCardOnPdf(pdf, templateLayout, student, x, y, cardWidth, cardHeight, imageCache);
+          }
+          // Border around each ID card (light gray stroke)
+          pdf.setDrawColor(180, 180, 180);
+          pdf.setLineWidth(0.25);
+          pdf.rect(x, y, cardWidth, cardHeight);
         }
       }
 
@@ -448,7 +721,7 @@ export default function IDCardGeneration() {
         {/* Selection Filters */}
         <Card>
           <CardContent className="pt-6">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <div>
                 <Label className="mb-2 block">School</Label>
                 <Select value={selectedSchool} onValueChange={setSelectedSchool}>
@@ -479,6 +752,19 @@ export default function IDCardGeneration() {
                   </SelectContent>
                 </Select>
               </div>
+              <div>
+                <Label className="mb-2 block">PDF sheet size</Label>
+                <Select value={pdfSheetSize} onValueChange={(v: "A4" | "12x18" | "13x19") => setPdfSheetSize(v)}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="A4">A4 — 5×2 = 10 cards (landscape)</SelectItem>
+                    <SelectItem value="12x18">12×18 — 5×5 = 25 cards</SelectItem>
+                    <SelectItem value="13x19">13×19 — 5×5 = 25 cards</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
               <div className="flex items-end">
                 <Button 
                   onClick={handleLoadSubmissions} 
@@ -497,18 +783,37 @@ export default function IDCardGeneration() {
           </CardContent>
         </Card>
 
-        {/* Search */}
+        {/* Search and Class filter - aligned with Selection Filters above */}
         {students.length > 0 && (
           <Card>
             <CardContent className="pt-6">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <Input
-                  placeholder="Search by name, admission number, or roll number..."
-                  className="pl-10"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-end">
+                <div className="relative">
+                  <Label className="mb-2 block">Search</Label>
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+                    <Input
+                      placeholder="Search by name, admission number, or roll number..."
+                      className="pl-10"
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <Label className="mb-2 block">Class</Label>
+                  <Select value={selectedClassFilter} onValueChange={setSelectedClassFilter}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="All classes" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={ALL_CLASSES_VALUE}>All classes</SelectItem>
+                      {classOptions.map((cls) => (
+                        <SelectItem key={cls} value={cls}>{cls}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -578,12 +883,12 @@ export default function IDCardGeneration() {
                         <td className="p-4">
                           <div className="flex items-center gap-3">
                             <Avatar className="w-10 h-10">
-                              <AvatarImage src={student.photoUrl} />
+                              <AvatarImage src={student.photoUrl ?? student.photo_url} alt="" />
                               <AvatarFallback className="bg-primary/10 text-primary">
-                                {student.name.split(" ").map(n => n[0]).join("").substring(0, 2).toUpperCase()}
+                                {((student.name ?? "").toString().split(" ").map((n: string) => n[0] || "").join("") || "?").substring(0, 2).toUpperCase()}
                               </AvatarFallback>
                             </Avatar>
-                            <span className="font-medium">{student.name}</span>
+                            <span className="font-medium">{student.name ?? ""}</span>
                           </div>
                         </td>
                         <td className="p-4 text-muted-foreground">{student.admissionNumber || "-"}</td>
@@ -767,11 +1072,15 @@ export default function IDCardGeneration() {
             <DialogHeader>
               <DialogTitle>Preview ID Card</DialogTitle>
             </DialogHeader>
-            {previewStudent && selectedTemplate && (
-              <div className="flex justify-center">
-                {renderIDCard(previewStudent, selectedTemplate)}
+            {previewLoading ? (
+              <div className="flex justify-center items-center py-12">
+                <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
               </div>
-            )}
+            ) : previewStudent && (previewLayout || templateLayout) ? (
+              <div className="flex justify-center">
+                {renderIDCard(previewStudent, previewLayout || templateLayout)}
+              </div>
+            ) : null}
             <DialogFooter>
               <Button variant="outline" onClick={() => setShowPreviewDialog(false)}>
                 Close

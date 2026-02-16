@@ -111,6 +111,15 @@ export function getByPath(obj: any, path: string) {
   }, obj);
 }
 
+/** Common student field aliases so mapping works with snake_case or camelCase from API */
+const STUDENT_FIELD_ALIASES: Record<string, string[]> = {
+  photo: ['photo', 'photoUrl', 'photo_url'],
+  name: ['name'],
+  roll_no: ['rollNo', 'roll_no'],
+  admission_number: ['admissionNumber', 'admission_number'],
+  class: ['class', 'className', 'class_name'],
+};
+
 export function resolveElementValue(layout: IDCardLayout, student: any, el: IDCardElement): string {
   const templateField = el.templateField;
   if (!templateField) return '';
@@ -120,10 +129,20 @@ export function resolveElementValue(layout: IDCardLayout, student: any, el: IDCa
   if (resolved !== undefined && resolved !== null) return String(resolved);
 
   const mappingPath = layout.fieldMappings?.[templateField] || templateField;
-  const val = mappingPath.includes('.') ? getByPath(student, mappingPath) : student?.[mappingPath];
+  let val = mappingPath.includes('.') ? getByPath(student, mappingPath) : student?.[mappingPath];
+  if (val === undefined || val === null) {
+    // Fallback: try common aliases for this templateField (e.g. photo -> photoUrl, photo_url)
+    const keys = STUDENT_FIELD_ALIASES[templateField];
+    if (keys && student) {
+      for (const k of keys) {
+        const v = student[k];
+        if (v !== undefined && v !== null) {
+          val = v;
+          break;
+        }
+      }
+    }
+  }
   if (val === undefined || val === null) return '';
   return String(val);
 }
-
-
-

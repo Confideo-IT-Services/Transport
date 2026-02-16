@@ -741,7 +741,8 @@ export const uploadApi = {
     
     if (!response.ok) {
       const error = await response.json().catch(() => ({ error: 'Upload failed' }));
-      throw new Error(error.error || 'Failed to upload ID template');
+      const msg = error.details ? `${error.error}: ${error.details}` : (error.error || 'Failed to upload ID template');
+      throw new Error(msg);throw new Error(error.error || 'Failed to upload ID template');
     }
     
     return response.json();
@@ -762,7 +763,8 @@ export const uploadApi = {
     
     if (!response.ok) {
       const error = await response.json().catch(() => ({ error: 'Upload failed' }));
-      throw new Error(error.error || 'Failed to upload ID layout');
+      const msg = error.details ? `${error.error}: ${error.details}` : (error.error || 'Failed to upload ID layout');
+      throw new Error(msg);throw new Error(error.error || 'Failed to upload ID layout');
     }
     
     return response.json();
