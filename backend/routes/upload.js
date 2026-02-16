@@ -308,7 +308,7 @@ router.post('/id-layout', uploadJson.single('layout'), async (req, res) => {
 
     // Generate unique filename - store in media/idtemplates/layouts/ folder
     const fileName = `media/idtemplates/layouts/${uuidv4()}.json`;
-    const region = process.env.AWS_REGION || 'us-east-1';
+    const region = process.env.AWS_REGION || 'ap-south-1';
 
     // Upload to S3 - try with ACL first, fallback without if ACL is disabled
     let command;
