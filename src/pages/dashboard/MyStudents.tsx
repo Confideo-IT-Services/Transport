@@ -251,11 +251,20 @@ export default function MyStudents() {
 
     setIsSaving(true);
     try {
-      await studentsApi.update(selectedStudent.id, editForm);
+      // Normalize gender to lowercase to match database ENUM
+      const normalizedForm = {
+        ...editForm,
+        gender: editForm.gender ? editForm.gender.toLowerCase() : editForm.gender
+      };
+      
+      await studentsApi.update(selectedStudent.id, normalizedForm);
       toast.success("Student updated successfully!");
       setIsEditOpen(false);
       setSelectedStudent(null);
-      loadData(); // Reload data
+      
+      // Force reload with a small delay to ensure backend has processed
+      await new Promise(resolve => setTimeout(resolve, 100));
+      await loadData();
     } catch (error: any) {
       console.error('Error updating student:', error);
       toast.error(error?.message || "Failed to update student");
@@ -652,9 +661,9 @@ export default function MyStudents() {
                       <SelectValue placeholder="Select gender" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="Male">Male</SelectItem>
-                      <SelectItem value="Female">Female</SelectItem>
-                      <SelectItem value="Other">Other</SelectItem>
+                      <SelectItem value="male">Male</SelectItem>
+                      <SelectItem value="female">Female</SelectItem>
+                      <SelectItem value="other">Other</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

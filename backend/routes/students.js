@@ -131,7 +131,7 @@ router.get('/', authenticateToken, requireAdmin, async (req, res) => {
            JOIN students s ON s.id = e.student_id AND s.school_id = ?
            LEFT JOIN classes c ON c.id = e.class_id
            WHERE e.school_id = ? AND e.academic_year_id = ?
-           ORDER BY c.name, c.section, e.roll_no, s.name`,
+           ORDER BY c.name, c.section, CAST(e.roll_no AS UNSIGNED), s.name`,
           [schoolId, schoolId, academicYearId]
         );
         if (enrollments.length === 0) {
@@ -1336,6 +1336,42 @@ router.put('/:id', authenticateToken, async (req, res) => {
 
     if (result.affectedRows === 0) {
       return res.status(404).json({ error: 'Student not found' });
+    }
+
+    // Also update student_enrollments for active academic year
+    // This ensures changes show up when academic year is selected
+    const [activeYear] = await db.query(
+      'SELECT id FROM academic_years WHERE school_id = ? AND status = ? LIMIT 1',
+      [schoolId, 'active']
+    );
+
+    if (activeYear.length > 0) {
+      const enrollmentUpdates = [];
+      const enrollmentValues = [];
+      
+      // Update roll_no in student_enrollments if it was updated
+      if (rollNo !== undefined) {
+        enrollmentUpdates.push('roll_no = ?');
+        enrollmentValues.push(rollNo);
+      }
+      
+      // Update class_id in student_enrollments if it was changed
+      if (classId !== undefined) {
+        enrollmentUpdates.push('class_id = ?');
+        enrollmentValues.push(classId);
+      }
+      
+      // If there are enrollment updates, apply them
+      if (enrollmentUpdates.length > 0) {
+        enrollmentValues.push(id, activeYear[0].id);
+        await db.query(
+          `UPDATE student_enrollments 
+           SET ${enrollmentUpdates.join(', ')} 
+           WHERE student_id = ? AND academic_year_id = ?`,
+          enrollmentValues
+        );
+        console.log('✅ Student enrollment updated:', { studentId: id, academicYearId: activeYear[0].id });
+      }
     }
 
     console.log('✅ Student updated:', { id, updatedFields: updates.length });

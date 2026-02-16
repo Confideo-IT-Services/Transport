@@ -99,7 +99,7 @@ router.get('/:id/students', authenticateToken, async (req, res) => {
            FROM student_enrollments e
            JOIN students s ON s.id = e.student_id
            WHERE e.class_id = ? AND e.academic_year_id = ?
-           ORDER BY e.roll_no, s.name`,
+           ORDER BY CAST(e.roll_no AS UNSIGNED), s.name`,
           [id, academicYearId]
         );
         students = rows.map(s => ({
@@ -112,13 +112,13 @@ router.get('/:id/students', authenticateToken, async (req, res) => {
     }
     if (students.length === 0 && !academicYearId) {
       const [all] = await db.query(
-        `SELECT * FROM students WHERE class_id = ? AND status = 'approved' ORDER BY roll_no`,
+        `SELECT * FROM students WHERE class_id = ? AND status = 'approved' ORDER BY CAST(roll_no AS UNSIGNED)`,
         [id]
       );
       students = all;
     } else if (students.length === 0 && academicYearId) {
       const [all] = await db.query(
-        `SELECT * FROM students WHERE class_id = ? AND status = 'approved' ORDER BY roll_no`,
+        `SELECT * FROM students WHERE class_id = ? AND status = 'approved' ORDER BY CAST(roll_no AS UNSIGNED)`,
         [id]
       );
       students = all;

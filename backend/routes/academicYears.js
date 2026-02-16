@@ -328,7 +328,7 @@ router.post('/:id/promote-students', authenticateToken, requireAdmin, async (req
        WHERE s.school_id = ? 
        AND s.status = 'approved'
        AND (s.tc_status IS NULL OR s.tc_status = 'none')
-       ORDER BY c.name, c.section, s.roll_no`,
+       ORDER BY c.name, c.section, CAST(s.roll_no AS UNSIGNED)`,
       [schoolId]
     );
 
@@ -537,7 +537,7 @@ router.get('/:id/class/:classId/yearly-summary', authenticateToken, requireAdmin
          AND se.school_id = ?
          AND s.status = 'approved'
        GROUP BY s.id, s.name, s.roll_no, s.tc_status, se.class_id
-       ORDER BY s.roll_no, s.name`,
+       ORDER BY CAST(s.roll_no AS UNSIGNED), s.name`,
       [academicYearId, academicYearId, classId, schoolId]
     );
 
