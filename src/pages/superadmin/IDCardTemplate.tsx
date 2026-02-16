@@ -82,6 +82,7 @@ const STUDENT_FIELDS = [
 
 const SHEET_SIZES = [
   { value: "A4", label: "A4 (210mm × 297mm)" },
+  { value: "12x18", label: "12×18 (305mm × 457mm)" },
   { value: "13x19", label: "13×19 (330mm × 483mm)" },
   { value: "custom", label: "Custom Size" },
 ];
@@ -100,25 +101,28 @@ const PHOTO_SHAPES = [
 function calculateCardsPerSheet(cardWidth: number, cardHeight: number, sheetSize: string, orientation: string) {
   let sheetWidth = 210; // A4 width in mm
   let sheetHeight = 297; // A4 height in mm
-  
+
   if (sheetSize === "13x19") {
     sheetWidth = 330;
     sheetHeight = 483;
+  } else if (sheetSize === "12x18") {
+    sheetWidth = 305;
+    sheetHeight = 457;
   }
-  
+
   if (orientation === "landscape") {
     [sheetWidth, sheetHeight] = [sheetHeight, sheetWidth];
   }
-  
-  // Account for margins (10mm each side)
+
+  // A4 = 10 (5×2), 12×18 & 13×19 = 25 (5×5); margins are adjusted in generation to fit
+  if (sheetSize === "A4") return { cardsPerRow: 5, cardsPerColumn: 2, total: 10 };
+  if (sheetSize === "12x18" || sheetSize === "13x19") return { cardsPerRow: 5, cardsPerColumn: 5, total: 25 };
   const margin = 10;
-  const availableWidth = sheetWidth - (margin * 2);
-  const availableHeight = sheetHeight - (margin * 2);
-  const gap = 3; // Gap between cards in mm
-  
-  const cardsPerRow = Math.floor((availableWidth + gap) / (cardWidth + gap));
-  const cardsPerColumn = Math.floor((availableHeight + gap) / (cardHeight + gap));
-  
+  const gap = 3;
+  const availableWidth = sheetWidth - margin * 2;
+  const availableHeight = sheetHeight - margin * 2;
+  const cardsPerRow = Math.floor((availableWidth + gap) / (cardWidth + gap)) || 1;
+  const cardsPerColumn = Math.floor((availableHeight + gap) / (cardHeight + gap)) || 1;
   return { cardsPerRow, cardsPerColumn, total: cardsPerRow * cardsPerColumn };
 }
 

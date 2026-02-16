@@ -202,7 +202,8 @@ export default function TeacherNotifications() {
     try {
       setSending(true);
 
-      let targetType: 'all_classes' | 'specific_students';
+      let targetType: 'all_classes' | 'selected_classes' | 'specific_students';
+      let targetClasses: string[] | undefined;
       let targetStudents: string[] | undefined;
 
       if (recipientType === "all") {
@@ -212,8 +213,9 @@ export default function TeacherNotifications() {
           toast.error("No classes assigned");
           return;
         }
-        // For "all", we'll use all_classes with the teacher's classes
-        targetType = 'all_classes';
+        // For "all", use selected_classes with teacher's assigned classes only
+        targetType = 'selected_classes';
+        targetClasses = classIds;
       } else {
         targetType = 'specific_students';
         targetStudents = selectedStudentIds;
@@ -222,7 +224,8 @@ export default function TeacherNotifications() {
       const result = await notificationsApi.send({
         title,
         message,
-        targetType: targetType === 'all_classes' ? 'all_classes' : 'specific_students',
+        targetType,
+        targetClasses,
         targetStudents,
         priority,
         attachmentUrl: attachmentUrl || undefined,

@@ -2,7 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const sharp = require('sharp');
 const { PutObjectCommand } = require('@aws-sdk/client-s3');
-const { s3Client, BUCKET_NAME } = require('../config/s3');
+const { s3Client, BUCKET_NAME, isS3Configured } = require('../config/s3');
 const { v4: uuidv4 } = require('uuid');
 
 const router = express.Router();
@@ -65,8 +65,11 @@ router.post('/photo', uploadImages.single('photo'), async (req, res) => {
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
-    if (!BUCKET_NAME) {
-      return res.status(500).json({ error: 'S3 bucket not configured' });
+    if (!isS3Configured()) {
+      return res.status(503).json({
+        error: 'Failed to upload photo',
+        details: 'S3 storage is not configured. Set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and AWS_S3_BUCKET_NAME in the server .env file.',
+      });
     }
 
     console.log('📤 Processing photo upload:', {
@@ -153,8 +156,11 @@ router.post('/id-template', uploadImages.single('template'), async (req, res) =>
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
-    if (!BUCKET_NAME) {
-      return res.status(500).json({ error: 'S3 bucket not configured' });
+    if (!isS3Configured()) {
+      return res.status(503).json({
+        error: 'Failed to upload ID template',
+        details: 'S3 storage is not configured. Set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and AWS_S3_BUCKET_NAME in the server .env file.',
+      });
     }
 
     console.log('📤 Processing ID template upload:', {
@@ -238,14 +244,10 @@ router.post('/id-template', uploadImages.single('template'), async (req, res) =>
     });
   } catch (error) {
     console.error('❌ ID template upload error:', error);
-    console.error('Error details:', {
-      code: error.code,
-      message: error.message,
-      name: error.name
-    });
-    res.status(500).json({ 
+    const details = error.message || (error.code ? `${error.code}: ${error.message}` : undefined);
+    res.status(500).json({
       error: 'Failed to upload ID template',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      details: details || (process.env.NODE_ENV === 'development' ? String(error) : undefined),
     });
   }
 });
@@ -257,8 +259,11 @@ router.post('/id-layout', uploadJson.single('layout'), async (req, res) => {
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
-    if (!BUCKET_NAME) {
-      return res.status(500).json({ error: 'S3 bucket not configured' });
+    if (!isS3Configured()) {
+      return res.status(503).json({
+        error: 'Failed to upload layout',
+        details: 'S3 storage is not configured. Set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and AWS_S3_BUCKET_NAME in the server .env file.',
+      });
     }
 
     // Parse and validate JSON
@@ -401,4 +406,3 @@ router.post('/notification-attachment', uploadNotificationFile.single('attachmen
 });
 
 module.exports = router;
-

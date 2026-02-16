@@ -17,6 +17,13 @@ app.use(cors({
 }));
 app.use(express.json());
 
+// Security Note: 
+// - All routes use authenticateToken middleware which ensures school_id is in req.user
+// - Consider using SecureQueryBuilder (backend/utils/query-builder.js) for new routes
+// - Audit logging available via backend/utils/audit-logger.js
+// - Run security audits: node backend/scripts/audit-data-isolation.js
+// - See backend/SECURITY_GUIDE.md for details
+
 // Import routes
 const authRoutes = require('./routes/auth');
 const schoolsRoutes = require('./routes/schools');
@@ -38,6 +45,7 @@ const otpRoutes = require('./routes/otp');
 const notificationsRoutes = require('./routes/notifications');
 const whatsappRoutes = require('./routes/whatsapp');
 const parentRoutes = require('./routes/parents');
+const visitorRequestsRoutes = require('./routes/visitorRequests');
 
 // Use routes
 app.use('/api/auth', authRoutes);
@@ -60,6 +68,7 @@ app.use('/api/otp', otpRoutes);
 app.use('/api/notifications', notificationsRoutes);
 app.use('/api/whatsapp', whatsappRoutes);
 app.use('/api/parents', parentRoutes);
+app.use('/api/visitor-requests', visitorRequestsRoutes);
 
 // Import background jobs (optional)
 if (process.env.ENABLE_WHATSAPP_STATUS_CHECK === 'true') {

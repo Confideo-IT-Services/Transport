@@ -33,10 +33,13 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
+import { useConfirmDialog } from "@/hooks/use-confirm-dialog";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { teachersApi, Teacher } from "@/lib/api";
 
 export default function TeacherManagement() {
   const { user } = useAuth();
+  const { dialog, confirm, close } = useConfirmDialog();
   const location = useLocation();
   const lastPathnameRef = useRef<string>("");
   const [searchQuery, setSearchQuery] = useState("");
@@ -168,24 +171,26 @@ export default function TeacherManagement() {
   };
 
   const handleDeactivate = async (teacher: Teacher) => {
-    if (!confirm(`Are you sure you want to ${teacher.isActive ? 'deactivate' : 'activate'} ${teacher.name}?`)) {
-      return;
-    }
-
-    try {
-      if (teacher.isActive) {
-        await teachersApi.deactivate(teacher.id);
-        toast.success(`${teacher.name} has been deactivated`);
-      } else {
-        // If we need to reactivate, we might need an activate endpoint
-        // For now, we'll just show a message
-        toast.info("Reactivate functionality not yet implemented");
+    confirm(
+      teacher.isActive ? "Deactivate Teacher" : "Activate Teacher",
+      `Are you sure you want to ${teacher.isActive ? 'deactivate' : 'activate'} ${teacher.name}?`,
+      async () => {
+        try {
+          if (teacher.isActive) {
+            await teachersApi.deactivate(teacher.id);
+            toast.success(`${teacher.name} has been deactivated`);
+          } else {
+            // If we need to reactivate, we might need an activate endpoint
+            // For now, we'll just show a message
+            toast.info("Reactivate functionality not yet implemented");
+          }
+          loadTeachers();
+        } catch (error: any) {
+          console.error('Failed to deactivate teacher:', error);
+          toast.error(error?.message || "Failed to deactivate teacher. Please try again.");
+        }
       }
-      loadTeachers();
-    } catch (error: any) {
-      console.error('Failed to deactivate teacher:', error);
-      toast.error(error?.message || "Failed to deactivate teacher. Please try again.");
-    }
+    );
   };
 
   if (user?.role !== "admin") {
@@ -459,6 +464,18 @@ export default function TeacherManagement() {
           )}
         </div>
       </div>
+
+      {/* Confirm Dialog */}
+      <ConfirmDialog
+        open={dialog.open}
+        onOpenChange={(open) => !open && close()}
+        title={dialog.title}
+        description={dialog.description}
+        onConfirm={dialog.onConfirm}
+        confirmText={dialog.confirmText}
+        cancelText={dialog.cancelText}
+        variant={dialog.variant}
+      />
     </UnifiedLayout>
   );
 }

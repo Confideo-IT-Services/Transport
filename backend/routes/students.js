@@ -4,11 +4,85 @@ const router = express.Router();
 const db = require('../config/database');
 const { authenticateToken, requireAdmin, requireTeacher } = require('../middleware/auth');
 
+// Helper: Get school code from school ID
+async function getSchoolCode(schoolId) {
+  try {
+    const [schools] = await db.query('SELECT code FROM schools WHERE id = ?', [schoolId]);
+    if (schools.length > 0) {
+      // Extract prefix from school code (e.g., "CITTA001" -> "CITTA")
+      const code = schools[0].code || '';
+      // Remove numbers and special chars, keep only letters
+      return code.replace(/[^A-Za-z]/g, '').toUpperCase() || 'SCH';
+    }
+    return 'SCH';
+  } catch (error) {
+    console.error('Error getting school code:', error);
+    return 'SCH';
+  }
+}
+
+// Helper: Generate admission number
+async function generateAdmissionNumber(schoolCode, year, schoolId, startNumber = null) {
+  // Format: SCHOOLCODE-YEAR-XXXX (e.g., CITTA-2025-0501)
+  const prefix = `${schoolCode}-${year}-`;
+  
+  let nextNumber = startNumber;
+  
+  if (nextNumber === null) {
+    // Find the last admission number with this prefix
+    const [lastAdmission] = await db.query(
+      `SELECT admission_number FROM students 
+       WHERE school_id = ? AND admission_number LIKE ? 
+       ORDER BY admission_number DESC LIMIT 1`,
+      [schoolId, `${prefix}%`]
+    );
+    
+    nextNumber = 1;
+    if (lastAdmission.length > 0) {
+      const lastNum = lastAdmission[0].admission_number;
+      const match = lastNum.match(/-(\d+)$/);
+      if (match) {
+        nextNumber = parseInt(match[1], 10) + 1;
+      }
+    }
+  }
+  
+  // Ensure 4-digit padding
+  const admissionNumber = `${prefix}${String(nextNumber).padStart(4, '0')}`;
+  
+  // Double-check uniqueness
+  const [existing] = await db.query(
+    'SELECT id FROM students WHERE admission_number = ? AND school_id = ?',
+    [admissionNumber, schoolId]
+  );
+  
+  if (existing.length > 0) {
+    // If exists, increment and try again
+    return generateAdmissionNumber(schoolCode, year, schoolId, nextNumber + 1);
+  }
+  
+  return admissionNumber;
+}
+
 // Helper: map DB student row (with class_name, class_section) to API response
 function mapStudentToResponse(s) {
   const submittedData = s.submitted_data != null && typeof s.submitted_data === 'string'
     ? (() => { try { return JSON.parse(s.submitted_data); } catch (e) { return null; } })()
     : s.submitted_data;
+  
+  // Parse extra_fields JSON if it exists
+  let extraFields = {};
+  if (s.extra_fields) {
+    try {
+      extraFields = typeof s.extra_fields === 'string' 
+        ? JSON.parse(s.extra_fields) 
+        : s.extra_fields;
+    } catch (e) {
+      console.error('Error parsing extra_fields:', e);
+      extraFields = {};
+    }
+  }
+  
   return {
     id: s.id,
     name: s.name,
@@ -35,6 +109,7 @@ function mapStudentToResponse(s) {
     submittedData: submittedData,
     fatherName: submittedData?.fatherName ?? null,
     motherName: submittedData?.motherName ?? null,
+    extra_fields: extraFields,
   };
 }
 
@@ -50,7 +125,7 @@ router.get('/', authenticateToken, requireAdmin, async (req, res) => {
           `SELECT e.id as enrollment_id, e.student_id, e.academic_year_id, e.class_id, e.roll_no,
                   s.id, s.name, s.parent_phone, s.parent_email, s.parent_name, s.address, s.date_of_birth,
                   s.gender, s.blood_group, s.photo_url, s.status, s.tc_status, s.admission_number,
-                  s.registration_code, s.submitted_data, s.created_at,
+                  s.registration_code, s.submitted_data, s.extra_fields, s.created_at,
                   c.name as class_name, c.section as class_section
            FROM student_enrollments e
            JOIN students s ON s.id = e.student_id AND s.school_id = ?
@@ -83,7 +158,7 @@ router.get('/', authenticateToken, requireAdmin, async (req, res) => {
             const [after] = await db.query(
               `SELECT e.student_id, e.class_id, e.roll_no, s.id, s.name, s.parent_phone, s.parent_email, s.parent_name,
                       s.address, s.date_of_birth, s.gender, s.blood_group, s.photo_url, s.status, s.tc_status,
-                      s.admission_number, s.registration_code, s.submitted_data, s.created_at,
+                      s.admission_number, s.registration_code, s.submitted_data, s.extra_fields, s.created_at,
                       c.name as class_name, c.section as class_section
                FROM student_enrollments e
                JOIN students s ON s.id = e.student_id
@@ -548,10 +623,90 @@ router.post('/bulk', authenticateToken, requireAdmin, async (req, res) => {
   }
 });
 
-// Approve student registration
+// Quick entry endpoint (minimal data, always pending)
+router.post('/quick-entry', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { students } = req.body; // Array of student objects
+    const schoolId = req.user.schoolId;
+    
+    // Validate: students must be array
+    if (!Array.isArray(students) || students.length === 0) {
+      return res.status(400).json({ error: 'Students array is required' });
+    }
+    
+    // Validate each student has minimum required fields
+    for (let i = 0; i < students.length; i++) {
+      const student = students[i];
+      if (!student.name || !student.parentPhone) {
+        return res.status(400).json({ 
+          error: `Student #${i + 1}: Name and parent phone are required` 
+        });
+      }
+    }
+    
+    const createdStudents = [];
+    const errors = [];
+    
+    // Process each student
+    for (let i = 0; i < students.length; i++) {
+      const studentData = students[i];
+      
+      try {
+        // Generate temporary admission number (will be finalized on approval)
+        const tempAdmissionNumber = `TEMP-${Date.now()}-${i}`;
+        
+        // Create student with minimal data
+        const studentId = uuidv4();
+        await db.query(
+          `INSERT INTO students (
+            id, school_id, name, parent_phone, parent_name,
+            date_of_birth, gender, status, registration_code,
+            admission_number, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 'QUICK-ENTRY', ?, NOW())`,
+          [
+            studentId,
+            schoolId,
+            studentData.name.trim(),
+            studentData.parentPhone.trim(),
+            studentData.parentName ? studentData.parentName.trim() : null,
+            studentData.dateOfBirth || null,
+            studentData.gender || null,
+            tempAdmissionNumber
+          ]
+        );
+        
+        createdStudents.push({
+          id: studentId,
+          name: studentData.name,
+          tempAdmissionNumber
+        });
+      } catch (error) {
+        errors.push({
+          index: i,
+          name: studentData.name,
+          error: error.message
+        });
+      }
+    }
+    
+    res.json({
+      success: true,
+      created: createdStudents.length,
+      failed: errors.length,
+      students: createdStudents,
+      errors: errors.length > 0 ? errors : undefined
+    });
+  } catch (error) {
+    console.error('Quick entry error:', error);
+    res.status(500).json({ error: 'Failed to create students' });
+  }
+});
+
+// Approve student registration (enhanced with class assignment)
 router.post('/:id/approve', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
+    const { classId, rollNo } = req.body; // NEW: Class assignment during approval
     const schoolId = req.user.schoolId;
 
     // First, ensure the admission_number column exists BEFORE trying to query it
@@ -599,60 +754,61 @@ router.post('/:id/approve', authenticateToken, requireAdmin, async (req, res) =>
       return res.status(404).json({ error: 'Student not found' });
     }
 
-    // Get admission number - it should already exist from registration
-    // Only generate if missing (for backward compatibility with old records)
+    // Get admission number - generate if missing or if it's temporary
     let admissionNumber = students[0].admission_number;
-    if (!admissionNumber) {
-      console.log('⚠️ Admission number missing for student, generating one...');
+    
+    // If missing or temporary (from quick entry), generate proper one
+    if (!admissionNumber || admissionNumber.startsWith('TEMP-')) {
+      console.log('⚠️ Admission number missing or temporary, generating one...');
+      const schoolCode = await getSchoolCode(schoolId);
       const currentYear = new Date().getFullYear();
-      // Use last 4 characters of UUID or generate sequential number
-      const studentIdSuffix = id.slice(-4).toUpperCase();
-      admissionNumber = `ADM${currentYear}${studentIdSuffix}`;
-      
-      // Ensure uniqueness - if exists, append number
-      let counter = 1;
-      let uniqueAdmissionNumber = admissionNumber;
-      while (true) {
-        try {
-          const [existing] = await db.query(
-            'SELECT id FROM students WHERE admission_number = ? AND school_id = ?',
-            [uniqueAdmissionNumber, schoolId]
-          );
-          if (existing.length === 0) {
-            break;
-          }
-          uniqueAdmissionNumber = `${admissionNumber}${counter}`;
-          counter++;
-        } catch (err) {
-          // If column doesn't exist in query, break (shouldn't happen now)
-          if (err.message && err.message.includes("Unknown column 'admission_number'")) {
-            break;
-          }
-          throw err;
-        }
-      }
-      admissionNumber = uniqueAdmissionNumber;
+      admissionNumber = await generateAdmissionNumber(schoolCode, currentYear, schoolId);
       console.log('✅ Generated admission number:', admissionNumber);
     } else {
       console.log('✅ Using existing admission number from registration:', admissionNumber);
     }
 
-    // Get student's class_id before updating
-    const [studentInfo] = await db.query(
-      'SELECT class_id FROM students WHERE id = ? AND school_id = ?',
-      [id, schoolId]
-    );
+    // Get student's class_id (use provided classId or existing)
+    let studentClassId = classId;
+    
+    if (!studentClassId) {
+      // If no classId provided, try to get from student record
+      const [studentInfo] = await db.query(
+        'SELECT class_id FROM students WHERE id = ? AND school_id = ?',
+        [id, schoolId]
+      );
 
-    if (studentInfo.length === 0) {
-      return res.status(404).json({ error: 'Student not found' });
+      if (studentInfo.length === 0) {
+        return res.status(404).json({ error: 'Student not found' });
+      }
+
+      studentClassId = studentInfo[0].class_id;
+    }
+    
+    // If still no classId, require it
+    if (!studentClassId) {
+      return res.status(400).json({ error: 'Class assignment is required for approval' });
+    }
+    
+    // Verify class exists and belongs to school
+    const [classes] = await db.query(
+      'SELECT id FROM classes WHERE id = ? AND school_id = ?',
+      [studentClassId, schoolId]
+    );
+    
+    if (classes.length === 0) {
+      return res.status(400).json({ error: 'Invalid class' });
     }
 
-    const studentClassId = studentInfo[0].class_id;
-
-    // Now update with admission number
+    // Now update with admission number, class, and roll number
     const [result] = await db.query(
-      "UPDATE students SET status = 'approved', admission_number = ? WHERE id = ?", 
-      [admissionNumber, id]
+      `UPDATE students 
+       SET status = 'approved', 
+           admission_number = ?,
+           class_id = ?,
+           roll_no = ?
+       WHERE id = ?`, 
+      [admissionNumber, studentClassId, rollNo || null, id]
     );
 
     if (result.affectedRows === 0) {
@@ -661,23 +817,29 @@ router.post('/:id/approve', authenticateToken, requireAdmin, async (req, res) =>
 
     console.log('✅ Student approved:', { id, admissionNumber, affectedRows: result.affectedRows });
 
+    // Get active academic year for enrollment
+    const [activeYear] = await db.query(
+      'SELECT id FROM academic_years WHERE school_id = ? AND status = ? LIMIT 1',
+      [schoolId, 'active']
+    );
+    
+    if (activeYear.length === 0) {
+      return res.status(400).json({ error: 'No active academic year found. Cannot enroll student.' });
+    }
+    
     try {
-      const [activeYear] = await db.query(
-        'SELECT id FROM academic_years WHERE school_id = ? AND status = ? LIMIT 1',
-        [schoolId, 'active']
+      const finalRollNo = rollNo || null;
+      await db.query(
+        `INSERT INTO student_enrollments (id, student_id, academic_year_id, class_id, roll_no, school_id)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE class_id = VALUES(class_id), roll_no = VALUES(roll_no)`,
+        [uuidv4(), id, activeYear[0].id, studentClassId, finalRollNo, schoolId]
       );
-      if (activeYear.length > 0) {
-        const [st] = await db.query('SELECT roll_no FROM students WHERE id = ?', [id]);
-        const rollNo = st && st[0] ? st[0].roll_no : null;
-        await db.query(
-          `INSERT INTO student_enrollments (id, student_id, academic_year_id, class_id, roll_no, school_id)
-           VALUES (?, ?, ?, ?, ?, ?)
-           ON DUPLICATE KEY UPDATE class_id = VALUES(class_id), roll_no = VALUES(roll_no)`,
-          [uuidv4(), id, activeYear[0].id, studentClassId, rollNo, schoolId]
-        );
-      }
     } catch (enrollErr) {
-      if (enrollErr.code !== 'ER_NO_SUCH_TABLE') console.error('Enrollment insert on approve:', enrollErr);
+      if (enrollErr.code !== 'ER_NO_SUCH_TABLE') {
+        console.error('Enrollment insert on approve:', enrollErr);
+        throw enrollErr;
+      }
     }
 
     // If fee structure exists for this class, create fee record for the student
@@ -757,7 +919,11 @@ router.post('/:id/approve', authenticateToken, requireAdmin, async (req, res) =>
       console.error('Error checking fee structure for approved student:', feeStructureError);
     }
 
-    res.json({ success: true, admissionNumber });
+    res.json({ 
+      success: true, 
+      admissionNumber,
+      message: 'Student approved and enrolled successfully'
+    });
   } catch (error) {
     console.error('Approve student error:', error);
     console.error('Error details:', {
@@ -770,6 +936,179 @@ router.post('/:id/approve', authenticateToken, requireAdmin, async (req, res) =>
       error: 'Failed to approve student',
       details: error.message 
     });
+  }
+});
+
+// Bulk approve students (with class assignments)
+router.post('/bulk-approve', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { approvals } = req.body; // Array of { studentId, classId, rollNo }
+    const schoolId = req.user.schoolId;
+    
+    if (!Array.isArray(approvals) || approvals.length === 0) {
+      return res.status(400).json({ error: 'Approvals array is required' });
+    }
+    
+    // Get active academic year once
+    const [activeYear] = await db.query(
+      'SELECT id FROM academic_years WHERE school_id = ? AND status = ? LIMIT 1',
+      [schoolId, 'active']
+    );
+    
+    if (activeYear.length === 0) {
+      return res.status(400).json({ error: 'No active academic year found. Cannot enroll students.' });
+    }
+    
+    const academicYearId = activeYear[0].id;
+    const schoolCode = await getSchoolCode(schoolId);
+    const currentYear = new Date().getFullYear();
+    
+    const results = [];
+    const errors = [];
+    
+    // Start transaction for bulk operations
+    await db.query('START TRANSACTION');
+    
+    try {
+      for (const approval of approvals) {
+        try {
+          const { studentId, classId, rollNo } = approval;
+          
+          if (!studentId || !classId) {
+            errors.push({ studentId, error: 'Student ID and Class ID are required' });
+            continue;
+          }
+          
+          // Verify student belongs to school
+          const [students] = await db.query(
+            'SELECT id, admission_number FROM students WHERE id = ? AND school_id = ?',
+            [studentId, schoolId]
+          );
+          
+          if (students.length === 0) {
+            errors.push({ studentId, error: 'Student not found' });
+            continue;
+          }
+          
+          // Verify class exists
+          const [classes] = await db.query(
+            'SELECT id FROM classes WHERE id = ? AND school_id = ?',
+            [classId, schoolId]
+          );
+          
+          if (classes.length === 0) {
+            errors.push({ studentId, error: 'Invalid class' });
+            continue;
+          }
+          
+          // Generate admission number if needed
+          let admissionNumber = students[0].admission_number;
+          if (!admissionNumber || admissionNumber.startsWith('TEMP-')) {
+            admissionNumber = await generateAdmissionNumber(schoolCode, currentYear, schoolId);
+          }
+          
+          // Update student
+          await db.query(
+            `UPDATE students 
+             SET status = 'approved', 
+                 admission_number = ?,
+                 class_id = ?,
+                 roll_no = ?
+             WHERE id = ?`,
+            [admissionNumber, classId, rollNo || null, studentId]
+          );
+          
+          // Create enrollment
+          await db.query(
+            `INSERT INTO student_enrollments (id, student_id, academic_year_id, class_id, roll_no, school_id)
+             VALUES (?, ?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE class_id = VALUES(class_id), roll_no = VALUES(roll_no)`,
+            [uuidv4(), studentId, academicYearId, classId, rollNo || null, schoolId]
+          );
+          
+          // Create fee record if fee structure exists
+          try {
+            const [feeStructures] = await db.query(
+              'SELECT * FROM fee_structure WHERE class_id = ? AND school_id = ?',
+              [classId, schoolId]
+            );
+            
+            if (feeStructures.length > 0) {
+              const structure = feeStructures[0];
+              const finalTotalFee = parseFloat(structure.total_fee) || 0;
+              
+              const [existingFee] = await db.query(
+                'SELECT id FROM student_fees WHERE student_id = ? AND class_id = ? LIMIT 1',
+                [studentId, classId]
+              );
+              
+              if (existingFee.length === 0 && finalTotalFee > 0) {
+                const componentBreakdown = {
+                  tuition_fee: { total: parseFloat(structure.tuition_fee) || 0, paid: 0, pending: parseFloat(structure.tuition_fee) || 0 },
+                  transport_fee: { total: parseFloat(structure.transport_fee) || 0, paid: 0, pending: parseFloat(structure.transport_fee) || 0 },
+                  lab_fee: { total: parseFloat(structure.lab_fee) || 0, paid: 0, pending: parseFloat(structure.lab_fee) || 0 }
+                };
+                
+                if (structure.other_fees) {
+                  try {
+                    const otherFees = typeof structure.other_fees === 'string' 
+                      ? JSON.parse(structure.other_fees) 
+                      : structure.other_fees;
+                    
+                    if (otherFees && otherFees.components && Array.isArray(otherFees.components)) {
+                      otherFees.components.forEach(comp => {
+                        const compKey = comp.name.toLowerCase().replace(/\s+/g, '_');
+                        componentBreakdown[compKey] = { total: comp.amount || 0, paid: 0, pending: comp.amount || 0 };
+                      });
+                    }
+                  } catch (parseError) {
+                    console.error('Error parsing other_fees:', parseError);
+                  }
+                }
+                
+                await db.query(
+                  `INSERT INTO student_fees (id, student_id, class_id, school_id, academic_year_id, total_fee, paid_amount, pending_amount, status, due_date, component_breakdown, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, 0, ?, 'unpaid', NULL, ?, NOW())`,
+                  [
+                    uuidv4(),
+                    studentId,
+                    classId,
+                    schoolId,
+                    structure.academic_year_id || null,
+                    finalTotalFee,
+                    finalTotalFee,
+                    JSON.stringify(componentBreakdown)
+                  ]
+                );
+              }
+            }
+          } catch (feeError) {
+            // Don't fail approval if fee creation fails
+            console.error('Error creating fee record:', feeError);
+          }
+          
+          results.push({ studentId, success: true, admissionNumber });
+        } catch (error) {
+          errors.push({ studentId: approval.studentId, error: error.message });
+        }
+      }
+      
+      await db.query('COMMIT');
+      
+      res.json({
+        success: true,
+        approved: results.length,
+        failed: errors.length,
+        results,
+        errors: errors.length > 0 ? errors : undefined
+      });
+    } catch (error) {
+      await db.query('ROLLBACK');
+      throw error;
+    }
+  } catch (error) {
+    console.error('Bulk approve error:', error);
+    res.status(500).json({ error: 'Failed to bulk approve students' });
   }
 });
 
@@ -1005,6 +1344,131 @@ router.put('/:id', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Update student error:', error);
     res.status(500).json({ error: 'Failed to update student' });
+  }
+});
+
+// Get student yearly academic percentage
+// WEIGHTING RULE: Uses "marks-weighted" aggregation
+// Formula: SUM(all marks obtained) / SUM(all max marks) × 100
+// This means tests with more marks contribute proportionally more
+// Example: Unit Test (20/20) + Midterm (80/100) + Final (150/200) = 250/320 = 78.125%
+router.get('/:id/yearly-percentage', authenticateToken, async (req, res) => {
+  try {
+    const { id: studentId } = req.params;
+    const { academicYearId } = req.query;
+
+    if (!academicYearId) {
+      return res.status(400).json({ 
+        error: 'academicYearId query parameter is required' 
+      });
+    }
+
+    // Verify student exists and user has access
+    const schoolId = req.user.schoolId;
+    
+    // For parents: verify they own this student
+    if (req.user.role === 'parent') {
+      const [students] = await db.query(
+        'SELECT id, parent_phone, parent_email FROM students WHERE id = ? AND school_id = ?',
+        [studentId, schoolId]
+      );
+      
+      if (students.length === 0) {
+        return res.status(404).json({ error: 'Student not found' });
+      }
+
+      const student = students[0];
+      // Verify parent owns this student
+      if (req.user.phone !== student.parent_phone && req.user.email !== student.parent_email) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+    } else {
+      // For admin/teacher: verify student belongs to their school
+      const [students] = await db.query(
+        'SELECT id FROM students WHERE id = ? AND school_id = ?',
+        [studentId, schoolId]
+      );
+      
+      if (students.length === 0) {
+        return res.status(404).json({ error: 'Student not found' });
+      }
+    }
+
+    // Verify academic year exists and belongs to school
+    const [academicYears] = await db.query(
+      'SELECT id, name FROM academic_years WHERE id = ? AND school_id = ?',
+      [academicYearId, schoolId]
+    );
+
+    if (academicYears.length === 0) {
+      return res.status(404).json({ error: 'Academic year not found' });
+    }
+
+    // Verify student was enrolled in this academic year
+    const [enrollments] = await db.query(
+      `SELECT se.id, se.class_id, c.name as class_name, c.section as class_section
+       FROM student_enrollments se
+       JOIN classes c ON se.class_id = c.id
+       WHERE se.student_id = ?
+         AND se.academic_year_id = ?
+         AND se.school_id = ?`,
+      [studentId, academicYearId, schoolId]
+    );
+
+    if (enrollments.length === 0) {
+      return res.status(404).json({ 
+        error: 'Student was not enrolled in this academic year',
+        studentId,
+        academicYearId
+      });
+    }
+
+    const enrollment = enrollments[0];
+
+    // Calculate yearly percentage with enrollment verification
+    // Only count tests from the academic year where student was enrolled
+    const [results] = await db.query(
+      `SELECT 
+        SUM(tr.marks_obtained) as total_marks,
+        SUM(tr.max_marks) as total_max_marks,
+        COUNT(DISTINCT tr.test_id) as test_count
+       FROM test_results tr
+       JOIN tests t ON tr.test_id = t.id
+       JOIN student_enrollments se ON se.student_id = tr.student_id
+         AND se.academic_year_id = t.academic_year_id
+         AND se.academic_year_id = ?
+       WHERE tr.student_id = ?
+         AND t.academic_year_id = ?`,
+      [academicYearId, studentId, academicYearId]
+    );
+
+    const result = results[0];
+    const totalMarks = parseFloat(result.total_marks) || 0;
+    const totalMaxMarks = parseFloat(result.total_max_marks) || 0;
+    const testCount = parseInt(result.test_count) || 0;
+
+    // Calculate percentage (handle division by zero)
+    let yearlyPercentage = 0;
+    if (totalMaxMarks > 0) {
+      yearlyPercentage = (totalMarks / totalMaxMarks) * 100;
+      yearlyPercentage = Math.round(yearlyPercentage * 100) / 100; // Round to 2 decimal places
+    }
+
+    res.json({
+      studentId,
+      academicYearId,
+      academicYearName: academicYears[0].name,
+      enrollmentClass: `${enrollment.class_name}${enrollment.class_section ? ` ${enrollment.class_section}` : ''}`,
+      totalMarks,
+      totalMaxMarks,
+      testCount,
+      yearlyPercentage,
+      hasResults: testCount > 0
+    });
+
+  } catch (error) {
+    console.error('Get yearly percentage error:', error);
+    res.status(500).json({ error: 'Failed to fetch yearly percentage' });
   }
 });
 

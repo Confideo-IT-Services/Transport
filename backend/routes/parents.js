@@ -366,5 +366,154 @@ router.get('/children/:studentId/test-results', authenticateToken, async (req, r
   }
 });
 
+// Get tests for child's class
+router.get('/children/:studentId/tests', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'parent') {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const { studentId } = req.params;
+
+    // Verify parent owns student
+    const student = await verifyParentStudent(req, studentId);
+    if (!student) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    // Get student's class_id
+    const [students] = await db.query(
+      'SELECT class_id, school_id FROM students WHERE id = ?',
+      [studentId]
+    );
+
+    if (students.length === 0) {
+      return res.status(404).json({ error: 'Student not found' });
+    }
+
+    const classId = students[0].class_id;
+    const schoolId = students[0].school_id;
+
+    // Get all tests for this class
+    const [tests] = await db.query(
+      `SELECT t.*, c.name as class_name, c.section as class_section,
+              (SELECT COUNT(*) FROM test_subjects WHERE test_id = t.id) as subject_count
+       FROM tests t
+       LEFT JOIN classes c ON t.class_id = c.id
+       WHERE t.class_id = ? AND t.school_id = ?
+       ORDER BY t.test_date DESC, t.created_at DESC`,
+      [classId, schoolId]
+    );
+
+    res.json(tests.map(t => ({
+      id: t.id,
+      name: t.name,
+      testTime: t.test_time,
+      testDate: t.test_date,
+      classId: t.class_id,
+      className: t.class_name ? `${t.class_name} ${t.class_section || ''}`.trim() : null,
+      subjectCount: t.subject_count,
+      createdAt: t.created_at
+    })));
+  } catch (error) {
+    console.error('Get tests error:', error);
+    res.status(500).json({ error: 'Failed to fetch tests' });
+  }
+});
+
+// Get test details with subjects and syllabus for parent
+router.get('/children/:studentId/tests/:testId', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'parent') {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const { studentId, testId } = req.params;
+
+    // Verify parent owns student
+    const student = await verifyParentStudent(req, studentId);
+    if (!student) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    // Get student's class_id
+    const [students] = await db.query(
+      'SELECT class_id FROM students WHERE id = ?',
+      [studentId]
+    );
+
+    if (students.length === 0) {
+      return res.status(404).json({ error: 'Student not found' });
+    }
+
+    const classId = students[0].class_id;
+
+    // Get test details
+    const [tests] = await db.query(
+      `SELECT t.*, c.name as class_name, c.section as class_section
+       FROM tests t
+       LEFT JOIN classes c ON t.class_id = c.id
+       WHERE t.id = ? AND t.class_id = ?`,
+      [testId, classId]
+    );
+
+    if (tests.length === 0) {
+      return res.status(404).json({ error: 'Test not found' });
+    }
+
+    const test = tests[0];
+
+    // Get test subjects with syllabus
+    const [testSubjects] = await db.query(
+      `SELECT ts.*, s.name as subject_name, s.code as subject_code
+       FROM test_subjects ts
+       JOIN subjects s ON ts.subject_id = s.id
+       WHERE ts.test_id = ?
+       ORDER BY s.name`,
+      [testId]
+    );
+
+    // Get test results for this student
+    const [testResults] = await db.query(
+      `SELECT tr.*, sub.name as subject_name, sub.code as subject_code
+       FROM test_results tr
+       JOIN subjects sub ON tr.subject_id = sub.id
+       WHERE tr.test_id = ? AND tr.student_id = ?
+       ORDER BY sub.name`,
+      [testId, studentId]
+    );
+
+    res.json({
+      id: test.id,
+      name: test.name,
+      testTime: test.test_time,
+      testDate: test.test_date,
+      classId: test.class_id,
+      className: test.class_name ? `${test.class_name} ${test.class_section || ''}`.trim() : null,
+      createdAt: test.created_at,
+      subjects: testSubjects.map(ts => ({
+        id: ts.id,
+        subjectId: ts.subject_id,
+        subjectName: ts.subject_name,
+        subjectCode: ts.subject_code,
+        maxMarks: ts.max_marks,
+        syllabus: ts.syllabus
+      })),
+      results: testResults.map(tr => ({
+        id: tr.id,
+        subjectId: tr.subject_id,
+        subjectName: tr.subject_name,
+        subjectCode: tr.subject_code,
+        marksObtained: parseFloat(tr.marks_obtained) || 0,
+        maxMarks: tr.max_marks || 100,
+        percentage: tr.max_marks > 0 ? ((parseFloat(tr.marks_obtained) / tr.max_marks) * 100).toFixed(2) : 0
+      }))
+    });
+  } catch (error) {
+    console.error('Get test details error:', error);
+    res.status(500).json({ error: 'Failed to fetch test details' });
+  }
+});
+
 module.exports = router;
 

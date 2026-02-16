@@ -47,6 +47,8 @@ import {
 } from "lucide-react";
 import { format, addDays, startOfWeek, isWithinInterval, isSameDay } from "date-fns";
 import { toast } from "@/hooks/use-toast";
+import { useConfirmDialog } from "@/hooks/use-confirm-dialog";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 
 interface TimeSlot {
   id: string;
@@ -104,11 +106,13 @@ const initialHolidays: Holiday[] = [];
 const initialLeaves: TeacherLeave[] = [];
 
 export default function Timetable() {
+  const { dialog, confirm, close } = useConfirmDialog();
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
   const [selectedClass, setSelectedClass] = useState("");
   const [selectedClassId, setSelectedClassId] = useState("");
   const [classes, setClasses] = useState<any[]>([]);
+  const [hasMultipleClasses, setHasMultipleClasses] = useState(false);
   const [timeSlots, setTimeSlots] = useState<TimeSlot[]>(initialTimeSlots);
   const [timetableData, setTimetableData] = useState<TimetableEntry[]>(initialTimetableData);
   const [holidays, setHolidays] = useState<Holiday[]>(initialHolidays);
@@ -227,6 +231,7 @@ export default function Timetable() {
               setSelectedClass(`${teacherClass.name}${teacherClass.section ? `-${teacherClass.section}` : ''}`);
               setSelectedClassId(teacherClass.id);
               setClasses(classesData); // Store for reference
+              setHasMultipleClasses(classesData.length > 1); // Track if multiple classes
             }
           } catch (error) {
             console.error('Error loading teacher class:', error);
@@ -505,6 +510,30 @@ export default function Timetable() {
         return;
       }
 
+      // Check if teacher is on approved leave for that selected day
+      if (selectedEntry) {
+        const weekStart = startOfWeek(new Date(), { weekStartsOn: 1 });
+        const selectedDate = addDays(weekStart, days.indexOf(selectedEntry.day));
+
+        const onLeave = teacherLeaves.some(leave =>
+          leave.teacherName === editEntry.teacherName &&
+          leave.status === "approved" &&
+          isWithinInterval(selectedDate, {
+            start: leave.startDate,
+            end: leave.endDate
+          })
+        );
+
+        if (onLeave) {
+          toast({
+            title: "Teacher on Leave",
+            description: `${editEntry.teacherName} is on approved leave for ${selectedEntry.day}. Cannot assign.`,
+            variant: "destructive"
+          });
+          return;
+        }
+      }
+
       console.log('Updating timetable entry:', {
         classId: selectedClassId,
         slotId: selectedEntry.slotId,
@@ -684,56 +713,58 @@ export default function Timetable() {
       return;
     }
 
-    if (!confirm(`Generate WhatsApp links for all ${teachersList.length} teachers?\n\nA dialog will open with links for each teacher. Click each link to send their timetable.`)) {
-      return;
-    }
-
-    toast({ 
-      title: "Generating Messages", 
-      description: `Preparing timetables for ${teachersList.length} teachers...` 
-    });
-
-    // Generate all messages first
-    const teacherMessages: Array<{ teacher: { id: string; name: string; phone: string }, message: string, url: string }> = [];
-    
-    for (const teacher of teachersList) {
-      if (!teacher.phone) {
-        console.warn(`Skipping ${teacher.name} - no phone number`);
-        continue;
-      }
-      
-      try {
-        const message = await generateTeacherWeeklyMessage(teacher.name);
-        const encodedMessage = encodeURIComponent(message);
-        const whatsappUrl = `https://wa.me/91${teacher.phone.replace(/\D/g, '')}?text=${encodedMessage}`;
-        
-        teacherMessages.push({
-          teacher: {
-            id: teacher.id,
-            name: teacher.name,
-            phone: teacher.phone
-          },
-          message,
-          url: whatsappUrl
-        });
-      } catch (error) {
-        console.error(`Error generating message for ${teacher.name}:`, error);
+    confirm(
+      "Generate WhatsApp Links",
+      `Generate WhatsApp links for all ${teachersList.length} teachers?\n\nA dialog will open with links for each teacher. Click each link to send their timetable.`,
+      async () => {
         toast({ 
-          title: "Error", 
-          description: `Failed to generate timetable for ${teacher.name}`,
-          variant: "destructive"
+          title: "Generating Messages", 
+          description: `Preparing timetables for ${teachersList.length} teachers...` 
+        });
+
+        // Generate all messages first
+        const teacherMessages: Array<{ teacher: { id: string; name: string; phone: string }, message: string, url: string }> = [];
+        
+        for (const teacher of teachersList) {
+          if (!teacher.phone) {
+            console.warn(`Skipping ${teacher.name} - no phone number`);
+            continue;
+          }
+          
+          try {
+            const message = await generateTeacherWeeklyMessage(teacher.name);
+            const encodedMessage = encodeURIComponent(message);
+            const whatsappUrl = `https://wa.me/91${teacher.phone.replace(/\D/g, '')}?text=${encodedMessage}`;
+            
+            teacherMessages.push({
+              teacher: {
+                id: teacher.id,
+                name: teacher.name,
+                phone: teacher.phone
+              },
+              message,
+              url: whatsappUrl
+            });
+          } catch (error) {
+            console.error(`Error generating message for ${teacher.name}:`, error);
+            toast({ 
+              title: "Error", 
+              description: `Failed to generate timetable for ${teacher.name}`,
+              variant: "destructive"
+            });
+          }
+        }
+
+        // Store in state to show in dialog
+        setGeneratedTeacherLinks(teacherMessages);
+        setIsSendAllDialogOpen(true);
+        
+        toast({ 
+          title: "Ready", 
+          description: `Generated ${teacherMessages.length} timetable messages. Click each link to send.` 
         });
       }
-    }
-
-    // Store in state to show in dialog
-    setGeneratedTeacherLinks(teacherMessages);
-    setIsSendAllDialogOpen(true);
-    
-    toast({ 
-      title: "Ready", 
-      description: `Generated ${teacherMessages.length} timetable messages. Click each link to send.` 
-    });
+    );
   };
 
   if (isLoading) {
@@ -763,30 +794,32 @@ export default function Timetable() {
             </p>
           </div>
           <div className="flex items-center gap-3 flex-wrap">
-            {isAdmin ? (
-              <>
-                <Select value={selectedClass} onValueChange={(value) => {
-                  setSelectedClass(value);
-                  const classData = classes.find(c => `${c.name}${c.section ? `-${c.section}` : ''}` === value);
-                  setSelectedClassId(classData?.id || "");
-                }}>
-                  <SelectTrigger className="w-32">
-                    <SelectValue placeholder="Select class" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-card">
-                    {classes.map((cls) => (
-                      <SelectItem key={cls.id} value={`${cls.name}${cls.section ? `-${cls.section}` : ''}`}>
-                        {cls.name}{cls.section ? ` - Section ${cls.section}` : ''}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button variant="outline" onClick={sendToAllTeachers}>
-                  <MessageCircle className="w-4 h-4 mr-2" />
-                  Send to All
-                </Button>
-              </>
-            ) : (
+            {/* Class Selector - Only show if admin OR teacher with multiple classes */}
+            {(isAdmin || (!isAdmin && hasMultipleClasses)) && (
+              <Select value={selectedClass} onValueChange={(value) => {
+                setSelectedClass(value);
+                const classData = classes.find(c => `${c.name}${c.section ? `-${c.section}` : ''}` === value);
+                setSelectedClassId(classData?.id || "");
+              }}>
+                <SelectTrigger className="w-32">
+                  <SelectValue placeholder="Select class" />
+                </SelectTrigger>
+                <SelectContent className="bg-card">
+                  {classes.map((cls) => (
+                    <SelectItem key={cls.id} value={`${cls.name}${cls.section ? `-${cls.section}` : ''}`}>
+                      {cls.name}{cls.section ? ` - Section ${cls.section}` : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            {isAdmin && (
+              <Button variant="outline" onClick={sendToAllTeachers}>
+                <MessageCircle className="w-4 h-4 mr-2" />
+                Send to All
+              </Button>
+            )}
+            {!isAdmin && !hasMultipleClasses && (
               <Badge variant="secondary" className="text-xs">
                 <Eye className="w-3 h-3 mr-1" />
                 View Only
@@ -948,12 +981,16 @@ export default function Timetable() {
                                   }
                                 }}
                               >
-                                <p className="font-medium text-sm">{getSubjectName(entry.subjectCode)}</p>
-                                <p className={`text-xs mt-0.5 ${teacherOnLeave ? "text-red-600" : "opacity-75"}`}>
+                                <p className="font-medium text-sm flex items-center justify-center gap-1">
+                                  {getSubjectName(entry.subjectCode)}
+                                  {teacherOnLeave && (
+                                    <span className="w-2 h-2 rounded-full bg-red-500 inline-block" />
+                                  )}
+                                </p>
+                                <p className={`text-xs mt-0.5 ${teacherOnLeave ? "text-red-600 font-medium" : "opacity-75"}`}>
                                   {entry.teacherName}
                                   {teacherOnLeave && (
-                                    <span className="block text-red-500 font-medium">
-                                      <UserX className="w-3 h-3 inline mr-1" />
+                                    <span className="block text-red-500">
                                       On Leave
                                     </span>
                                   )}
@@ -1071,25 +1108,33 @@ export default function Timetable() {
                           size="icon"
                           className="h-6 w-6"
                           onClick={async () => {
-                            if (confirm(`Delete subject "${subject.name}"?`)) {
-                              try {
-                                await timetableApi.deleteSubject(subject.id!);
-                                // Reload subjects
-                                const subjectsData = await timetableApi.getSubjects();
-                                if (subjectsData && subjectsData.length > 0) {
+                            confirm(
+                              "Delete Subject",
+                              `Delete subject "${subject.name}"?`,
+                              async () => {
+                                try {
+                                  await timetableApi.deleteSubject(subject.id!);
+                                  // Reload subjects
+                                  const subjectsData = await timetableApi.getSubjects();
+                                  if (subjectsData && subjectsData.length > 0) {
                                   setSubjectsList(subjectsData);
                                 } else {
                                   setSubjectsList(defaultSubjects);
                                 }
                                 toast({ title: "Subject Deleted" });
-                              } catch (error: any) {
-                                toast({ 
-                                  title: "Error", 
-                                  description: error?.message || "Failed to delete subject",
-                                  variant: "destructive"
-                                });
+                                } catch (error: any) {
+                                  toast({ 
+                                    title: "Error", 
+                                    description: error?.message || "Failed to delete subject",
+                                    variant: "destructive"
+                                  });
+                                }
+                              },
+                              {
+                                variant: "destructive",
+                                confirmText: "Delete",
                               }
-                            }
+                            );
                           }}
                         >
                           <Trash2 className="w-3 h-3" />
@@ -1502,39 +1547,6 @@ export default function Timetable() {
                 </Table>
               </CardContent>
             </Card>
-
-            {/* WhatsApp Notification Section */}
-            {isAdmin && (
-              <Card className="mt-6">
-                <CardHeader>
-                  <CardTitle className="text-lg flex items-center gap-2">
-                    <MessageCircle className="w-5 h-5 text-green-600" />
-                    Send Timetable via WhatsApp
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-muted-foreground mb-4">
-                    Send weekly timetable to teachers including holidays and their leave status.
-                  </p>
-                  <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-                    {teachersList.map((teacher) => (
-                      <div 
-                        key={teacher.name}
-                        className="flex items-center justify-between p-3 rounded-lg border border-border"
-                      >
-                        <div>
-                          <p className="font-medium">{teacher.name}</p>
-                          <p className="text-xs text-muted-foreground">+91 {teacher.phone}</p>
-                        </div>
-                        <Button size="sm" variant="outline" onClick={() => sendWhatsAppMessage(teacher.name)}>
-                          <Send className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            )}
           </TabsContent>
 
           {/* Time Slots Settings */}
@@ -1841,6 +1853,18 @@ export default function Timetable() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Confirm Dialog */}
+      <ConfirmDialog
+        open={dialog.open}
+        onOpenChange={(open) => !open && close()}
+        title={dialog.title}
+        description={dialog.description}
+        onConfirm={dialog.onConfirm}
+        confirmText={dialog.confirmText}
+        cancelText={dialog.cancelText}
+        variant={dialog.variant}
+      />
     </UnifiedLayout>
   );
 }

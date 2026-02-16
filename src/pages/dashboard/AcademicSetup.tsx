@@ -8,6 +8,8 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { teachersApi, classesApi, timetableApi, academicYearsApi } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
+import { useConfirmDialog } from "@/hooks/use-confirm-dialog";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   Dialog,
   DialogContent,
@@ -45,12 +47,14 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
-import { Plus, Edit, Users, BookOpen, Calendar, ChevronRight, GraduationCap, UserCheck, Check, ChevronsUpDown } from "lucide-react";
+import { Plus, Edit, Users, BookOpen, Calendar, ChevronRight, GraduationCap, UserCheck, Check, ChevronsUpDown, ArrowRight } from "lucide-react";
+import { PromoteStudentsModal } from "@/components/promotion/PromoteStudentsModal";
 import { cn } from "@/lib/utils";
 
 export default function AcademicSetup() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const { dialog, confirm, close } = useConfirmDialog();
   const isAdmin = user?.role === "admin";
   const [isAddClassOpen, setIsAddClassOpen] = useState(false);
   const [isAddTeacherOpen, setIsAddTeacherOpen] = useState(false);
@@ -62,7 +66,15 @@ export default function AcademicSetup() {
   const [teachers, setTeachers] = useState<any[]>([]);
   const [subjects, setSubjects] = useState<string[]>([]);
   const [classesData, setClassesData] = useState<any[]>([]);
+  const [classesDataRaw, setClassesDataRaw] = useState<any[]>([]); // Store raw data for section IDs
   const [academicYears, setAcademicYears] = useState<any[]>([]);
+  
+  // Promotion modal state
+  const [promotionModalOpen, setPromotionModalOpen] = useState(false);
+  const [promotionClassId, setPromotionClassId] = useState<string>("");
+  const [promotionClassName, setPromotionClassName] = useState<string>("");
+  const [promotionFromYearId, setPromotionFromYearId] = useState<string>("");
+  const [promotionToYearId, setPromotionToYearId] = useState<string>("");
   
   // New class form state
   const [newClass, setNewClass] = useState({
@@ -91,10 +103,6 @@ export default function AcademicSetup() {
     endDate: "",
   });
 
-  // Promotion state
-  const [promoteStudents, setPromoteStudents] = useState(false);
-  const [isPromoting, setIsPromoting] = useState(false);
-  const [promotingYearId, setPromotingYearId] = useState<string | null>(null);
 
   // Edit academic year state
   const [isEditAcademicYearOpen, setIsEditAcademicYearOpen] = useState(false);
@@ -139,15 +147,16 @@ export default function AcademicSetup() {
   // Function to load classes from API and transform to nested structure
   const loadClasses = async () => {
     try {
-      const classesDataRaw = await classesApi.getAll();
+      const rawData = await classesApi.getAll();
+      setClassesDataRaw(rawData); // Store raw data for accessing section IDs
       
       // Transform flat API response to nested structure
       // API returns: [{ id, name, section, classTeacherId, studentCount, ... }, ...]
       // Component expects: [{ name, sections: [{ name, students, classTeacher }, ...] }, ...]
       const classesMap = new Map<string, any>();
       
-      if (Array.isArray(classesDataRaw)) {
-        classesDataRaw.forEach((cls: any) => {
+      if (Array.isArray(rawData)) {
+        rawData.forEach((cls: any) => {
           if (!cls || !cls.name) return; // Skip invalid entries
           
           const key = cls.name;
@@ -162,6 +171,7 @@ export default function AcademicSetup() {
           const classData = classesMap.get(key);
           if (classData) {
             classData.sections.push({
+              id: cls.id, // Store section class ID
               name: cls.section || '',
               students: cls.studentCount || 0,
               classTeacher: cls.classTeacherName || cls.classTeacherId || 'Not Assigned'
@@ -457,47 +467,19 @@ export default function AcademicSetup() {
 
     try {
       // Call API to create academic year
-      const result = await academicYearsApi.create({
+      await academicYearsApi.create({
         name: newAcademicYear.name.trim(),
         startDate: newAcademicYear.startDate,
         endDate: newAcademicYear.endDate,
       });
       
-      // If promotion is enabled, promote students
-      if (promoteStudents && result.yearId) {
-        setIsPromoting(true);
-        try {
-          const promotionResult = await academicYearsApi.promoteStudents(result.yearId);
-          
-          toast({
-            title: "Success",
-            description: `Academic year created successfully! ${promotionResult.promoted} students promoted to next class.${promotionResult.skipped > 0 ? ` ${promotionResult.skipped} students skipped.` : ''}`,
-          });
-
-          // Show errors if any
-          if (promotionResult.errors && promotionResult.errors.length > 0) {
-            console.warn('Promotion errors:', promotionResult.errors);
-          }
-        } catch (promoError: any) {
-          toast({
-            title: "Warning",
-            description: "Academic year created but student promotion failed. You can promote manually later.",
-            variant: "destructive",
-          });
-          console.error('Promotion error:', promoError);
-        } finally {
-          setIsPromoting(false);
-        }
-      } else {
-        toast({
-          title: "Success",
-          description: "Academic year created successfully",
-        });
-      }
+      toast({
+        title: "Success",
+        description: "Academic year created successfully",
+      });
 
       // Reset form and close dialog
       setNewAcademicYear({ name: "", startDate: "", endDate: "" });
-      setPromoteStudents(false);
       setIsAddAcademicYearOpen(false);
 
       // Reload academic years to show the new year
@@ -512,42 +494,6 @@ export default function AcademicSetup() {
     }
   };
 
-  // Handle manual student promotion
-  const handlePromoteStudents = async (yearId: string) => {
-    if (!confirm('Are you sure you want to promote all eligible students to the next class? Students with TC status will be excluded.')) {
-      return;
-    }
-
-    setPromotingYearId(yearId);
-    try {
-      const result = await academicYearsApi.promoteStudents(yearId);
-      
-      toast({
-        title: "Success",
-        description: `${result.promoted} students promoted successfully.${result.skipped > 0 ? ` ${result.skipped} students skipped.` : ''}`,
-      });
-
-      if (result.errors && result.errors.length > 0) {
-        console.warn('Promotion errors:', result.errors);
-        toast({
-          title: "Some students were skipped",
-          description: `${result.errors.length} students could not be promoted. Check console for details.`,
-          variant: "destructive",
-        });
-      }
-
-      // Reload data
-      await loadAcademicYears();
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error?.message || "Failed to promote students",
-        variant: "destructive",
-      });
-    } finally {
-      setPromotingYearId(null);
-    }
-  };
 
   const handleOpenEditAcademicYear = (year: any) => {
     setEditingAcademicYear(year);
@@ -758,7 +704,7 @@ export default function AcademicSetup() {
             <TabsTrigger value="years">Academic Years</TabsTrigger>
             <TabsTrigger value="classes">Classes & Sections</TabsTrigger>
             <TabsTrigger value="class-teachers">Class Teacher Assignment</TabsTrigger>
-            <TabsTrigger value="teachers">Teacher Assignments</TabsTrigger>
+            <TabsTrigger value="teachers">Teacher-Subject Assignments</TabsTrigger>
           </TabsList>
 
           {/* Academic Years */}
@@ -805,27 +751,10 @@ export default function AcademicSetup() {
                           onChange={(e) => setNewAcademicYear(prev => ({ ...prev, endDate: e.target.value }))}
                         />
                       </div>
-                      <div className="flex items-center space-x-2">
-                        <input
-                          type="checkbox"
-                          id="promote-students"
-                          checked={promoteStudents}
-                          onChange={(e) => setPromoteStudents(e.target.checked)}
-                          className="rounded border-gray-300"
-                        />
-                        <Label htmlFor="promote-students" className="text-sm font-medium cursor-pointer">
-                          Automatically promote students to next class
-                        </Label>
-                      </div>
-                      {isPromoting && (
-                        <div className="text-sm text-blue-600">
-                          Promoting students...
-                        </div>
-                      )}
                       <Button 
                         className="w-full" 
                         onClick={handleCreateAcademicYear}
-                        disabled={!newAcademicYear.name.trim() || !newAcademicYear.startDate || !newAcademicYear.endDate || isPromoting}
+                        disabled={!newAcademicYear.name.trim() || !newAcademicYear.startDate || !newAcademicYear.endDate}
                       >
                         Create Academic Year
                       </Button>
@@ -898,17 +827,6 @@ export default function AcademicSetup() {
                       <Calendar className="w-4 h-4" />
                       <span>{year.startDate} - {year.endDate}</span>
                     </div>
-                    {isAdmin && year.status === "active" && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handlePromoteStudents(year.id)}
-                        disabled={promotingYearId === year.id}
-                        className="w-full mt-4"
-                      >
-                        {promotingYearId === year.id ? 'Promoting...' : 'Promote Students'}
-                      </Button>
-                    )}
                     {isAdmin && (
                       <Button
                         variant="outline"
@@ -1030,7 +948,6 @@ export default function AcademicSetup() {
                             </div>
                             <div className="flex-1">
                               <h3 className="font-semibold text-lg">{cls.name}</h3>
-                              <p className="text-sm text-muted-foreground">Class Teacher: {cls.sections[0]?.classTeacher}</p>
                             </div>
                             <div className="text-right">
                               <p className="text-2xl font-bold text-primary">{cls.sections.length}</p>
@@ -1045,24 +962,52 @@ export default function AcademicSetup() {
                           <div>
                             <h4 className="font-medium mb-3">Section-wise Details</h4>
                             <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-                              {cls.sections.map((section) => (
-                                <div 
-                                  key={section.name}
-                                  className="p-4 rounded-lg border border-border bg-card hover:bg-muted/30 transition-colors"
-                                >
-                                  <div className="flex items-center justify-between mb-2">
-                                    <Badge variant="outline" className="text-base px-3 py-1">
-                                      Section {section.name}
-                                    </Badge>
-                                    <span className="text-2xl font-bold text-foreground">{section.students}</span>
+                              {cls.sections.map((section) => {
+                                // Find the active and next academic years
+                                const activeYear = academicYears.find((y) => y.status === "active");
+                                const completedYears = academicYears.filter((y) => y.status === "completed").sort((a, b) => {
+                                  const aEnd = new Date(a.endDateRaw || a.endDate);
+                                  const bEnd = new Date(b.endDateRaw || b.endDate);
+                                  return bEnd.getTime() - aEnd.getTime();
+                                });
+                                const lastCompletedYear = completedYears[0];
+                                
+                                return (
+                                  <div 
+                                    key={section.name}
+                                    className="p-4 rounded-lg border border-border bg-card hover:bg-muted/30 transition-colors"
+                                  >
+                                    <div className="flex items-center justify-between mb-2">
+                                      <Badge variant="outline" className="text-base px-3 py-1">
+                                        Section {section.name}
+                                      </Badge>
+                                      <span className="text-2xl font-bold text-foreground">{section.students}</span>
+                                    </div>
+                                    <p className="text-xs text-muted-foreground">Students</p>
+                                    <div className="mt-3 pt-3 border-t border-border">
+                                      <p className="text-xs text-muted-foreground">Section Teacher</p>
+                                      <p className="text-sm font-medium">{section.classTeacher}</p>
+                                    </div>
+                                    {isAdmin && lastCompletedYear && activeYear && section.id && (
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className="w-full mt-3"
+                                        onClick={() => {
+                                          setPromotionClassId(section.id);
+                                          setPromotionClassName(`${cls.name}${section.name ? ` - Section ${section.name}` : ''}`);
+                                          setPromotionFromYearId(lastCompletedYear.id);
+                                          setPromotionToYearId(activeYear.id);
+                                          setPromotionModalOpen(true);
+                                        }}
+                                      >
+                                        <ArrowRight className="w-4 h-4 mr-2" />
+                                        Promote Students
+                                      </Button>
+                                    )}
                                   </div>
-                                  <p className="text-xs text-muted-foreground">Students</p>
-                                  <div className="mt-3 pt-3 border-t border-border">
-                                    <p className="text-xs text-muted-foreground">Section Teacher</p>
-                                    <p className="text-sm font-medium">{section.classTeacher}</p>
-                                  </div>
-                                </div>
-                              ))}
+                                );
+                              })}
                             </div>
                           </div>
                         </div>
@@ -1257,7 +1202,7 @@ export default function AcademicSetup() {
           <TabsContent value="teachers" className="space-y-4">
             <div className="flex justify-between items-center">
               <div>
-                <h2 className="text-lg font-medium">Teacher Assignments</h2>
+                <h2 className="text-lg font-medium">Teacher-Subject Assignments</h2>
                 <p className="text-sm text-muted-foreground">Add teachers and assign subjects they teach</p>
               </div>
               {isAdmin && (
@@ -1541,6 +1486,36 @@ export default function AcademicSetup() {
           </TabsContent>
         </Tabs>
       </div>
+
+      {/* Confirm Dialog */}
+      <ConfirmDialog
+        open={dialog.open}
+        onOpenChange={(open) => !open && close()}
+        title={dialog.title}
+        description={dialog.description}
+        onConfirm={dialog.onConfirm}
+        confirmText={dialog.confirmText}
+        cancelText={dialog.cancelText}
+        variant={dialog.variant}
+      />
+
+      {/* Promotion Modal */}
+      {promotionClassId && promotionFromYearId && promotionToYearId && (
+        <PromoteStudentsModal
+          open={promotionModalOpen}
+          onOpenChange={setPromotionModalOpen}
+          fromAcademicYearId={promotionFromYearId}
+          fromAcademicYearName={academicYears.find((y) => y.id === promotionFromYearId)?.name || ""}
+          toAcademicYearId={promotionToYearId}
+          toAcademicYearName={academicYears.find((y) => y.id === promotionToYearId)?.name || ""}
+          classId={promotionClassId}
+          className={promotionClassName}
+          onSuccess={() => {
+            loadClasses();
+            loadAcademicYears();
+          }}
+        />
+      )}
     </UnifiedLayout>
   );
 }

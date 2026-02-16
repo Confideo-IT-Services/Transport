@@ -18,8 +18,9 @@ router.get('/', authenticateToken, requireTeacher, async (req, res) => {
     const params = [];
 
     if (req.user.role === 'teacher') {
-      query += ' WHERE t.teacher_id = ?';
-      params.push(req.user.id);
+      // For teachers: show tests they created OR tests for classes where they are class teacher
+      query += ` WHERE (t.teacher_id = ? OR c.class_teacher_id = ?)`;
+      params.push(req.user.id, req.user.id);
     } else if (req.user.role === 'admin') {
       query += ' WHERE t.school_id = ?';
       params.push(req.user.schoolId);
@@ -141,16 +142,30 @@ router.post('/', authenticateToken, requireTeacher, async (req, res) => {
       }
     }
 
+    // Fetch active academic year (required for test creation)
+    const [activeYear] = await db.query(
+      'SELECT id FROM academic_years WHERE school_id = ? AND status = ? LIMIT 1',
+      [schoolId, 'active']
+    );
+
+    if (activeYear.length === 0) {
+      return res.status(400).json({ 
+        error: 'No active academic year found. Please create an active academic year before creating tests.' 
+      });
+    }
+
+    const academicYearId = activeYear[0].id;
+
     // Start transaction
     await db.query('START TRANSACTION');
 
     try {
-      // Create test
+      // Create test (with academic_year_id)
       const testId = uuidv4();
       await db.query(
-        `INSERT INTO tests (id, name, test_time, test_date, class_id, teacher_id, school_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
-        [testId, name, testTime, testDate, classId, teacherId, schoolId]
+        `INSERT INTO tests (id, name, test_time, test_date, class_id, teacher_id, school_id, academic_year_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+        [testId, name, testTime, testDate, classId, teacherId, schoolId, academicYearId]
       );
 
       // Add test subjects

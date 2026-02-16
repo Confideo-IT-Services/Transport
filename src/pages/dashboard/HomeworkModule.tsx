@@ -26,6 +26,7 @@ import {
 import { toast } from "sonner";
 import { Progress } from "@/components/ui/progress";
 import { homeworkApi, classesApi, studentsApi } from "@/lib/api";
+import { format } from "date-fns";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -132,6 +133,7 @@ export default function HomeworkModule() {
   const [isCompletionDialogOpen, setIsCompletionDialogOpen] = useState(false);
   const [classes, setClasses] = useState<any[]>([]);
   const [selectedClassId, setSelectedClassId] = useState("");
+  const [hasMultipleClasses, setHasMultipleClasses] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [studentsInClass, setStudentsInClass] = useState<Student[]>([]);
   const [classStudentsMap, setClassStudentsMap] = useState<Record<string, Student[]>>({});
@@ -159,6 +161,9 @@ export default function HomeworkModule() {
         // Auto-select first class for teachers
         if (!isAdmin && classesData && classesData.length > 0) {
           setSelectedClassId(classesData[0].id);
+          setHasMultipleClasses(classesData.length > 1); // Track if multiple classes
+        } else if (isAdmin) {
+          setHasMultipleClasses(classesData && classesData.length > 1);
         }
         
         // Load homework
@@ -336,6 +341,11 @@ export default function HomeworkModule() {
       return;
     }
 
+    // Proceed with homework creation
+    await proceedWithHomeworkCreation(isDraft);
+  };
+
+  const proceedWithHomeworkCreation = async (isDraft: boolean) => {
     try {
       setIsLoading(true);
       // Create separate homework entries for each subject (backend supports one subject per homework)
@@ -863,8 +873,8 @@ export default function HomeworkModule() {
                 </div>
               )}
 
-              {/* Class Selection (for admins) */}
-              {isAdmin && (
+              {/* Class Selection - Only show if admin OR teacher has multiple classes */}
+              {(isAdmin || (!isAdmin && hasMultipleClasses)) && (
                 <div className="space-y-2 mb-6">
                   <Label>Select Class *</Label>
                   <Select value={selectedClassId} onValueChange={setSelectedClassId}>
@@ -1106,6 +1116,7 @@ export default function HomeworkModule() {
                       <th className="text-left p-4 font-medium text-muted-foreground">Completed</th>
                       <th className="text-left p-4 font-medium text-muted-foreground">Frequency</th>
                       <th className="text-left p-4 font-medium text-muted-foreground">Status</th>
+                      <th className="text-left p-4 font-medium text-muted-foreground">Reminder</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
@@ -1133,6 +1144,18 @@ export default function HomeworkModule() {
                           }`}>
                             {student.percentage >= 75 ? "Excellent" : student.percentage >= 50 ? "Average" : "Needs Attention"}
                           </span>
+                        </td>
+                        <td className="p-4">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 w-8 p-0"
+                            onClick={() => {
+                              toast.info("Reminder functionality will be added soon.");
+                            }}
+                          >
+                            <Send className="w-4 h-4" />
+                          </Button>
                         </td>
                       </tr>
                     ))}
@@ -1209,6 +1232,7 @@ export default function HomeworkModule() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
     </>
   );
 }

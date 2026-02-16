@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, useRef, ReactNode } from "react";
 import { authApi, getToken, setToken, removeToken, User } from "@/lib/api";
 
 export type UserRole = "superadmin" | "admin" | "teacher" | "parent";
@@ -19,6 +19,7 @@ interface AuthContextType {
   logout: () => void;
   isAuthenticated: boolean;
   setUser: (user: User | null) => void;
+  setNavigate: (navigateFn: (path: string) => void) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -26,6 +27,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const navigateRef = useRef<((path: string) => void) | null>(null);
 
   // Check for existing token on mount
   useEffect(() => {
@@ -51,17 +53,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             localStorage.setItem("conventpulse_user", JSON.stringify(verifiedUser));
           }
         } catch (error) {
-          // Token invalid or expired, clean up
+          // Token invalid or expired, clean up completely
           console.error('Token verification failed:', error);
           removeToken();
           localStorage.removeItem("conventpulse_user");
           setUser(null);
         }
+      } else {
+        // No token, ensure user is cleared
+        setUser(null);
+        localStorage.removeItem("conventpulse_user");
       }
       setIsLoading(false);
     };
 
     checkAuth();
+  }, []);
+
+  // Listen for auth:logout event from API helper
+  useEffect(() => {
+    const handleAuthLogout = () => {
+      setUser(null);
+      removeToken();
+      localStorage.removeItem("conventpulse_user");
+      
+      // Navigate to appropriate login page
+      if (navigateRef.current) {
+        const currentPath = window.location.pathname;
+        if (currentPath.startsWith('/parent')) {
+          navigateRef.current('/parent/login');
+        } else if (currentPath.startsWith('/superadmin')) {
+          navigateRef.current('/superadmin/login');
+        } else {
+          navigateRef.current('/login');
+        }
+      }
+    };
+
+    window.addEventListener('auth:logout', handleAuthLogout);
+    return () => {
+      window.removeEventListener('auth:logout', handleAuthLogout);
+    };
   }, []);
 
   const login = async ({ email, username, password, phone, otp, role }: { 
@@ -190,13 +222,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = () => {
+    // Clear state first
     setUser(null);
     removeToken();
     localStorage.removeItem("conventpulse_user");
+    
+    // Navigate to appropriate login page based on current route
+    if (navigateRef.current) {
+      const currentPath = window.location.pathname;
+      if (currentPath.startsWith('/parent')) {
+        navigateRef.current('/parent/login');
+      } else if (currentPath.startsWith('/superadmin')) {
+        navigateRef.current('/superadmin/login');
+      } else {
+        navigateRef.current('/login');
+      }
+    }
+  };
+
+  const setNavigate = (navigateFn: (path: string) => void) => {
+    navigateRef.current = navigateFn;
   };
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, login, logout, isAuthenticated: !!user, setUser }}>
+    <AuthContext.Provider value={{ 
+      user, 
+      isLoading, 
+      login, 
+      logout, 
+      isAuthenticated: !!user, 
+      setUser,
+      setNavigate
+    }}>
       {children}
     </AuthContext.Provider>
   );

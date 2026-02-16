@@ -7,13 +7,18 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { User, Download } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { User, Download, FileText, CheckCircle2, Calendar, Clock, BookOpen } from "lucide-react";
 import { format } from "date-fns";
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
+import { useToast } from "@/hooks/use-toast";
+import { toast } from "sonner";
+import { SkeletonList, SkeletonCard } from "@/components/ui/skeleton";
 
 export default function ParentDashboard() {
   const { user } = useAuth();
+  const { toast } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
   const [children, setChildren] = useState<any[]>([]);
@@ -47,10 +52,8 @@ export default function ParentDashboard() {
       }
     } catch (error) {
       console.error('Failed to load children:', error);
-      // Show error to user
-      if (error instanceof Error) {
-        console.error('Error details:', error.message);
-      }
+      const errorMessage = error instanceof Error ? error.message : 'Failed to load children';
+      toast.error(errorMessage + ' Please refresh the page or contact support if the issue persists.');
     } finally {
       setLoading(false);
     }
@@ -59,11 +62,11 @@ export default function ParentDashboard() {
   if (loading) {
     return (
       <UnifiedLayout role="parent">
-        <div className="flex items-center justify-center h-64">
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
-            <p className="text-muted-foreground">Loading...</p>
+        <div className="space-y-6">
+          <div>
+            <SkeletonCard />
           </div>
+          <SkeletonList items={3} />
         </div>
       </UnifiedLayout>
     );
@@ -148,6 +151,11 @@ function ChildDetails({
   const [notifications, setNotifications] = useState<any[]>([]);
   const [fees, setFees] = useState<any[]>([]);
   const [testResults, setTestResults] = useState<any[]>([]);
+  const [tests, setTests] = useState<any[]>([]);
+  const [loadingTests, setLoadingTests] = useState(false);
+  const [testDetail, setTestDetail] = useState<any | null>(null);
+  const [showTestDetail, setShowTestDetail] = useState(false);
+  const [loadingTestDetail, setLoadingTestDetail] = useState(false);
   const [loading, setLoading] = useState(true);
   
   // Date filter states - default to today
@@ -160,6 +168,12 @@ function ChildDetails({
   useEffect(() => {
     loadData();
   }, [studentId, attendanceStartDate, attendanceEndDate, homeworkStartDate, homeworkEndDate]);
+
+  useEffect(() => {
+    if (studentId && section === 'results') {
+      loadTests();
+    }
+  }, [studentId, section]);
 
   const loadData = async () => {
     try {
@@ -216,8 +230,39 @@ function ChildDetails({
       setTestResults(resultsData);
     } catch (error) {
       console.error('Failed to load child data:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Failed to load data';
+      toast.error(errorMessage + ' Please try again.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadTests = async () => {
+    if (!studentId) return;
+    try {
+      setLoadingTests(true);
+      const data = await parentsApi.getChildTests(studentId);
+      setTests(data);
+    } catch (error) {
+      console.error('Failed to load tests:', error);
+      setTests([]);
+    } finally {
+      setLoadingTests(false);
+    }
+  };
+
+  const loadTestDetail = async (testId: string) => {
+    if (!studentId) return;
+    try {
+      setLoadingTestDetail(true);
+      const data = await parentsApi.getChildTestDetails(studentId, testId);
+      setTestDetail(data);
+      setShowTestDetail(true);
+    } catch (error) {
+      console.error('Failed to load test details:', error);
+      toast.error('Failed to load test details');
+    } finally {
+      setLoadingTestDetail(false);
     }
   };
 
@@ -229,6 +274,7 @@ function ChildDetails({
       );
     } catch (error) {
       console.error('Failed to mark notification as read:', error);
+      toast.error('Failed to mark notification as read. Please try again.');
     }
   };
 
@@ -438,7 +484,11 @@ function ChildDetails({
       pdf.save(fileName);
     } catch (error) {
       console.error('Failed to generate PDF:', error);
-      alert('Failed to download receipt. Please try again.');
+      toast({
+        title: "Error",
+        description: "Failed to download receipt. Please try again.",
+        variant: "destructive",
+      });
     }
   };
 
@@ -761,58 +811,246 @@ function ChildDetails({
 
       case 'results':
         return (
-          <Card>
-            <CardHeader>
-              <CardTitle>Test Results</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {testResults.length === 0 ? (
-                <p className="text-muted-foreground text-center py-4">No test results found.</p>
-              ) : (
-                <div className="space-y-4">
-                  {testResults.map((result) => (
-                    <div key={result.id} className="p-4 border rounded-lg hover:bg-muted/30 transition-colors">
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <h4 className="font-medium">{result.testName}</h4>
-                          <p className="text-sm text-muted-foreground mt-1">
-                            {result.subjectName} ({result.subjectCode})
-                          </p>
-                          <p className="text-xs text-muted-foreground mt-1">
-                            Date: {new Date(result.testDate).toLocaleDateString('en-US', { 
-                              year: 'numeric', 
-                              month: 'long', 
-                              day: 'numeric' 
-                            })}
-                          </p>
-                        </div>
-                        <div className="text-right">
-                          <p className="text-2xl font-bold">
-                            {result.marksObtained} / {result.maxMarks}
-                          </p>
-                          <p className="text-sm font-medium text-primary">
-                            {result.percentage}%
-                          </p>
-                          <Badge 
-                            variant={
-                              parseFloat(result.percentage) >= 80 ? 'default' : 
-                              parseFloat(result.percentage) >= 60 ? 'secondary' : 
-                              'destructive'
-                            }
-                            className="mt-1"
+          <>
+            <Card>
+              <CardHeader>
+                <CardTitle>Tests & Results</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <Tabs defaultValue="tests" className="w-full">
+                  <TabsList className="grid w-full grid-cols-2">
+                    <TabsTrigger value="tests">
+                      <FileText className="w-4 h-4 mr-2" />
+                      Tests
+                    </TabsTrigger>
+                    <TabsTrigger value="results">
+                      <CheckCircle2 className="w-4 h-4 mr-2" />
+                      Test Results
+                    </TabsTrigger>
+                  </TabsList>
+
+                  <TabsContent value="tests" className="space-y-4 mt-4">
+                    {loadingTests ? (
+                      <SkeletonList items={3} />
+                    ) : tests.length === 0 ? (
+                      <p className="text-muted-foreground text-center py-4">No tests found.</p>
+                    ) : (
+                      <div className="space-y-3">
+                        {tests.map((test) => (
+                          <div
+                            key={test.id}
+                            className="p-4 border rounded-lg hover:bg-muted/30 transition-colors cursor-pointer"
+                            onClick={() => loadTestDetail(test.id)}
                           >
-                            {parseFloat(result.percentage) >= 80 ? 'Excellent' : 
-                             parseFloat(result.percentage) >= 60 ? 'Good' : 
-                             'Needs Improvement'}
-                          </Badge>
+                            <div className="flex items-start justify-between">
+                              <div className="flex-1">
+                                <h4 className="font-medium">{test.name}</h4>
+                                <div className="flex items-center gap-4 text-sm text-muted-foreground mt-2">
+                                  <span className="flex items-center gap-1">
+                                    <Calendar className="w-4 h-4" />
+                                    {new Date(test.testDate).toLocaleDateString('en-US', { 
+                                      year: 'numeric', 
+                                      month: 'long', 
+                                      day: 'numeric' 
+                                    })}
+                                  </span>
+                                  {test.testTime && (
+                                    <span className="flex items-center gap-1">
+                                      <Clock className="w-4 h-4" />
+                                      {test.testTime}
+                                    </span>
+                                  )}
+                                  <span className="flex items-center gap-1">
+                                    <BookOpen className="w-4 h-4" />
+                                    {test.className}
+                                  </span>
+                                </div>
+                                <Badge variant="secondary" className="mt-2">
+                                  {test.subjectCount} Subjects
+                                </Badge>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </TabsContent>
+
+                  <TabsContent value="results" className="space-y-4 mt-4">
+                    {testResults.length === 0 ? (
+                      <p className="text-muted-foreground text-center py-4">No test results found.</p>
+                    ) : (
+                      <div className="space-y-4">
+                        {testResults.map((result) => (
+                          <div key={result.id} className="p-4 border rounded-lg hover:bg-muted/30 transition-colors">
+                            <div className="flex items-start justify-between">
+                              <div className="flex-1">
+                                <h4 className="font-medium">{result.testName}</h4>
+                                <p className="text-sm text-muted-foreground mt-1">
+                                  {result.subjectName} ({result.subjectCode})
+                                </p>
+                                <p className="text-xs text-muted-foreground mt-1">
+                                  Date: {new Date(result.testDate).toLocaleDateString('en-US', { 
+                                    year: 'numeric', 
+                                    month: 'long', 
+                                    day: 'numeric' 
+                                  })}
+                                </p>
+                              </div>
+                              <div className="text-right">
+                                <p className="text-2xl font-bold">
+                                  {result.marksObtained} / {result.maxMarks}
+                                </p>
+                                <p className="text-sm font-medium text-primary">
+                                  {result.percentage}%
+                                </p>
+                                <Badge 
+                                  variant={
+                                    parseFloat(result.percentage) >= 80 ? 'default' : 
+                                    parseFloat(result.percentage) >= 60 ? 'secondary' : 
+                                    'destructive'
+                                  }
+                                  className="mt-1"
+                                >
+                                  {parseFloat(result.percentage) >= 80 ? 'Excellent' : 
+                                   parseFloat(result.percentage) >= 60 ? 'Good' : 
+                                   'Needs Improvement'}
+                                </Badge>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </TabsContent>
+                </Tabs>
+              </CardContent>
+            </Card>
+
+            {/* Test Detail Modal */}
+            {showTestDetail && testDetail && (
+              <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                <Card className="w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+                  <CardHeader className="flex flex-row items-center justify-between">
+                    <CardTitle>{testDetail.name}</CardTitle>
+                    <Button variant="ghost" size="sm" onClick={() => setShowTestDetail(false)}>
+                      ✕
+                    </Button>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <p className="text-sm text-muted-foreground">Test Date</p>
+                        <p className="font-medium flex items-center gap-2">
+                          <Calendar className="w-4 h-4" />
+                          {new Date(testDetail.testDate).toLocaleDateString('en-US', { 
+                            year: 'numeric', 
+                            month: 'long', 
+                            day: 'numeric' 
+                          })}
+                        </p>
+                      </div>
+                      {testDetail.testTime && (
+                        <div>
+                          <p className="text-sm text-muted-foreground">Test Time</p>
+                          <p className="font-medium flex items-center gap-2">
+                            <Clock className="w-4 h-4" />
+                            {testDetail.testTime}
+                          </p>
                         </div>
+                      )}
+                      <div>
+                        <p className="text-sm text-muted-foreground">Class</p>
+                        <p className="font-medium flex items-center gap-2">
+                          <BookOpen className="w-4 h-4" />
+                          {testDetail.className}
+                        </p>
                       </div>
                     </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+
+                    <Tabs defaultValue="syllabus" className="w-full">
+                      <TabsList>
+                        <TabsTrigger value="syllabus">
+                          <FileText className="w-4 h-4 mr-2" />
+                          Syllabus
+                        </TabsTrigger>
+                        <TabsTrigger value="results">
+                          <CheckCircle2 className="w-4 h-4 mr-2" />
+                          Results
+                          {testDetail.results.length > 0 && (
+                            <Badge variant="secondary" className="ml-2">
+                              {testDetail.results.length}
+                            </Badge>
+                          )}
+                        </TabsTrigger>
+                      </TabsList>
+
+                      <TabsContent value="syllabus" className="space-y-3 mt-4">
+                        {testDetail.subjects.map((subject: any) => (
+                          <Card key={subject.id} className="border-l-4 border-l-primary">
+                            <CardContent className="pt-4">
+                              <h4 className="font-semibold">{subject.subjectName}</h4>
+                              <p className="text-sm text-muted-foreground">
+                                {subject.subjectCode} • Max Marks: {subject.maxMarks}
+                              </p>
+                              {subject.syllabus && (
+                                <div className="mt-3 p-3 bg-muted/50 rounded-lg">
+                                  <p className="text-sm font-medium mb-1">Syllabus:</p>
+                                  <p className="text-sm whitespace-pre-wrap">{subject.syllabus}</p>
+                                </div>
+                              )}
+                            </CardContent>
+                          </Card>
+                        ))}
+                      </TabsContent>
+
+                      <TabsContent value="results" className="space-y-3 mt-4">
+                        {testDetail.results.length === 0 ? (
+                          <p className="text-muted-foreground text-center py-4">Results not available yet.</p>
+                        ) : (
+                          testDetail.results.map((result: any) => {
+                            const percentage = parseFloat(result.percentage);
+                            return (
+                              <Card key={result.id}>
+                                <CardContent className="pt-4">
+                                  <div className="flex items-start justify-between">
+                                    <div className="flex-1">
+                                      <h4 className="font-semibold">{result.subjectName}</h4>
+                                      <p className="text-sm text-muted-foreground">{result.subjectCode}</p>
+                                    </div>
+                                    <div className="text-right">
+                                      <p className="text-2xl font-bold">
+                                        {result.marksObtained} / {result.maxMarks}
+                                      </p>
+                                      <p className="text-sm font-medium text-primary">
+                                        {result.percentage}%
+                                      </p>
+                                      <Badge
+                                        variant={
+                                          percentage >= 80 ? 'default' :
+                                          percentage >= 60 ? 'secondary' :
+                                          'destructive'
+                                        }
+                                        className="mt-1"
+                                      >
+                                        {percentage >= 80 ? 'Excellent' :
+                                         percentage >= 60 ? 'Good' :
+                                         'Needs Improvement'}
+                                      </Badge>
+                                    </div>
+                                  </div>
+                                </CardContent>
+                              </Card>
+                            );
+                          })
+                        )}
+                      </TabsContent>
+                    </Tabs>
+                  </CardContent>
+                </Card>
+              </div>
+            )}
+          </>
         );
 
       default:

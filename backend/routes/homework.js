@@ -51,13 +51,26 @@ router.get('/class/:classId', authenticateToken, requireTeacher, async (req, res
   try {
     const { classId } = req.params;
 
-    const [homework] = await db.query(`
+    let query = `
       SELECT h.*, t.name as teacher_name
       FROM homework h
       LEFT JOIN teachers t ON h.teacher_id = t.id
       WHERE h.class_id = ?
-      ORDER BY h.due_date DESC
-    `, [classId]);
+    `;
+    const params = [classId];
+
+    // Add teacher filter for teachers (same as main /homework endpoint)
+    if (req.user.role === 'teacher') {
+      query += ' AND h.teacher_id = ?';
+      params.push(req.user.id);
+    } else if (req.user.role === 'admin') {
+      query += ' AND h.school_id = ?';
+      params.push(req.user.schoolId);
+    }
+
+    query += ' ORDER BY h.due_date DESC';
+
+    const [homework] = await db.query(query, params);
 
     res.json(homework.map(h => ({
       id: h.id,
@@ -88,12 +101,21 @@ router.post('/', authenticateToken, requireTeacher, async (req, res) => {
     const schoolId = req.user.schoolId;
 
     // Verify teacher has access to this class
+    // Teacher can create homework if they are class teacher OR subject teacher
     if (req.user.role === 'teacher') {
-      const [classes] = await db.query(
+      // Check if class teacher
+      const [classTeacherCheck] = await db.query(
         'SELECT id FROM classes WHERE id = ? AND class_teacher_id = ?',
         [classId, teacherId]
       );
-      if (classes.length === 0) {
+      
+      // Check if subject teacher (from timetable)
+      const [subjectTeacherCheck] = await db.query(
+        'SELECT DISTINCT class_id FROM timetable_entries WHERE class_id = ? AND teacher_id = ? LIMIT 1',
+        [classId, teacherId]
+      );
+      
+      if (classTeacherCheck.length === 0 && subjectTeacherCheck.length === 0) {
         return res.status(403).json({ error: 'You do not have access to this class' });
       }
     }

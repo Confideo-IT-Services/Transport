@@ -11,6 +11,8 @@ import {
 } from "@/components/ui/select";
 import { Copy, Eye, X, Calendar, Filter, Loader2, Link2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { useConfirmDialog } from "@/hooks/use-confirm-dialog";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { registrationLinksApi, classesApi } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -35,6 +37,7 @@ interface RegistrationLink {
 
 export default function RegistrationLinksManagement() {
   const { user } = useAuth();
+  const { dialog, confirm, close } = useConfirmDialog();
   const [links, setLinks] = useState<RegistrationLink[]>([]);
   const [classes, setClasses] = useState<any[]>([]);
   const [filteredLinks, setFilteredLinks] = useState<RegistrationLink[]>([]);
@@ -137,35 +140,43 @@ export default function RegistrationLinksManagement() {
   };
 
   const handleDeactivate = async (linkId: string) => {
-    if (!confirm("Are you sure you want to deactivate this registration link?")) {
-      return;
-    }
-
-    try {
-      await registrationLinksApi.deactivate(linkId);
-      toast.success("Registration link deactivated");
-      // Reload links for the current selection
-      await handleLoadForms();
-    } catch (error: any) {
-      console.error('Error deactivating link:', error);
-      toast.error(error?.message || "Failed to deactivate link");
-    }
+    confirm(
+      "Deactivate Registration Link",
+      "Are you sure you want to deactivate this registration link?",
+      async () => {
+        try {
+          await registrationLinksApi.deactivate(linkId);
+          toast.success("Registration link deactivated");
+          // Reload links for the current selection
+          await handleLoadForms();
+        } catch (error: any) {
+          console.error('Error deactivating link:', error);
+          toast.error(error?.message || "Failed to deactivate link");
+        }
+      }
+    );
   };
 
   const handleDelete = async (linkId: string) => {
-    if (!confirm("Are you sure you want to delete this registration link? This action cannot be undone.")) {
-      return;
-    }
-
-    try {
-      await registrationLinksApi.delete(linkId);
-      toast.success("Registration link deleted");
-      // Reload links for the current selection
-      await handleLoadForms();
-    } catch (error: any) {
-      console.error('Error deleting link:', error);
-      toast.error(error?.message || "Failed to delete link");
-    }
+    confirm(
+      "Delete Registration Link",
+      "Are you sure you want to delete this registration link? This action cannot be undone.",
+      async () => {
+        try {
+          await registrationLinksApi.delete(linkId);
+          toast.success("Registration link deleted");
+          // Reload links for the current selection
+          await handleLoadForms();
+        } catch (error: any) {
+          console.error('Error deleting link:', error);
+          toast.error(error?.message || "Failed to delete link");
+        }
+      },
+      {
+        variant: "destructive",
+        confirmText: "Delete",
+      }
+    );
   };
 
   // Get unique sections for selected class
@@ -481,6 +492,18 @@ export default function RegistrationLinksManagement() {
           </div>
         )}
       </div>
+
+      {/* Confirm Dialog */}
+      <ConfirmDialog
+        open={dialog.open}
+        onOpenChange={(open) => !open && close()}
+        title={dialog.title}
+        description={dialog.description}
+        onConfirm={dialog.onConfirm}
+        confirmText={dialog.confirmText}
+        cancelText={dialog.cancelText}
+        variant={dialog.variant}
+      />
     </UnifiedLayout>
   );
 }

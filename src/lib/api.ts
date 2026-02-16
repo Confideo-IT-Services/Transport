@@ -73,10 +73,32 @@ export const removeToken = (): void => {
   localStorage.removeItem('conventpulse_token');
 };
 
-// API Helper
+// Retry configuration
+const MAX_RETRIES = 3;
+const RETRY_DELAY = 1000; // 1 second
+const RETRYABLE_STATUS_CODES = [408, 429, 500, 502, 503, 504];
+
+// Sleep helper for retry delays
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+// Check if error is retryable
+const isRetryableError = (error: any, status?: number): boolean => {
+  // Network errors are retryable
+  if (error instanceof TypeError && error.message.includes('fetch')) {
+    return true;
+  }
+  // Specific HTTP status codes are retryable
+  if (status && RETRYABLE_STATUS_CODES.includes(status)) {
+    return true;
+  }
+  return false;
+};
+
+// API Helper with retry logic
 const apiRequest = async <T>(
   endpoint: string,
-  options: RequestInit = {}
+  options: RequestInit = {},
+  retryCount = 0
 ): Promise<T> => {
   const token = getToken();
   
@@ -93,6 +115,25 @@ const apiRequest = async <T>(
     });
 
     if (!response.ok) {
+      // Handle authentication errors (don't retry)
+      if (response.status === 401 || response.status === 403) {
+        // Clear auth state
+        removeToken();
+        localStorage.removeItem("conventpulse_user");
+        
+        // Dispatch custom event for AuthContext to handle
+        window.dispatchEvent(new CustomEvent('auth:logout'));
+        
+        const errorData = await response.json().catch(() => ({ error: 'Unauthorized' }));
+        throw new Error(errorData.error || 'Session expired. Please login again.');
+      }
+      
+      // Check if error is retryable
+      if (retryCount < MAX_RETRIES && isRetryableError(null, response.status)) {
+        await sleep(RETRY_DELAY * (retryCount + 1)); // Exponential backoff
+        return apiRequest<T>(endpoint, options, retryCount + 1);
+      }
+      
       const errorData = await response.json().catch(() => ({ error: 'Request failed' }));
       const errorMessage = errorData.details 
         ? `${errorData.error}: ${errorData.details}` 
@@ -106,8 +147,12 @@ const apiRequest = async <T>(
 
     return response.json();
   } catch (error) {
-    // Check if it's a network/connection error
+    // Check if it's a network/connection error (retryable)
     if (error instanceof TypeError && error.message.includes('fetch')) {
+      if (retryCount < MAX_RETRIES) {
+        await sleep(RETRY_DELAY * (retryCount + 1)); // Exponential backoff
+        return apiRequest<T>(endpoint, options, retryCount + 1);
+      }
       throw new Error('Unable to connect to server. Please check if the backend is running and the database is connected.');
     }
     // Re-throw other errors
@@ -381,6 +426,52 @@ export const academicYearsApi = {
       method: 'POST',
     });
   },
+
+  getYearlySummary: async (yearId: string, classId: string): Promise<{
+    academicYearId: string;
+    academicYearName: string;
+    classId: string;
+    className: string;
+    studentCount: number;
+    students: Array<{
+      studentId: string;
+      name: string;
+      rollNo: string | null;
+      totalMarks: number;
+      totalMaxMarks: number;
+      testCount: number;
+      yearlyPercentage: number;
+      hasResults: boolean;
+      tcIssued: boolean;
+    }>;
+  }> => {
+    return apiRequest(`/academic-years/${yearId}/class/${classId}/yearly-summary`);
+  },
+
+  promote: async (fromYearId: string, data: {
+    toAcademicYearId: string;
+    classPromotions: Array<{
+      fromClassId: string;
+      toClassId: string | null;
+      studentIds: string[];
+    }>;
+  }): Promise<{
+    success: boolean;
+    promotedCount: number;
+    graduatedCount: number;
+    skippedCount: number;
+    total: number;
+    errors?: Array<{
+      classId: string;
+      reason: string;
+      studentCount: number;
+    }>;
+  }> => {
+    return apiRequest(`/academic-years/${fromYearId}/promote`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
 };
 
 // ============ STUDENTS API ============
@@ -444,9 +535,49 @@ export const studentsApi = {
     });
   },
 
-  approve: async (id: string | number): Promise<{ success: boolean; admissionNumber?: string }> => {
+  quickEntry: async (students: Array<{
+    name: string;
+    parentPhone: string;
+    parentName?: string;
+    dateOfBirth?: string;
+    gender?: 'male' | 'female' | 'other';
+  }>): Promise<{ 
+    success: boolean; 
+    created: number; 
+    failed: number; 
+    students: Array<{ id: string; name: string; tempAdmissionNumber: string }>;
+    errors?: Array<{ index: number; name: string; error: string }>;
+  }> => {
+    return apiRequest('/students/quick-entry', {
+      method: 'POST',
+      body: JSON.stringify({ students }),
+    });
+  },
+
+  approve: async (
+    id: string | number, 
+    data?: { classId?: string; rollNo?: string | number }
+  ): Promise<{ success: boolean; admissionNumber?: string; message?: string }> => {
     return apiRequest(`/students/${id}/approve`, {
       method: 'POST',
+      body: data ? JSON.stringify(data) : undefined,
+    });
+  },
+
+  bulkApprove: async (approvals: Array<{
+    studentId: string;
+    classId: string;
+    rollNo?: string | number;
+  }>): Promise<{
+    success: boolean;
+    approved: number;
+    failed: number;
+    results: Array<{ studentId: string; success: boolean; admissionNumber: string }>;
+    errors?: Array<{ studentId: string; error: string }>;
+  }> => {
+    return apiRequest('/students/bulk-approve', {
+      method: 'POST',
+      body: JSON.stringify({ approvals }),
     });
   },
 
@@ -610,7 +741,8 @@ export const uploadApi = {
     
     if (!response.ok) {
       const error = await response.json().catch(() => ({ error: 'Upload failed' }));
-      throw new Error(error.error || 'Failed to upload ID template');
+      const msg = error.details ? `${error.error}: ${error.details}` : (error.error || 'Failed to upload ID template');
+      throw new Error(msg);throw new Error(error.error || 'Failed to upload ID template');
     }
     
     return response.json();
@@ -631,7 +763,8 @@ export const uploadApi = {
     
     if (!response.ok) {
       const error = await response.json().catch(() => ({ error: 'Upload failed' }));
-      throw new Error(error.error || 'Failed to upload ID layout');
+      const msg = error.details ? `${error.error}: ${error.details}` : (error.error || 'Failed to upload ID layout');
+      throw new Error(msg);throw new Error(error.error || 'Failed to upload ID layout');
     }
     
     return response.json();
@@ -1195,6 +1328,7 @@ export const feesApi = {
     totalPending: number;
     fullyPaidCount: number;
     unpaidCount: number;
+    partiallyPaidCount: number;
   }> => {
     return apiRequest('/fees/summary');
   },
@@ -1414,6 +1548,9 @@ export const notificationsApi = {
     attachmentUrl?: string;
     attachmentName?: string;
     attachmentType?: string;
+    eventDate?: string;
+    scheduledAt?: string;
+    whatsappEnabled?: boolean;
   }): Promise<{ success: boolean; message: string; notificationId: string }> => {
     return apiRequest('/notifications', {
       method: 'POST',
@@ -1459,9 +1596,66 @@ export const parentsApi = {
     return apiRequest(`/parents/children/${studentId}/test-results`);
   },
   
+  getChildTests: async (studentId: string): Promise<any[]> => {
+    return apiRequest<any[]>(`/parents/children/${studentId}/tests`);
+  },
+  
+  getChildTestDetails: async (studentId: string, testId: string): Promise<any> => {
+    return apiRequest<any>(`/parents/children/${studentId}/tests/${testId}`);
+  },
+  
   markNotificationRead: async (notificationId: string) => {
     return apiRequest(`/parents/notifications/${notificationId}/read`, {
       method: 'POST',
     });
   },
 };
+
+// ============ VISITOR REQUESTS API ============
+
+export const visitorRequestsApi = {
+  // Parent: Create visitor request
+  create: async (data: {
+    studentId: string;
+    classId: string;
+    visitorName: string;
+    visitorRelation: string;
+    visitReason: 'enquiry' | 'pickup' | 'other';
+    otherReason?: string;
+  }): Promise<{ success: boolean; requestId: string }> => {
+    return apiRequest('/visitor-requests', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  // Parent: Get their visitor requests
+  getMyRequests: async (): Promise<any[]> => {
+    return apiRequest<any[]>('/visitor-requests/my-requests');
+  },
+
+  // Teacher: Get visitor requests for their class
+  getTeacherRequests: async (): Promise<any[]> => {
+    return apiRequest<any[]>('/visitor-requests/teacher');
+  },
+
+  // Teacher: Accept visitor request
+  teacherAccept: async (requestId: string): Promise<{ success: boolean }> => {
+    return apiRequest(`/visitor-requests/${requestId}/teacher-accept`, {
+      method: 'PATCH',
+    });
+  },
+
+  // Admin: Get all visitor requests
+  getAdminRequests: async (): Promise<any[]> => {
+    return apiRequest<any[]>('/visitor-requests/admin');
+  },
+
+  // Admin: Accept visitor request
+  adminAccept: async (requestId: string): Promise<{ success: boolean }> => {
+    return apiRequest(`/visitor-requests/${requestId}/admin-accept`, {
+      method: 'PATCH',
+    });
+  },
+};
+

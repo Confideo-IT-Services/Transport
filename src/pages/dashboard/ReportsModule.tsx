@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useLocation } from "react-router-dom";
 import { UnifiedLayout } from "@/components/layout/UnifiedLayout";
 import { useAuth } from "@/contexts/AuthContext";
@@ -61,6 +61,8 @@ import {
   FileText,
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
+import { useConfirmDialog } from "@/hooks/use-confirm-dialog";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { attendanceApi, homeworkApi, studentsApi, classesApi, testsApi, timetableApi } from "@/lib/api";
 
 // Interfaces
@@ -116,8 +118,8 @@ const defaultSubjects: Subject[] = [
 export default function ReportsModule() {
   const { user } = useAuth();
   const location = useLocation();
+  const { dialog, confirm, close } = useConfirmDialog();
   const isAdmin = user?.role === "admin";
-  const lastPathnameRef = useRef<string>("");
   const [activeTab, setActiveTab] = useState(isAdmin ? "analytics" : "tests");
   const [selectedClass, setSelectedClass] = useState("");
   const [selectedClassId, setSelectedClassId] = useState("");
@@ -164,6 +166,8 @@ export default function ReportsModule() {
   // Add Marks State
   const [studentSubjectMarks, setStudentSubjectMarks] = useState<{ [studentId: string]: { [subjectId: string]: number } }>({});
   const [testResults, setTestResults] = useState<any[]>([]);
+  const [hasMultipleClasses, setHasMultipleClasses] = useState(false);
+  const [gradeFilter, setGradeFilter] = useState<string>("all");
 
   const getStudentById = (id: string | number) => students.find(s => s.id === id || String(s.id) === String(id));
 
@@ -183,9 +187,11 @@ export default function ReportsModule() {
               setSelectedClass(`${assignedClass.name}${assignedClass.section ? ` - Section ${assignedClass.section}` : ''}`);
               setSelectedClassId(assignedClass.id);
             }
+            setHasMultipleClasses(classesData.length > 1); // Track if multiple classes
           } else {
             // For admin: Don't auto-select a class, leave it empty to show all tests initially
             // selectedClassId and selectedClass remain empty
+            setHasMultipleClasses(classesData.length > 1);
           }
         }
       } catch (error) {
@@ -198,7 +204,7 @@ export default function ReportsModule() {
       }
     };
     loadClasses();
-  }, [isAdmin, user, location.pathname]);
+  }, [isAdmin, user]);
 
   // Load students
   useEffect(() => {
@@ -243,7 +249,7 @@ export default function ReportsModule() {
   // Load tests from database
   useEffect(() => {
     const loadTests = async () => {
-      if (!selectedClassId && !isAdmin) {
+      if (!selectedClassId) {
         setTests([]);
         return;
       }
@@ -271,16 +277,10 @@ export default function ReportsModule() {
       }
     };
     loadTests();
-  }, [selectedClassId, isAdmin, location.pathname]);
+  }, [selectedClassId, isAdmin]);
 
   // Load analytics data
   useEffect(() => {
-    // Track navigation to force reload when coming to this page
-    const isNavigatingToPage = lastPathnameRef.current !== location.pathname;
-    if (isNavigatingToPage) {
-      lastPathnameRef.current = location.pathname;
-    }
-    
     const loadAnalytics = async () => {
       // Wait for classes to load if admin, or wait for selectedClassId if teacher
       if (isAdmin && classes.length === 0) {
@@ -598,19 +598,8 @@ export default function ReportsModule() {
       }
     };
     
-    // Always try to load analytics when component mounts or pathname changes
-    // The function will return early if conditions aren't met, but it will try
     loadAnalytics();
-    
-    // If conditions aren't met, set up a small retry after classes/selectedClassId are set
-    if ((isAdmin && classes.length === 0) || (!isAdmin && !selectedClassId)) {
-      // Retry after a short delay to allow classes/selectedClassId to load
-      const retryTimer = setTimeout(() => {
-        loadAnalytics();
-      }, 500);
-      return () => clearTimeout(retryTimer);
-    }
-  }, [selectedClassId, isAdmin, classes, location.pathname]);
+  }, [selectedClassId, isAdmin, classes]);
 
   const calculateGrade = (marks: number, maxMarks: number): string => {
     const percentage = (marks / maxMarks) * 100;
@@ -624,7 +613,17 @@ export default function ReportsModule() {
   };
 
   // Component to display test results in Student Reports tab
-  const TestResultsView = ({ testId, testName, isAdmin }: { testId: string; testName: string; isAdmin: boolean }) => {
+  const TestResultsView = ({
+    testId,
+    testName,
+    isAdmin,
+    gradeFilter
+  }: {
+    testId: string;
+    testName: string;
+    isAdmin: boolean;
+    gradeFilter: string;
+  }) => {
     const [results, setResults] = useState<any[]>([]);
     const [loading, setLoading] = useState(false);
     const [testDetails, setTestDetails] = useState<any>(null);
@@ -656,6 +655,17 @@ export default function ReportsModule() {
       return <div className="text-center py-4 text-muted-foreground text-sm">No marks added yet.</div>;
     }
 
+    // Filter results based on grade
+    let filteredResults = results;
+    if (gradeFilter !== "all") {
+      filteredResults = results.filter((result: any) => {
+        const totalMarks = result.subjects.reduce((sum: number, s: any) => sum + s.marksObtained, 0);
+        const totalMaxMarks = result.subjects.reduce((sum: number, s: any) => sum + s.maxMarks, 0);
+        const grade = calculateGrade(totalMarks, totalMaxMarks);
+        return grade === gradeFilter;
+      });
+    }
+
     return (
       <div className="mt-4">
         <div className="border rounded-lg overflow-hidden">
@@ -672,7 +682,7 @@ export default function ReportsModule() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {results.map((result: any) => {
+              {filteredResults.map((result: any) => {
                 const totalMarks = result.subjects.reduce((sum: number, s: any) => sum + s.marksObtained, 0);
                 const totalMaxMarks = result.subjects.reduce((sum: number, s: any) => sum + s.maxMarks, 0);
                 const percentage = (totalMarks / totalMaxMarks) * 100;
@@ -954,42 +964,44 @@ export default function ReportsModule() {
     }
 
     // Confirm before sending
-    if (!confirm(`Are you sure you want to send test details for "${test.name}" to ALL parents?`)) {
-      return;
-    }
+    confirm(
+      "Send Test Details",
+      `Are you sure you want to send test details for "${test.name}" to ALL parents?`,
+      async () => {
+        try {
+          const result = await testsApi.sendToAllParents(test.id);
 
-    try {
-      const result = await testsApi.sendToAllParents(test.id);
+          if (result.success) {
+            toast({
+              title: "Success",
+              description: `✅ ${result.results.successful} out of ${result.results.total} parents received the test details!`,
+            });
 
-      if (result.success) {
-        toast({
-          title: "Success",
-          description: `✅ ${result.results.successful} out of ${result.results.total} parents received the test details!`,
-        });
-
-        if (result.results.failed > 0) {
-          console.warn('Some messages failed:', result.results.errors);
+            if (result.results.failed > 0) {
+              console.warn('Some messages failed:', result.results.errors);
+              toast({
+                title: "Warning",
+                description: `⚠️ ${result.results.failed} messages failed. Check console for details.`,
+                variant: "destructive",
+              });
+            }
+          } else {
+            toast({
+              title: "Error",
+              description: "Failed to send test details",
+              variant: "destructive"
+            });
+          }
+        } catch (error: any) {
+          console.error('Error sending test details:', error);
           toast({
-            title: "Warning",
-            description: `⚠️ ${result.results.failed} messages failed. Check console for details.`,
-            variant: "destructive",
+            title: "Error",
+            description: error?.response?.data?.error || error?.message || "Failed to send WhatsApp messages",
+            variant: "destructive"
           });
         }
-      } else {
-        toast({
-          title: "Error",
-          description: "Failed to send test details",
-          variant: "destructive"
-        });
       }
-    } catch (error: any) {
-      console.error('Error sending test details:', error);
-      toast({
-        title: "Error",
-        description: error?.response?.data?.error || error?.message || "Failed to send WhatsApp messages",
-        variant: "destructive"
-      });
-    }
+    );
   };
 
   // Send test result to parent
@@ -1046,26 +1058,29 @@ export default function ReportsModule() {
             <p className="text-muted-foreground mt-1">Manage student reports, exam results, and analytics</p>
           </div>
           <div className="flex items-center gap-3">
-            <Select value={selectedClassId || ""} onValueChange={(value) => {
-              setSelectedClassId(value);
-              const cls = classes.find(c => c.id === value);
-              if (cls) {
-                setSelectedClass(`${cls.name}${cls.section ? ` - Section ${cls.section}` : ''}`);
-              } else {
-                setSelectedClass("");
-              }
-            }}>
-              <SelectTrigger className="w-48">
-                <SelectValue placeholder={isAdmin ? "All Classes" : "Select class"} />
-              </SelectTrigger>
-              <SelectContent>
-                {classes.map((cls) => (
-                  <SelectItem key={cls.id} value={cls.id}>
-                    {cls.name}{cls.section ? ` - Section ${cls.section}` : ''}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {/* Only show class selector for admin OR teacher with multiple classes */}
+            {(isAdmin || (!isAdmin && hasMultipleClasses)) && (
+              <Select value={selectedClassId || ""} onValueChange={(value) => {
+                setSelectedClassId(value);
+                const cls = classes.find(c => c.id === value);
+                if (cls) {
+                  setSelectedClass(`${cls.name}${cls.section ? ` - Section ${cls.section}` : ''}`);
+                } else {
+                  setSelectedClass("");
+                }
+              }}>
+                <SelectTrigger className="w-48">
+                  <SelectValue placeholder={isAdmin ? "All Classes" : "Select class"} />
+                </SelectTrigger>
+                <SelectContent>
+                  {classes.map((cls) => (
+                    <SelectItem key={cls.id} value={cls.id}>
+                      {cls.name}{cls.section ? ` - Section ${cls.section}` : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
           </div>
         </div>
 
@@ -1628,69 +1643,112 @@ export default function ReportsModule() {
                             </p>
                           </div>
                         </div>
-                        {!isAdmin && (
-                          <Button 
-                            variant="outline" 
+                        <div className="flex items-center gap-3">
+                          {/* Grade Filter */}
+                          <Select
+                            value={gradeFilter}
+                            onValueChange={(value) => setGradeFilter(value)}
+                          >
+                            <SelectTrigger className="w-32">
+                              <SelectValue placeholder="Grade" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="all">All</SelectItem>
+                              <SelectItem value="A+">A+</SelectItem>
+                              <SelectItem value="A">A</SelectItem>
+                              <SelectItem value="B+">B+</SelectItem>
+                              <SelectItem value="B">B</SelectItem>
+                              <SelectItem value="C">C</SelectItem>
+                              <SelectItem value="D">D</SelectItem>
+                              <SelectItem value="F">F</SelectItem>
+                            </SelectContent>
+                          </Select>
+
+                          {/* Send Message Button */}
+                          <Button
+                            variant="outline"
                             size="sm"
-                            onClick={async () => {
-                            try {
-                              const details = await testsApi.getById(test.id);
-                              setSelectedTest(details);
-                              
-                              // Ensure students are loaded for the test's class
-                              if (details.classId) {
-                                try {
-                                  const studentsData = await studentsApi.getByClass(details.classId);
-                                  const transformed = (studentsData || []).map((s: any, index: number) => ({
-                                    id: s.id,
-                                    name: s.name,
-                                    rollNo: s.rollNo || s.roll_no || String(index + 1).padStart(2, '0'),
-                                    parentPhone: s.parentPhone || s.parent_phone || '',
-                                    class: details.className || ''
-                                  }));
-                                  setStudents(transformed);
-                                  
-                                  if (transformed.length === 0) {
+                            onClick={() => {
+                              toast({
+                                title: "Coming Soon",
+                                description: "Send message functionality will be added soon.",
+                              });
+                            }}
+                          >
+                            <Send className="w-4 h-4 mr-1" />
+                            Send
+                          </Button>
+
+                          {/* Existing Add Marks Button */}
+                          {!isAdmin && (
+                            <Button 
+                              variant="outline" 
+                              size="sm"
+                              onClick={async () => {
+                              try {
+                                const details = await testsApi.getById(test.id);
+                                setSelectedTest(details);
+                                
+                                // Ensure students are loaded for the test's class
+                                if (details.classId) {
+                                  try {
+                                    const studentsData = await studentsApi.getByClass(details.classId);
+                                    const transformed = (studentsData || []).map((s: any, index: number) => ({
+                                      id: s.id,
+                                      name: s.name,
+                                      rollNo: s.rollNo || s.roll_no || String(index + 1).padStart(2, '0'),
+                                      parentPhone: s.parentPhone || s.parent_phone || '',
+                                      class: details.className || ''
+                                    }));
+                                    setStudents(transformed);
+                                    
+                                    if (transformed.length === 0) {
+                                      toast({
+                                        title: "No Students",
+                                        description: "No students found in this class",
+                                        variant: "destructive"
+                                      });
+                                      return;
+                                    }
+                                  } catch (err) {
+                                    console.error('Error loading students for test class:', err);
                                     toast({
-                                      title: "No Students",
-                                      description: "No students found in this class",
+                                      title: "Error",
+                                      description: "Failed to load students",
                                       variant: "destructive"
                                     });
                                     return;
                                   }
-                                } catch (err) {
-                                  console.error('Error loading students for test class:', err);
-                                  toast({
-                                    title: "Error",
-                                    description: "Failed to load students",
-                                    variant: "destructive"
-                                  });
-                                  return;
                                 }
+                                
+                                // Load existing results
+                                const results = await testsApi.getResults(test.id);
+                                setTestResults(results);
+                                setStudentSubjectMarks({}); // Reset marks
+                                setShowAddMarks(true);
+                              } catch (error) {
+                                console.error('Error loading test details:', error);
+                                toast({
+                                  title: "Error",
+                                  description: "Failed to load test details",
+                                  variant: "destructive"
+                                });
                               }
-                              
-                              // Load existing results
-                              const results = await testsApi.getResults(test.id);
-                              setTestResults(results);
-                              setStudentSubjectMarks({}); // Reset marks
-                              setShowAddMarks(true);
-                            } catch (error) {
-                              console.error('Error loading test details:', error);
-                              toast({
-                                title: "Error",
-                                description: "Failed to load test details",
-                                variant: "destructive"
-                              });
-                            }
-                          }}
-                          >
-                            <Plus className="w-4 h-4 mr-1" />Add Marks
-                          </Button>
-                        )}
+                            }}
+                            >
+                              <Plus className="w-4 h-4 mr-1" />Add Marks
+                            </Button>
+                          )}
+                        </div>
                       </div>
                     </CardHeader>
                     <CardContent>
-                      <TestResultsView testId={test.id} testName={test.name} isAdmin={isAdmin} />
+                      <TestResultsView 
+                        testId={test.id} 
+                        testName={test.name} 
+                        isAdmin={isAdmin}
+                        gradeFilter={gradeFilter}
+                      />
                     </CardContent>
                   </Card>
                 ))}
@@ -1803,6 +1861,18 @@ export default function ReportsModule() {
             </div>
           </DialogContent>
         </Dialog>
+
+        {/* Confirm Dialog */}
+        <ConfirmDialog
+          open={dialog.open}
+          onOpenChange={(open) => !open && close()}
+          title={dialog.title}
+          description={dialog.description}
+          onConfirm={dialog.onConfirm}
+          confirmText={dialog.confirmText}
+          cancelText={dialog.cancelText}
+          variant={dialog.variant}
+        />
       </div>
     </UnifiedLayout>
   );

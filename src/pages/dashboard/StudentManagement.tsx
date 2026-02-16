@@ -28,6 +28,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
 import { studentsApi, classesApi, registrationLinksApi, teachersApi, academicYearsApi } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
+import { QuickEntryDialog } from "@/components/students/QuickEntryDialog";
+import { ApproveStudentDialog } from "@/components/students/ApproveStudentDialog";
+import { BulkApproveDialog } from "@/components/students/BulkApproveDialog";
 
 interface FieldConfig {
   id: string;
@@ -454,6 +457,12 @@ export default function StudentManagement() {
   const [bulkImporting, setBulkImporting] = useState(false);
   const [linkName, setLinkName] = useState("");
   const [linkType, setLinkType] = useState<'class' | 'all_classes' | 'teacher' | 'others'>('class');
+  // Quick entry and approval dialogs
+  const [showQuickEntry, setShowQuickEntry] = useState(false);
+  const [showApproveDialog, setShowApproveDialog] = useState(false);
+  const [approvingStudent, setApprovingStudent] = useState<Student | null>(null);
+  const [showBulkApproveDialog, setShowBulkApproveDialog] = useState(false);
+  const [selectedStudentsForBulk, setSelectedStudentsForBulk] = useState<Student[]>([]);
   const [selectedClassForLink, setSelectedClassForLink] = useState("");
   const [selectedTeacherForLink, setSelectedTeacherForLink] = useState("");
   const [teachers, setTeachers] = useState<{ id: string; name: string }[]>([]);
@@ -545,18 +554,35 @@ export default function StudentManagement() {
   };
 
   const handleApprove = async (studentId: string | number) => {
-    try {
-      const response = await studentsApi.approve(studentId);
-      
-      toast.success("Student approved and added to class!");
-      
-      // Reload data to ensure consistency (admission number will come from backend)
-      await loadData();
-    } catch (error: any) {
-      console.error('Error approving student:', error);
-      const errorMessage = error?.response?.data?.error || error?.message || "Failed to approve student";
-      toast.error(errorMessage);
+    // Find student and show approval dialog
+    const student = students.find(s => s.id === studentId);
+    if (student) {
+      setApprovingStudent(student);
+      setShowApproveDialog(true);
     }
+  };
+
+  const handleApproveSuccess = async () => {
+    // Reload data after approval
+    await loadData();
+    setShowApproveDialog(false);
+    setApprovingStudent(null);
+  };
+
+  const handleBulkApprove = () => {
+    const pendingStudents = students.filter(s => s.status === 'pending');
+    if (pendingStudents.length === 0) {
+      toast.error('No pending students to approve');
+      return;
+    }
+    setSelectedStudentsForBulk(pendingStudents);
+    setShowBulkApproveDialog(true);
+  };
+
+  const handleBulkApproveSuccess = async () => {
+    await loadData();
+    setShowBulkApproveDialog(false);
+    setSelectedStudentsForBulk([]);
   };
 
   const handleReject = async (studentId: string | number) => {
@@ -750,6 +776,10 @@ export default function StudentManagement() {
           </div>
           {(!selectedAcademicYearId || academicYears.find((y) => y.id === selectedAcademicYearId)?.status === "active") && (
             <div className="flex items-center gap-2">
+              <Button variant="outline" onClick={() => setShowQuickEntry(true)}>
+                <Plus className="w-4 h-4 mr-2" />
+                Quick Entry
+              </Button>
               <Button variant="outline" onClick={() => setShowBulkImportDialog(true)}>
                 <Upload className="w-4 h-4 mr-2" />
                 Bulk Import
@@ -804,6 +834,22 @@ export default function StudentManagement() {
           </TabsList>
 
           <TabsContent value="submissions" className="space-y-4 mt-4">
+            {/* Bulk Actions */}
+            {pendingCount > 0 && (
+              <div className="flex items-center justify-between">
+                <div className="text-sm text-muted-foreground">
+                  {pendingCount} pending submission(s)
+                </div>
+                <Button 
+                  variant="outline" 
+                  onClick={handleBulkApprove}
+                  disabled={pendingCount === 0}
+                >
+                  <Check className="w-4 h-4 mr-2" />
+                  Bulk Approve
+                </Button>
+              </div>
+            )}
             {/* Filters */}
             <div className="flex flex-wrap items-center gap-4">
               <div className="relative flex-1 max-w-md">
@@ -978,26 +1024,10 @@ export default function StudentManagement() {
                       </td>
                       <td className="p-4 text-muted-foreground">{student.parentPhone}</td>
                       <td className="p-4">
-                        {user?.role === 'admin' && !isReadOnlyYear ? (
-                          <Select
-                            value={student.tcStatus || 'none'}
-                            onValueChange={(value) => handleUpdateTcStatus(student.id, value as 'none' | 'applied' | 'issued')}
-                          >
-                            <SelectTrigger className="w-36">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="none">None</SelectItem>
-                              <SelectItem value="applied">TC Applied</SelectItem>
-                              <SelectItem value="issued">TC Issued</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        ) : (
-                          <span className="text-sm text-muted-foreground">
-                            {student.tcStatus === 'applied' ? 'TC Applied' : 
-                             student.tcStatus === 'issued' ? 'TC Issued' : 'None'}
-                          </span>
-                        )}
+                        <span className="text-sm text-muted-foreground">
+                          {student.tcStatus === 'applied' ? 'TC Applied' : 
+                           student.tcStatus === 'issued' ? 'TC Issued' : 'NA'}
+                        </span>
                       </td>
                       <td className="p-4">
                         <div className="flex gap-2">
@@ -1883,6 +1913,37 @@ export default function StudentManagement() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        {/* Quick Entry Dialog */}
+        <QuickEntryDialog
+          open={showQuickEntry}
+          onClose={() => setShowQuickEntry(false)}
+          onSuccess={handleApproveSuccess}
+        />
+
+        {/* Approve Student Dialog */}
+        {approvingStudent && (
+          <ApproveStudentDialog
+            student={approvingStudent}
+            open={showApproveDialog}
+            onClose={() => {
+              setShowApproveDialog(false);
+              setApprovingStudent(null);
+            }}
+            onSuccess={handleApproveSuccess}
+          />
+        )}
+
+        {/* Bulk Approve Dialog */}
+        <BulkApproveDialog
+          students={selectedStudentsForBulk}
+          open={showBulkApproveDialog}
+          onClose={() => {
+            setShowBulkApproveDialog(false);
+            setSelectedStudentsForBulk([]);
+          }}
+          onSuccess={handleBulkApproveSuccess}
+        />
 
       </div>
     </UnifiedLayout>

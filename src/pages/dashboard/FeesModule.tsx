@@ -54,12 +54,15 @@ import {
   Send
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useConfirmDialog } from "@/hooks/use-confirm-dialog";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { feesApi, classesApi, academicYearsApi } from "@/lib/api";
 import { format } from "date-fns";
 
 export default function FeesModule() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const { dialog, confirm, close } = useConfirmDialog();
   const isAdmin = user?.role === "admin";
   
   // State
@@ -72,13 +75,14 @@ export default function FeesModule() {
     totalCollected: 0,
     totalPending: 0,
     fullyPaidCount: 0,
-    unpaidCount: 0
+    unpaidCount: 0,
+    partiallyPaidCount: 0
   });
   
   // Filters
   const [selectedClassId, setSelectedClassId] = useState<string>("all");
   const [searchTerm, setSearchTerm] = useState("");
-  const [selectedFeeStatus, setSelectedFeeStatus] = useState<"all" | "paid" | "pending">("all");
+  const [selectedFeeStatus, setSelectedFeeStatus] = useState<"all" | "paid" | "pending" | "partial">("all");
 
   // Dialog states
   const [isViewStudentFeeOpen, setIsViewStudentFeeOpen] = useState(false);
@@ -182,11 +186,12 @@ export default function FeesModule() {
         
         setStudentFees(feesData || []);
         setFeeStructure(structureData || []);
-        setSummary(summaryData || {
-          totalCollected: 0,
-          totalPending: 0,
-          fullyPaidCount: 0,
-          unpaidCount: 0
+        setSummary({
+          totalCollected: summaryData?.totalCollected || 0,
+          totalPending: summaryData?.totalPending || 0,
+          fullyPaidCount: summaryData?.fullyPaidCount || 0,
+          unpaidCount: summaryData?.unpaidCount || 0,
+          partiallyPaidCount: summaryData?.partiallyPaidCount || 0
         });
       } catch (error: any) {
         console.error('Error loading fees data:', error);
@@ -209,6 +214,8 @@ export default function FeesModule() {
       if (s.status !== "paid" || !s.hasFeeRecord) return false;
     } else if (selectedFeeStatus === "pending") {
       if (!s.hasFeeRecord || s.status === "paid") return false;
+    } else if (selectedFeeStatus === "partial") {
+      if (s.status !== "partial") return false;
     }
     if (searchTerm) {
       const search = searchTerm.toLowerCase();
@@ -296,7 +303,13 @@ export default function FeesModule() {
         feesApi.getSummary()
       ]);
       setStudentFees(feesData || []);
-      setSummary(summaryData || summary);
+      setSummary({
+        totalCollected: summaryData?.totalCollected || 0,
+        totalPending: summaryData?.totalPending || 0,
+        fullyPaidCount: summaryData?.fullyPaidCount || 0,
+        unpaidCount: summaryData?.unpaidCount || 0,
+        partiallyPaidCount: (summaryData as any)?.partiallyPaidCount || 0
+      });
       
       // Reload student fee details if dialog is open
       if (selectedStudentFee) {
@@ -561,7 +574,13 @@ th{font-weight:600;}
       
       // Reload summary
       const summaryData = await feesApi.getSummary();
-      setSummary(summaryData || summary);
+      setSummary({
+        totalCollected: summaryData?.totalCollected || 0,
+        totalPending: summaryData?.totalPending || 0,
+        fullyPaidCount: summaryData?.fullyPaidCount || 0,
+        unpaidCount: summaryData?.unpaidCount || 0,
+        partiallyPaidCount: (summaryData as any)?.partiallyPaidCount || 0
+      });
     } catch (error: any) {
       toast({
         title: "Error",
@@ -740,7 +759,13 @@ th{font-weight:600;}
       ]);
       setFeeStructure(structureData || []);
       setStudentFees(feesData || []);
-      setSummary(summaryData || summary);
+      setSummary({
+        totalCollected: summaryData?.totalCollected || 0,
+        totalPending: summaryData?.totalPending || 0,
+        fullyPaidCount: summaryData?.fullyPaidCount || 0,
+        unpaidCount: summaryData?.unpaidCount || 0,
+        partiallyPaidCount: (summaryData as any)?.partiallyPaidCount || 0
+      });
     } catch (error: any) {
       toast({
         title: "Error",
@@ -751,38 +776,50 @@ th{font-weight:600;}
   };
 
   const handleDeleteStructure = async (structureId: string) => {
-    if (!confirm('Are you sure you want to delete this fee structure? This will remove fees for all sections of this class. This action cannot be undone.')) {
-      return;
-    }
-
-    try {
-      await feesApi.deleteFeeStructure(structureId);
-      toast({
-        title: "Success",
-        description: "Fee structure deleted successfully"
-      });
-      
-      // Reload fee structure
-      const structures = await feesApi.getFeeStructure();
-      setFeeStructure(structures || []);
-      
-      // Reload student fees to reflect changes
-      const feesData = await feesApi.getStudentFees(
-        selectedClassId !== "all" ? selectedClassId : undefined, 
-        searchTerm || undefined
-      );
-      setStudentFees(feesData || []);
-      
-      // Reload summary
-      const summaryData = await feesApi.getSummary();
-      setSummary(summaryData || summary);
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error?.message || "Failed to delete fee structure",
-        variant: "destructive"
-      });
-    }
+    confirm(
+      "Delete Fee Structure",
+      "Are you sure you want to delete this fee structure? This will remove fees for all sections of this class. This action cannot be undone.",
+      async () => {
+        try {
+          await feesApi.deleteFeeStructure(structureId);
+          toast({
+            title: "Success",
+            description: "Fee structure deleted successfully"
+          });
+          
+          // Reload fee structure
+          const structures = await feesApi.getFeeStructure();
+          setFeeStructure(structures || []);
+          
+          // Reload student fees to reflect changes
+          const feesData = await feesApi.getStudentFees(
+            selectedClassId !== "all" ? selectedClassId : undefined, 
+            searchTerm || undefined
+          );
+          setStudentFees(feesData || []);
+          
+          // Reload summary
+          const summaryData = await feesApi.getSummary();
+          setSummary({
+            totalCollected: summaryData?.totalCollected || 0,
+            totalPending: summaryData?.totalPending || 0,
+            fullyPaidCount: summaryData?.fullyPaidCount || 0,
+            unpaidCount: summaryData?.unpaidCount || 0,
+            partiallyPaidCount: summaryData?.partiallyPaidCount || 0
+          });
+        } catch (error: any) {
+          toast({
+            title: "Error",
+            description: error?.message || "Failed to delete fee structure",
+            variant: "destructive",
+          });
+        }
+      },
+      {
+        variant: "destructive",
+        confirmText: "Delete",
+      }
+    );
   };
 
   return (
@@ -809,7 +846,7 @@ th{font-weight:600;}
         </div>
 
         {/* Summary Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
           <Card>
             <CardContent className="pt-6">
               <div className="flex items-center gap-3">
@@ -845,6 +882,21 @@ th{font-weight:600;}
                 <div>
                   <p className="text-2xl font-bold">{summary.fullyPaidCount}</p>
                   <p className="text-sm text-muted-foreground">Fully Paid</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-lg bg-accent/10 flex items-center justify-center">
+                  <AlertCircle className="w-6 h-6 text-accent" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold">
+                    {summary.partiallyPaidCount}
+                  </p>
+                  <p className="text-sm text-muted-foreground">Partially Paid</p>
                 </div>
               </div>
             </CardContent>
@@ -899,19 +951,17 @@ th{font-weight:600;}
                         ))}
                       </SelectContent>
                     </Select>
-                    <Select value={selectedFeeStatus} onValueChange={(v: "all" | "paid" | "pending") => setSelectedFeeStatus(v)}>
+                    <Select value={selectedFeeStatus} onValueChange={(v: "all" | "paid" | "pending" | "partial") => setSelectedFeeStatus(v)}>
                       <SelectTrigger className="w-40">
                         <SelectValue placeholder="Status" />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="all">All</SelectItem>
                         <SelectItem value="paid">Paid</SelectItem>
+                        <SelectItem value="partial">Partially Paid</SelectItem>
                         <SelectItem value="pending">Pending</SelectItem>
                       </SelectContent>
                     </Select>
-                    <Button variant="outline" size="sm" onClick={() => { /* Send message - TODO */ }}>
-                      Send message
-                    </Button>
                   </div>
                 </div>
               </CardHeader>
@@ -1984,6 +2034,18 @@ th{font-weight:600;}
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        {/* Confirm Dialog */}
+        <ConfirmDialog
+          open={dialog.open}
+          onOpenChange={(open) => !open && close()}
+          title={dialog.title}
+          description={dialog.description}
+          onConfirm={dialog.onConfirm}
+          confirmText={dialog.confirmText}
+          cancelText={dialog.cancelText}
+          variant={dialog.variant}
+        />
       </div>
     </UnifiedLayout>
   );

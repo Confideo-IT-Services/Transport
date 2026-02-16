@@ -1,7 +1,7 @@
 -- ============================================================================
--- ConventPulse School Management System - Complete Database Schema
+-- AllPulse School Management System - Complete Database Schema
 -- ============================================================================
--- This file contains ALL database tables for the ConventPulse system.
+-- This file contains ALL database tables for the AllPulse system.
 -- All separate schema files and migrations have been consolidated here.
 --
 -- IMPORTANT: This schema matches EXACTLY what exists in your current database
@@ -170,8 +170,25 @@ CREATE TABLE IF NOT EXISTS students (
     FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE
 );
 
--- ============ STUDENT ENROLLMENTS (per academic year) ============
--- One row per student per academic year; enables year filter and read-only previous year data.
+-- ============ REGISTRATION LINKS TABLE ============
+CREATE TABLE IF NOT EXISTS registration_links (
+    id VARCHAR(36) PRIMARY KEY,
+    school_id VARCHAR(36) NOT NULL,
+    name VARCHAR(255) NULL COMMENT 'Optional label for the link',
+    link_type VARCHAR(20) NOT NULL DEFAULT 'class' COMMENT 'Type: class, all_classes, teacher, others',
+    teacher_id VARCHAR(36) NULL COMMENT 'For link_type = teacher',
+    class_id VARCHAR(36) NULL COMMENT 'Nullable for link_type = teacher or others',
+    link_code VARCHAR(50) NOT NULL UNIQUE,
+    field_config JSON,
+    expires_at TIMESTAMP,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE,
+    FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE,
+    FOREIGN KEY (teacher_id) REFERENCES teachers(id) ON DELETE SET NULL
+);
+
+-- ============ STUDENT ENROLLMENTS TABLE ============
 CREATE TABLE IF NOT EXISTS student_enrollments (
     id VARCHAR(36) PRIMARY KEY,
     student_id VARCHAR(36) NOT NULL,
@@ -179,12 +196,11 @@ CREATE TABLE IF NOT EXISTS student_enrollments (
     class_id VARCHAR(36) NOT NULL,
     roll_no VARCHAR(20),
     school_id VARCHAR(36) NOT NULL,
-    enrolled_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    left_at TIMESTAMP NULL,
-    tc_issued_at TIMESTAMP NULL,
+    left_at TIMESTAMP NULL COMMENT 'When student left the school',
+    tc_issued_at TIMESTAMP NULL COMMENT 'When TC was issued',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY unique_student_year (student_id, academic_year_id),
+    INDEX idx_student_id (student_id),
     INDEX idx_academic_year_id (academic_year_id),
     INDEX idx_class_id (class_id),
     INDEX idx_school_id (school_id),
@@ -194,19 +210,6 @@ CREATE TABLE IF NOT EXISTS student_enrollments (
     FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE
 );
 
--- ============ REGISTRATION LINKS TABLE ============
-CREATE TABLE IF NOT EXISTS registration_links (
-    id VARCHAR(36) PRIMARY KEY,
-    school_id VARCHAR(36) NOT NULL,
-    class_id VARCHAR(36) NOT NULL,
-    link_code VARCHAR(50) NOT NULL UNIQUE,
-    field_config JSON,
-    expires_at TIMESTAMP,
-    is_active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE,
-    FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE
-);
 
 -- ============================================================================
 -- SECTION 5: TIMETABLE
@@ -385,15 +388,18 @@ CREATE TABLE IF NOT EXISTS tests (
     class_id VARCHAR(36) NOT NULL,
     teacher_id VARCHAR(36) NOT NULL,
     school_id VARCHAR(36) NOT NULL,
+    academic_year_id VARCHAR(36) NULL COMMENT 'Academic year for yearly percentage calculation',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_class_id (class_id),
     INDEX idx_teacher_id (teacher_id),
     INDEX idx_school_id (school_id),
     INDEX idx_test_date (test_date),
+    INDEX idx_academic_year_id (academic_year_id),
     FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE,
     FOREIGN KEY (teacher_id) REFERENCES teachers(id) ON DELETE CASCADE,
-    FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE
+    FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE,
+    FOREIGN KEY (academic_year_id) REFERENCES academic_years(id) ON DELETE SET NULL
 );
 
 -- ============ TEST SUBJECTS TABLE ============
@@ -401,14 +407,18 @@ CREATE TABLE IF NOT EXISTS test_subjects (
     id VARCHAR(36) PRIMARY KEY,
     test_id VARCHAR(36) NOT NULL,
     subject_id VARCHAR(36) NOT NULL,
+    teacher_id VARCHAR(36) NULL COMMENT 'Teacher who submitted syllabus for test coordination',
     max_marks INT NOT NULL DEFAULT 100,
     syllabus TEXT,
+    submitted_at TIMESTAMP NULL COMMENT 'When syllabus was submitted',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY unique_test_subject (test_id, subject_id),
     INDEX idx_test_id (test_id),
     INDEX idx_subject_id (subject_id),
+    INDEX idx_teacher_id (teacher_id),
     FOREIGN KEY (test_id) REFERENCES tests(id) ON DELETE CASCADE,
-    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
+    FOREIGN KEY (teacher_id) REFERENCES teachers(id) ON DELETE SET NULL
 );
 
 -- ============ TEST RESULTS TABLE ============
@@ -541,6 +551,10 @@ CREATE TABLE IF NOT EXISTS notifications (
     priority ENUM('normal', 'urgent') DEFAULT 'normal',
     status ENUM('draft', 'sent', 'failed') DEFAULT 'sent',
     sent_count INT DEFAULT 0 COMMENT 'Number of recipients who received the notification',
+    event_date DATE NULL COMMENT 'Event date for future reminders',
+    scheduled_at DATETIME NULL COMMENT 'Scheduled sending time',
+    whatsapp_enabled BOOLEAN DEFAULT FALSE COMMENT 'Flag for WhatsApp integration',
+    created_by VARCHAR(36) NULL COMMENT 'Admin user who created the notification',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_school_id (school_id),
@@ -548,7 +562,8 @@ CREATE TABLE IF NOT EXISTS notifications (
     INDEX idx_target_type (target_type),
     INDEX idx_created_at (created_at),
     FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE,
-    FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE
+    FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
 );
 
 -- ============ NOTIFICATION RECIPIENTS TABLE ============
@@ -583,6 +598,19 @@ CREATE TABLE IF NOT EXISTS notification_templates (
     FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE CASCADE
 );
 
+-- ============ NOTIFICATION CLASSES TABLE ============
+CREATE TABLE IF NOT EXISTS notification_classes (
+    id VARCHAR(36) PRIMARY KEY,
+    notification_id VARCHAR(36) NOT NULL,
+    class_id VARCHAR(36) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_notification_id (notification_id),
+    INDEX idx_class_id (class_id),
+    FOREIGN KEY (notification_id) REFERENCES notifications(id) ON DELETE CASCADE,
+    FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE,
+    UNIQUE KEY unique_notification_class (notification_id, class_id)
+);
+
 -- ============================================================================
 -- SECTION 11: ID CARDS
 -- ============================================================================
@@ -603,6 +631,40 @@ CREATE TABLE IF NOT EXISTS id_card_templates (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE
+);
+
+-- ============================================================================
+-- SECTION 11: VISITOR MANAGEMENT
+-- ============================================================================
+
+-- ============ VISITOR REQUESTS TABLE ============
+CREATE TABLE IF NOT EXISTS visitor_requests (
+    id VARCHAR(36) PRIMARY KEY,
+    school_id VARCHAR(36) NOT NULL,
+    student_id VARCHAR(36) NOT NULL,
+    class_id VARCHAR(36) NOT NULL,
+    parent_phone VARCHAR(20) NOT NULL,
+    visitor_name VARCHAR(100) NOT NULL,
+    visitor_relation VARCHAR(100),
+    visit_reason ENUM('enquiry', 'pickup', 'other') NOT NULL,
+    other_reason TEXT,
+    status ENUM('pending', 'teacher_accepted', 'admin_accepted', 'rejected', 'completed') DEFAULT 'pending',
+    teacher_approval_status ENUM('pending', 'accepted', 'rejected') DEFAULT 'pending',
+    teacher_approval_at TIMESTAMP NULL,
+    admin_approval_status ENUM('pending', 'accepted', 'rejected') DEFAULT 'pending',
+    admin_approval_at TIMESTAMP NULL,
+    visit_date DATE,
+    visit_time TIME,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_school_id (school_id),
+    INDEX idx_student_id (student_id),
+    INDEX idx_class_id (class_id),
+    INDEX idx_status (status),
+    INDEX idx_parent_phone (parent_phone),
+    FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE,
+    FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE,
+    FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE
 );
 
 -- ============================================================================

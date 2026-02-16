@@ -1426,6 +1426,7 @@ router.get('/summary', authenticateToken, async (req, res) => {
     let totalPending = 0;
     let fullyPaidCount = 0;
     let unpaidCount = 0;
+    let partiallyPaidCount = 0;
 
     results.forEach((r) => {
       // Only count students with fee structures
@@ -1440,6 +1441,8 @@ router.get('/summary', authenticateToken, async (req, res) => {
           fullyPaidCount++;
         } else if (r.fee_status === 'unpaid') {
           unpaidCount++;
+        } else if (r.fee_status === 'partial') {
+          partiallyPaidCount++;
         }
       }
     });
@@ -1448,7 +1451,8 @@ router.get('/summary', authenticateToken, async (req, res) => {
       totalCollected: totalCollected,
       totalPending: totalPending,
       fullyPaidCount: fullyPaidCount,
-      unpaidCount: unpaidCount
+      unpaidCount: unpaidCount,
+      partiallyPaidCount: partiallyPaidCount
     });
   } catch (error) {
     console.error('Get fee summary error:', error);
