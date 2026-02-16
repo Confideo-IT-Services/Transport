@@ -276,6 +276,7 @@ router.post('/', async (req, res) => {
     let finalSchoolId = schoolId;
     let finalClassId = classId;
     let finalName = name || studentName;
+    let linkType = null; // Store link type for validation
 
     // If registrationCode is provided, get schoolId and classId from registration link
     if (registrationCode) {
@@ -285,10 +286,13 @@ router.post('/', async (req, res) => {
       );
       if (links.length > 0) {
         finalSchoolId = links[0].school_id;
+        linkType = links[0].link_type || 'class'; // Store link type
         // For all_classes links, use classId from request body (student selected in form)
-        const linkType = links[0].link_type || 'class';
         if (linkType === 'all_classes' && classId) {
           finalClassId = classId;
+        } else if (linkType === 'all_classes') {
+          // For all_classes, classId is required - throw error if not provided
+          return res.status(400).json({ error: 'Class selection is required for this registration' });
         } else {
           finalClassId = links[0].class_id;
         }
@@ -300,6 +304,20 @@ router.post('/', async (req, res) => {
           fieldConfig = JSON.parse(links[0].field_config || '[]');
         } catch (e) {
           console.error('Error parsing field_config:', e);
+        }
+        
+        // Try to extract name from custom fields if not already set
+        if (!finalName || finalName.trim() === '') {
+          // Check common name field names
+          const nameField = fieldConfig.find(f => 
+            f.fieldName === 'name' || 
+            f.fieldName === 'studentName' || 
+            f.label?.toLowerCase().includes('name') ||
+            f.fieldName?.toLowerCase().includes('name')
+          );
+          if (nameField && req.body[nameField.fieldName]) {
+            finalName = req.body[nameField.fieldName];
+          }
         }
         
         // Find the primary phone field that requires OTP
@@ -338,8 +356,18 @@ router.post('/', async (req, res) => {
       }
     }
 
-    if (!finalName || !finalClassId || !finalSchoolId) {
-      return res.status(400).json({ error: 'Name, class, and school are required' });
+    // Validate required fields
+    if (!finalName || finalName.trim() === '') {
+      return res.status(400).json({ error: 'Name is required' });
+    }
+    
+    if (!finalSchoolId) {
+      return res.status(400).json({ error: 'School is required' });
+    }
+    
+    // Class is always required
+    if (!finalClassId) {
+      return res.status(400).json({ error: 'Class is required' });
     }
 
     // Validate admission number if provided (should be mandatory)
@@ -347,12 +375,13 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Admission number is required' });
     }
 
-    // Verify school and class exist
+    // Verify school exists
     const [schools] = await db.query('SELECT id FROM schools WHERE id = ?', [finalSchoolId]);
     if (schools.length === 0) {
       return res.status(404).json({ error: 'School not found' });
     }
 
+    // Always verify class exists
     const [classes] = await db.query('SELECT id FROM classes WHERE id = ? AND school_id = ?', [finalClassId, finalSchoolId]);
     if (classes.length === 0) {
       return res.status(404).json({ error: 'Class not found' });

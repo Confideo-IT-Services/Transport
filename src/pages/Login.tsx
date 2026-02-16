@@ -186,37 +186,6 @@ export default function Login() {
             </Button>
           </form>
 
-          {/* Demo Accounts */}
-          <div className="mt-6 pt-6 border-t border-border">
-            <p className="text-xs text-center text-muted-foreground mb-3">Demo Accounts</p>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setLoginType("admin");
-                  setEmail("admin@school.edu");
-                  setPassword("demo123");
-                }}
-                className="text-xs p-2 rounded-lg bg-muted hover:bg-muted/80 transition-colors"
-              >
-                <span className="font-medium text-foreground">School Admin</span>
-                <p className="text-muted-foreground">admin@school.edu</p>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setLoginType("teacher");
-                  setUsername("teacher");
-                  setPassword("demo123");
-                }}
-                className="text-xs p-2 rounded-lg bg-muted hover:bg-muted/80 transition-colors"
-              >
-                <span className="font-medium text-foreground">Class Teacher</span>
-                <p className="text-muted-foreground">username: teacher</p>
-              </button>
-            </div>
-          </div>
-
           {/* Super Admin Link */}
           <div className="mt-4 text-center">
             <button
@@ -228,11 +197,6 @@ export default function Login() {
             </button>
           </div>
         </div>
-
-        {/* Footer */}
-        <p className="text-center text-sm text-muted-foreground mt-6 animate-fade-in" style={{ animationDelay: "0.2s" }}>
-          © 2024 ConventPulse. All rights reserved.
-        </p>
       </div>
     </div>
   );

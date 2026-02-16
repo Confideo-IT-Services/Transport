@@ -134,6 +134,122 @@ router.post('/', authenticateToken, requireTeacher, async (req, res) => {
   }
 });
 
+// Update homework (Teacher only)
+router.put('/:id', authenticateToken, requireTeacher, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { title, description, subject, classId, dueDate } = req.body;
+
+    // Verify homework exists and user has access
+    let accessQuery = 'SELECT id, teacher_id, school_id FROM homework WHERE id = ?';
+    const accessParams = [id];
+
+    if (req.user.role === 'teacher') {
+      accessQuery += ' AND teacher_id = ?';
+      accessParams.push(req.user.id);
+    } else if (req.user.role === 'admin') {
+      accessQuery += ' AND school_id = ?';
+      accessParams.push(req.user.schoolId);
+    }
+
+    const [homework] = await db.query(accessQuery, accessParams);
+    if (homework.length === 0) {
+      return res.status(404).json({ error: 'Homework not found or access denied' });
+    }
+
+    // Build update query
+    const updates = [];
+    const values = [];
+
+    if (title !== undefined) {
+      updates.push('title = ?');
+      values.push(title);
+    }
+    if (description !== undefined) {
+      updates.push('description = ?');
+      values.push(description);
+    }
+    if (subject !== undefined) {
+      updates.push('subject = ?');
+      values.push(subject);
+    }
+    if (classId !== undefined) {
+      // Verify teacher has access to new class
+      if (req.user.role === 'teacher') {
+        const [classTeacherCheck] = await db.query(
+          'SELECT id FROM classes WHERE id = ? AND class_teacher_id = ?',
+          [classId, req.user.id]
+        );
+        const [subjectTeacherCheck] = await db.query(
+          'SELECT DISTINCT class_id FROM timetable_entries WHERE class_id = ? AND teacher_id = ? LIMIT 1',
+          [classId, req.user.id]
+        );
+        if (classTeacherCheck.length === 0 && subjectTeacherCheck.length === 0) {
+          return res.status(403).json({ error: 'You do not have access to this class' });
+        }
+      }
+      updates.push('class_id = ?');
+      values.push(classId);
+    }
+    if (dueDate !== undefined) {
+      updates.push('due_date = ?');
+      values.push(dueDate);
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+
+    updates.push('updated_at = NOW()');
+    values.push(id);
+
+    await db.query(
+      `UPDATE homework SET ${updates.join(', ')} WHERE id = ?`,
+      values
+    );
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Update homework error:', error);
+    res.status(500).json({ error: 'Failed to update homework' });
+  }
+});
+
+// Delete homework (Teacher only)
+router.delete('/:id', authenticateToken, requireTeacher, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Verify homework exists and user has access
+    let accessQuery = 'SELECT id, teacher_id, school_id FROM homework WHERE id = ?';
+    const accessParams = [id];
+
+    if (req.user.role === 'teacher') {
+      accessQuery += ' AND teacher_id = ?';
+      accessParams.push(req.user.id);
+    } else if (req.user.role === 'admin') {
+      accessQuery += ' AND school_id = ?';
+      accessParams.push(req.user.schoolId);
+    }
+
+    const [homework] = await db.query(accessQuery, accessParams);
+    if (homework.length === 0) {
+      return res.status(404).json({ error: 'Homework not found or access denied' });
+    }
+
+    // Delete homework submissions first (foreign key constraint)
+    await db.query('DELETE FROM homework_submissions WHERE homework_id = ?', [id]);
+
+    // Delete homework
+    await db.query('DELETE FROM homework WHERE id = ?', [id]);
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Delete homework error:', error);
+    res.status(500).json({ error: 'Failed to delete homework' });
+  }
+});
+
 // Mark homework as completed
 router.post('/:id/complete', authenticateToken, requireTeacher, async (req, res) => {
   try {

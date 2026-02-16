@@ -497,6 +497,7 @@ export default function StudentManagement() {
       return;
     }
 
+    // Only require class selection for 'class' type, not for 'all_classes'
     if (linkType === 'class' && !selectedClassForLink) {
       toast.error("Please select class and section");
       return;
@@ -1115,7 +1116,7 @@ export default function StudentManagement() {
 
               {linkType === 'class' && (
                 <div className="space-y-2">
-                  <Label>Select class and section</Label>
+                  <Label>Select class and section <span className="text-destructive">*</span></Label>
                   <Select value={selectedClassForLink} onValueChange={setSelectedClassForLink}>
                     <SelectTrigger>
                       <SelectValue placeholder="Select class and section" />
@@ -1173,7 +1174,7 @@ export default function StudentManagement() {
               <Button variant="outline" onClick={() => setShowLinkDialog(false)}>Close</Button>
               <Button
                 onClick={handleGenerateLink}
-                disabled={!linkName?.trim() || (linkType === 'class' ? !selectedClassForLink : false)}
+                disabled={!linkName?.trim() || (linkType === 'class' && !selectedClassForLink)}
               >
                 <Plus className="w-4 h-4 mr-2" />
                 Generate Link

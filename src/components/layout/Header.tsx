@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { notificationsApi } from "@/lib/api";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface HeaderProps {
   userName: string;
@@ -23,17 +24,26 @@ interface HeaderProps {
 export function Header({ userName, userRole, onLogout }: HeaderProps) {
   const navigate = useNavigate();
   const location = useLocation();
+  const { user } = useAuth();
   const [unreadCount, setUnreadCount] = useState(0);
 
   // Fetch unread notification count
   useEffect(() => {
+    // Don't fetch if user is not authenticated
+    if (!user) {
+      return;
+    }
+
     const fetchUnreadCount = async () => {
       try {
         const notifications = await notificationsApi.getInbox();
         const unread = notifications.filter(n => !n.read).length;
         setUnreadCount(unread);
       } catch (error) {
-        console.error('Error fetching unread count:', error);
+        // Silently handle errors (user might have logged out or token expired)
+        if (error instanceof Error && !error.message.includes('Access token required') && !error.message.includes('Unauthorized') && !error.message.includes('Session expired')) {
+          console.error('Error fetching unread count:', error);
+        }
       }
     };
 
@@ -53,7 +63,7 @@ export function Header({ userName, userRole, onLogout }: HeaderProps) {
       clearInterval(interval);
       window.removeEventListener('notification-read', handleNotificationRead);
     };
-  }, [location.pathname]);
+  }, [location.pathname, user]);
 
   const handleNotificationClick = () => {
     // Redirect based on role

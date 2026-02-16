@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Shield, Mail, Lock, Eye, EyeOff, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -9,16 +9,35 @@ import { useToast } from "@/hooks/use-toast";
 
 export default function SuperAdminLogin() {
   const navigate = useNavigate();
-  const { login } = useAuth();
+  const { login, user, isAuthenticated, isLoading } = useAuth();
   const { toast } = useToast();
   const [showPassword, setShowPassword] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Redirect if already authenticated as superadmin
+  useEffect(() => {
+    if (!isLoading && isAuthenticated && user?.role === 'superadmin') {
+      navigate("/superadmin", { replace: true });
+    }
+  }, [isLoading, isAuthenticated, user, navigate]);
+
+  // Show loading while checking authentication or redirecting
+  if (isLoading || (isAuthenticated && user?.role === 'superadmin')) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
+          <p className="text-muted-foreground">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsLoading(true);
+    setIsSubmitting(true);
     
     try {
       await login({ email, password, role: "superadmin" });
@@ -27,7 +46,8 @@ export default function SuperAdminLogin() {
         title: "Welcome, Super Admin!",
         description: "You have successfully logged in.",
       });
-      navigate("/superadmin");
+      // Navigation will happen via useEffect when user state updates
+      navigate("/superadmin", { replace: true });
     } catch (error) {
       toast({
         title: "Login failed",
@@ -35,7 +55,7 @@ export default function SuperAdminLogin() {
         variant: "destructive",
       });
     } finally {
-      setIsLoading(false);
+      setIsSubmitting(false);
     }
   };
 
@@ -113,32 +133,11 @@ export default function SuperAdminLogin() {
               </div>
             </div>
 
-            <Button type="submit" className="w-full bg-purple-600 hover:bg-purple-700" size="lg" disabled={isLoading}>
-              {isLoading ? "Signing in..." : "Sign In as Super Admin"}
+            <Button type="submit" className="w-full bg-purple-600 hover:bg-purple-700" size="lg" disabled={isSubmitting}>
+              {isSubmitting ? "Signing in..." : "Sign In as Super Admin"}
             </Button>
           </form>
-
-          {/* Demo Account */}
-          <div className="mt-6 pt-6 border-t border-border">
-            <p className="text-xs text-center text-muted-foreground mb-3">Demo Account</p>
-            <button
-              type="button"
-              onClick={() => {
-                setEmail("superadmin@conventpulse.com");
-                setPassword("demo123");
-              }}
-              className="w-full text-xs p-3 rounded-lg bg-purple-500/10 hover:bg-purple-500/20 transition-colors text-center"
-            >
-              <span className="font-medium text-foreground">Platform Super Admin</span>
-              <p className="text-muted-foreground">superadmin@conventpulse.com</p>
-            </button>
-          </div>
         </div>
-
-        {/* Footer */}
-        <p className="text-center text-sm text-muted-foreground mt-6 animate-fade-in" style={{ animationDelay: "0.2s" }}>
-          © 2024 ConventPulse. Platform Administration.
-        </p>
       </div>
     </div>
   );

@@ -21,7 +21,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { FileText, Search, Filter } from "lucide-react";
+import { FileText, Search, Filter, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { classesApi, studentsApi, feesApi } from "@/lib/api";
 
@@ -523,14 +523,14 @@ export default function ExitFormalities() {
                       <th className="text-left p-4 font-medium text-muted-foreground">Class</th>
                       <th className="text-left p-4 font-medium text-muted-foreground">Fee Status</th>
                       <th className="text-left p-4 font-medium text-muted-foreground">TC Status</th>
+                      <th className="text-left p-4 font-medium text-muted-foreground">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredRecords.map((record) => (
                       <tr 
                         key={record.id} 
-                        className="border-b hover:bg-muted/50 cursor-pointer"
-                        onClick={() => handleViewStudent(record)}
+                        className="border-b hover:bg-muted/50"
                       >
                         <td className="p-4 font-medium">{record.studentName}</td>
                         <td className="p-4 text-muted-foreground">{record.rollNo}</td>
@@ -550,6 +550,20 @@ export default function ExitFormalities() {
                         </td>
                         <td className="p-4">
                           {getTcStatusBadge(record.tcStatus)}
+                        </td>
+                        <td className="p-4">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleViewStudent(record);
+                            }}
+                            className="flex items-center gap-2"
+                          >
+                            <Pencil className="w-4 h-4" />
+                            Update
+                          </Button>
                         </td>
                       </tr>
                     ))}
