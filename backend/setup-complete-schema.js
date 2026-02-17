@@ -48,7 +48,6 @@ async function setupCompleteSchema() {
     'fee_payments',
     'notifications',
     'notification_recipients',
-    'notification_templates',
     'id_card_templates'
   ];
 

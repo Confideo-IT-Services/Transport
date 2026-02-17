@@ -1,7 +1,7 @@
 import { Link, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { useAuth, UserRole } from "@/contexts/AuthContext";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   LayoutDashboard,
   GraduationCap,
@@ -284,25 +284,8 @@ export function UnifiedSidebar() {
   const location = useLocation();
   const { user, logout } = useAuth();
   
-  // State for click-based expansion (accordion: only one section open at a time)
-  const [activeSection, setActiveSection] = useState<string | null>(null);
-
-  // Handle section click (toggle open/closed, accordion behavior)
-  const handleSectionClick = (sectionKey: string) => {
-    setActiveSection(prev => {
-      // If clicking the same section, close it
-      if (prev === sectionKey) {
-        return null;
-      }
-      // Otherwise, open the new section (closes previous one)
-      return sectionKey;
-    });
-  };
-
-  // Check if a section should be open
-  const isSectionOpen = (sectionKey: string): boolean => {
-    return activeSection === sectionKey;
-  };
+  // State for multiple open sections (not accordion - multiple can be open)
+  const [openSections, setOpenSections] = useState<Set<string>>(new Set());
 
   // Get sections based on user role
   const getNavSections = (): NavSection[] | null => {
@@ -329,6 +312,56 @@ export function UnifiedSidebar() {
   // Generate section key from title
   const getSectionKey = (title: string): string => {
     return title.toLowerCase().replace(/\s+/g, '-').replace(/&/g, '').replace(/\//g, '-');
+  };
+
+  // Auto-open section containing the active page on route change
+  useEffect(() => {
+    if (!navSections) return;
+
+    setOpenSections(prev => {
+      const newSet = new Set(prev);
+      
+      // Find which section contains the currently active page
+      for (const section of navSections) {
+        if (!section.title) continue; // Skip sections without title
+        
+        const hasActiveItem = section.items.some(item => {
+          if (item.href.startsWith('/parent/dashboard')) {
+            return location.pathname === item.href || 
+              (item.href === '/parent/dashboard/attendance' && location.pathname === '/parent/dashboard');
+          } else {
+            return location.pathname === item.href || 
+              (item.href !== "/dashboard" && !item.href.startsWith('/parent') && location.pathname.startsWith(item.href));
+          }
+        });
+
+        if (hasActiveItem) {
+          const sectionKey = getSectionKey(section.title);
+          newSet.add(sectionKey); // Auto-open section with active item
+        }
+      }
+      
+      return newSet;
+    });
+  }, [location.pathname, navSections]);
+
+  // Handle section click (toggle open/closed, allow multiple sections open)
+  const handleSectionClick = (sectionKey: string) => {
+    setOpenSections(prev => {
+      const newSet = new Set(prev);
+      // If section is open, close it; otherwise, open it
+      if (newSet.has(sectionKey)) {
+        newSet.delete(sectionKey);
+      } else {
+        newSet.add(sectionKey);
+      }
+      return newSet;
+    });
+  };
+
+  // Check if a section should be open
+  const isSectionOpen = (sectionKey: string): boolean => {
+    return openSections.has(sectionKey);
   };
 
   return (
@@ -451,8 +484,7 @@ export function UnifiedSidebar() {
                           onClick={(e) => {
                             // Prevent the dropdown from closing when clicking navigation items
                             e.stopPropagation();
-                            // Keep the section open
-                            setActiveSection(sectionKey);
+                            // Keep the section open - don't change state
                           }}
                           className={cn(
                             "flex items-center gap-3 px-4 py-2.5 rounded-lg transition-all duration-200 text-sm ml-2",

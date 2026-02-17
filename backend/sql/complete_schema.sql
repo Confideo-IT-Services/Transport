@@ -582,22 +582,6 @@ CREATE TABLE IF NOT EXISTS notification_recipients (
     FOREIGN KEY (notification_id) REFERENCES notifications(id) ON DELETE CASCADE
 );
 
--- ============ NOTIFICATION TEMPLATES TABLE ============
-CREATE TABLE IF NOT EXISTS notification_templates (
-    id VARCHAR(36) PRIMARY KEY,
-    school_id VARCHAR(36) NOT NULL,
-    name VARCHAR(100) NOT NULL COMMENT 'Template label/name',
-    title VARCHAR(200) NOT NULL COMMENT 'Default title for notifications using this template',
-    message TEXT NOT NULL COMMENT 'Default message body',
-    created_by VARCHAR(36) NOT NULL COMMENT 'Admin who created the template',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_school_id (school_id),
-    INDEX idx_created_by (created_by),
-    FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE,
-    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE CASCADE
-);
-
 -- ============ NOTIFICATION CLASSES TABLE ============
 CREATE TABLE IF NOT EXISTS notification_classes (
     id VARCHAR(36) PRIMARY KEY,

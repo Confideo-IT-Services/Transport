@@ -35,7 +35,7 @@ import {
   ExternalLink
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { notificationsApi, classesApi, uploadApi, Notification, SentNotification, NotificationTemplate } from "@/lib/api";
+import { notificationsApi, classesApi, uploadApi, Notification, SentNotification } from "@/lib/api";
 import { Checkbox } from "@/components/ui/checkbox";
 
 export default function NotificationsModule() {
@@ -45,7 +45,6 @@ export default function NotificationsModule() {
   
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [sentNotifications, setSentNotifications] = useState<SentNotification[]>([]);
-  const [templates, setTemplates] = useState<NotificationTemplate[]>([]);
   const [classes, setClasses] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
@@ -54,7 +53,6 @@ export default function NotificationsModule() {
   const [notificationMessage, setNotificationMessage] = useState("");
   const [recipient, setRecipient] = useState("");
   const [selectedClassIds, setSelectedClassIds] = useState<string[]>([]);
-  const [selectedTemplate, setSelectedTemplate] = useState("");
   const [priority, setPriority] = useState<"normal" | "urgent">("normal");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [attachmentUrl, setAttachmentUrl] = useState<string | null>(null);
@@ -89,12 +87,6 @@ export default function NotificationsModule() {
       setNotifications(inboxData);
       setSentNotifications(sentData);
       setClasses(classesData);
-
-      // Fetch templates if admin
-      if (isAdmin) {
-        const templatesData = await notificationsApi.getTemplates().catch(() => []);
-        setTemplates(templatesData);
-      }
     } catch (error) {
       console.error('Error fetching notifications:', error);
       toast({
@@ -104,15 +96,6 @@ export default function NotificationsModule() {
       });
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleTemplateSelect = (templateId: string) => {
-    const template = templates.find(t => t.id === templateId);
-    if (template) {
-      setNotificationTitle(template.title);
-      setNotificationMessage(template.message);
-      setSelectedTemplate(templateId);
     }
   };
 
@@ -238,7 +221,6 @@ export default function NotificationsModule() {
       setNotificationMessage("");
       setRecipient("");
       setSelectedClassIds([]);
-      setSelectedTemplate("");
       setSelectedFile(null);
       setAttachmentUrl(null);
       setAttachmentInfo(null);
@@ -365,24 +347,6 @@ export default function NotificationsModule() {
                   </SelectContent>
                 </Select>
               </div>
-
-              {isAdmin && templates.length > 0 && (
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Quick Templates</label>
-                  <Select value={selectedTemplate} onValueChange={handleTemplateSelect}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select a template (optional)" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {templates.map((template) => (
-                        <SelectItem key={template.id} value={template.id}>
-                          {template.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
 
               <div className="space-y-2">
                 <label className="text-sm font-medium">Title</label>
