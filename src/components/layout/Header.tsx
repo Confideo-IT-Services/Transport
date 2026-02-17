@@ -27,10 +27,9 @@ export function Header({ userName, userRole, onLogout }: HeaderProps) {
   const { user } = useAuth();
   const [unreadCount, setUnreadCount] = useState(0);
 
-  // Fetch unread notification count
+  // Fetch unread notification count (inbox is teacher/admin only; superadmin has no inbox)
   useEffect(() => {
-    // Don't fetch if user is not authenticated
-    if (!user) {
+    if (!user || userRole === 'superadmin') {
       return;
     }
 

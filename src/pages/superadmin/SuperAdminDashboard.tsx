@@ -4,7 +4,7 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { StatCard } from "@/components/dashboard/StatCard";
 import { QuickAction } from "@/components/dashboard/QuickAction";
 import { Building2, Users, GraduationCap, UserCog, Plus, Settings, BarChart3, Shield } from "lucide-react";
-import { schoolsApi } from "@/lib/api";
+import { schoolsApi, getToken } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   AreaChart,
@@ -18,9 +18,18 @@ import {
   Bar,
 } from "recharts";
 
+const LOADING_UI = (
+  <div className="min-h-screen bg-background flex items-center justify-center">
+    <div className="text-center">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
+      <p className="text-muted-foreground">Loading...</p>
+    </div>
+  </div>
+);
+
 export default function SuperAdminDashboard() {
   const navigate = useNavigate();
-  const { user, isAuthenticated, isLoading } = useAuth();
+  const { user, isAuthenticated, isLoading, logout } = useAuth();
   const [stats, setStats] = useState({
     totalSchools: 0,
     totalStudents: 0,
@@ -30,34 +39,12 @@ export default function SuperAdminDashboard() {
   const [schools, setSchools] = useState<any[]>([]);
   const [isLoadingData, setIsLoadingData] = useState(true);
 
-  // Redirect if not authenticated or not superadmin
-  if (!isLoading && (!isAuthenticated || user?.role !== 'superadmin')) {
-    return <Navigate to="/superadmin/login" replace />;
-  }
-
-  // Show loading while checking authentication
-  if (isLoading) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
-          <p className="text-muted-foreground">Loading...</p>
-        </div>
-      </div>
-    );
-  }
-
-  useEffect(() => {
-    loadData();
-  }, []);
-
   const loadData = async () => {
     try {
       setIsLoadingData(true);
       const schoolsData = await schoolsApi.getAll();
       setSchools(schoolsData);
 
-      // Calculate stats from real data
       const totalSchools = schoolsData.length;
       const totalStudents = schoolsData.reduce((sum, s) => sum + (s.students || 0), 0);
       const totalTeachers = schoolsData.reduce((sum, s) => sum + (s.teachers || 0), 0);
@@ -71,14 +58,36 @@ export default function SuperAdminDashboard() {
       });
     } catch (error) {
       console.error('Failed to load dashboard data:', error);
-      // Keep stats at 0 if API fails
     } finally {
       setIsLoadingData(false);
     }
   };
 
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const token = getToken();
+  let storedSuperAdmin = false;
+  try {
+    const raw = localStorage.getItem("conventpulse_user");
+    const parsed = raw ? JSON.parse(raw) : null;
+    const role = parsed?.role != null ? String(parsed.role).toLowerCase().replace(/[\s_-]+/g, "") : "";
+    storedSuperAdmin = role === "superadmin";
+  } catch {
+    // ignore
+  }
+  const hasStoredSuperAdmin = token && storedSuperAdmin;
+  const isSuperAdmin = user?.role === "superadmin" || hasStoredSuperAdmin;
+
+  if (!isLoading && !isSuperAdmin) {
+    return <Navigate to="/superadmin/login" replace />;
+  }
+
+  if (isLoading || (hasStoredSuperAdmin && !user)) return LOADING_UI;
+
   const handleLogout = () => {
-    navigate("/");
+    logout(); // clears auth and redirects to /superadmin/login
   };
 
   // Generate chart data from real data

@@ -115,17 +115,20 @@ const apiRequest = async <T>(
     });
 
     if (!response.ok) {
-      // Handle authentication errors (don't retry)
-      if (response.status === 401 || response.status === 403) {
-        // Clear auth state
-        removeToken();
-        localStorage.removeItem("conventpulse_user");
-        
-        // Dispatch custom event for AuthContext to handle
-        window.dispatchEvent(new CustomEvent('auth:logout'));
-        
+      // Only clear auth on 401 (unauthorized). 403 = forbidden = valid auth but no permission for this resource; do not log out.
+      if (response.status === 401) {
+        const currentToken = getToken();
+        if (currentToken && currentToken === token) {
+          removeToken();
+          localStorage.removeItem("conventpulse_user");
+          window.dispatchEvent(new CustomEvent('auth:logout'));
+        }
         const errorData = await response.json().catch(() => ({ error: 'Unauthorized' }));
         throw new Error(errorData.error || 'Session expired. Please login again.');
+      }
+      if (response.status === 403) {
+        const errorData = await response.json().catch(() => ({ error: 'Forbidden' }));
+        throw new Error(errorData.error || 'You do not have permission for this action.');
       }
       
       // Check if error is retryable
