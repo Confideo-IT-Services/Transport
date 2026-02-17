@@ -41,13 +41,12 @@ export default function SuperAdminLogin() {
     
     try {
       await login({ email, password, role: "superadmin" });
-      
       toast({
         title: "Welcome, Super Admin!",
         description: "You have successfully logged in.",
       });
-      // Navigation will happen via useEffect when user state updates
-      navigate("/superadmin", { replace: true });
+      // Full page navigation so app loads with token/user in localStorage; avoids any React state race
+      window.location.href = "/superadmin";
     } catch (error) {
       toast({
         title: "Login failed",

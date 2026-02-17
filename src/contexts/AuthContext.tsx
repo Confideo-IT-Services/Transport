@@ -5,6 +5,21 @@ export type UserRole = "superadmin" | "admin" | "teacher" | "parent";
 
 export type { User };
 
+/** Normalize API user: id as string, role as frontend enum (e.g. "super admin" / "super_admin" -> "superadmin"). */
+function normalizeUser(u: { id?: unknown; role?: unknown; [key: string]: unknown }): User {
+  let role = u.role != null ? String(u.role).toLowerCase().replace(/[\s_-]+/g, "") : "";
+  if (role === "superadmin" || role === "admin" || role === "teacher" || role === "parent") {
+    // already valid
+  } else {
+    role = ""; // invalid role
+  }
+  return {
+    ...u,
+    id: u.id != null ? String(u.id) : "",
+    role: role as User["role"],
+  } as User;
+}
+
 interface AuthContextType {
   user: User | null;
   isLoading: boolean;
@@ -40,7 +55,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             // For demo tokens, just restore from localStorage
             const savedUser = localStorage.getItem("conventpulse_user");
             if (savedUser) {
-              setUser(JSON.parse(savedUser));
+              setUser(normalizeUser(JSON.parse(savedUser)));
             } else {
               // No saved user, clear demo token
               removeToken();
@@ -49,20 +64,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             // For real tokens, verify with backend
             try {
               const verifiedUser = await authApi.verifyToken();
-              setUser(verifiedUser);
-              // Update localStorage with fresh user data from backend
-              localStorage.setItem("conventpulse_user", JSON.stringify(verifiedUser));
+              const normalized = normalizeUser(verifiedUser);
+              setUser(normalized);
+              localStorage.setItem("conventpulse_user", JSON.stringify(normalized));
             } catch (verifyError) {
               // If verification fails, check if we have a saved user (for superadmin, might be OK)
               const savedUser = localStorage.getItem("conventpulse_user");
-              if (savedUser) {
-                const user = JSON.parse(savedUser);
-                // For superadmin, if verify fails but we have saved user, keep it temporarily
-                // This handles cases where backend might be temporarily unavailable
-                if (user.role === 'superadmin') {
-                  console.warn('Token verification failed, but keeping superadmin session from localStorage');
-                  setUser(user);
-                } else {
+      if (savedUser) {
+        const parsed = JSON.parse(savedUser);
+        // For superadmin, if verify fails but we have saved user, keep it temporarily
+        if (String(parsed?.role).toLowerCase() === 'superadmin') {
+          console.warn('Token verification failed, but keeping superadmin session from localStorage');
+          setUser(normalizeUser(parsed));
+        } else {
                   // For other roles, require verification
                   throw verifyError;
                 }
@@ -79,9 +93,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUser(null);
         }
       } else {
-        // No token, ensure user is cleared
-        setUser(null);
-        localStorage.removeItem("conventpulse_user");
+        // No token when we started - only clear if still no token (avoid overwriting user set by login() while we were async)
+        if (!getToken()) {
+          setUser(null);
+          localStorage.removeItem("conventpulse_user");
+        }
       }
       setIsLoading(false);
     };
@@ -147,9 +163,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           throw new Error('Invalid role');
       }
 
+      const normalized = normalizeUser(response.user);
       setToken(response.token);
-      setUser(response.user);
-      localStorage.setItem("conventpulse_user", JSON.stringify(response.user));
+      setUser(normalized);
+      localStorage.setItem("conventpulse_user", JSON.stringify(normalized));
     } catch (error) {
       // For demo mode, only use mock data for specific demo credentials
       console.log('API not available, checking for demo credentials');

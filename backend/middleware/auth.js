@@ -41,9 +41,15 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
+// Normalize role for comparison (DB/drivers may return "super admin", "super_admin", etc.)
+function normalizeRole(role) {
+  if (!role) return '';
+  return String(role).toLowerCase().replace(/[\s_-]+/g, '');
+}
+
 // Check if user is super admin
 const requireSuperAdmin = (req, res, next) => {
-  if (req.user.role !== 'superadmin') {
+  if (normalizeRole(req.user.role) !== 'superadmin') {
     return res.status(403).json({ error: 'Super admin access required' });
   }
   next();
@@ -92,9 +98,10 @@ const requireAdmin = (req, res, next) => {
   next();
 };
 
-// Check if user is teacher
+// Check if user is teacher (use normalized role so "super admin" etc. from token is accepted)
 const requireTeacher = (req, res, next) => {
-  if (req.user.role !== 'teacher' && req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+  const role = normalizeRole(req.user.role);
+  if (role !== 'teacher' && role !== 'admin' && role !== 'superadmin') {
     return res.status(403).json({ error: 'Teacher access required' });
   }
   next();
@@ -102,7 +109,7 @@ const requireTeacher = (req, res, next) => {
 
 // Check if user is parent
 const requireParent = (req, res, next) => {
-  if (req.user.role !== 'parent') {
+  if (normalizeRole(req.user.role) !== 'parent') {
     return res.status(403).json({ error: 'Parent access required' });
   }
   next();
@@ -110,9 +117,10 @@ const requireParent = (req, res, next) => {
 
 // Generate JWT token
 const generateToken = (user) => {
-  // Normalize role to lowercase to ensure consistency
-  const normalizedRole = user.role ? String(user.role).toLowerCase() : user.role;
-  
+  // Ensure superadmin variants become exactly "superadmin" for frontend/requireSuperAdmin
+  const rawRole = user.role ? String(user.role).toLowerCase() : '';
+  const normalizedRole = rawRole.replace(/[\s_-]+/g, '') === 'superadmin' ? 'superadmin' : rawRole;
+
   const tokenPayload = {
     id: user.id,
     email: user.email,
