@@ -154,32 +154,6 @@ router.get('/sent', authenticateToken, requireTeacher, async (req, res) => {
   }
 });
 
-// Get templates (admin only)
-router.get('/templates', authenticateToken, requireTeacher, async (req, res) => {
-  try {
-    if (req.user.role !== 'admin') {
-      return res.status(403).json({ error: 'Access denied' });
-    }
-
-    const [templates] = await db.query(
-      'SELECT * FROM notification_templates WHERE school_id = ? ORDER BY created_at DESC',
-      [req.user.schoolId]
-    );
-
-    res.json(templates.map(t => ({
-      id: t.id,
-      name: t.name,
-      title: t.title,
-      message: t.message,
-      targetType: t.target_type,
-      createdAt: t.created_at
-    })));
-  } catch (error) {
-    console.error('Get templates error:', error);
-    res.status(500).json({ error: 'Failed to fetch templates' });
-  }
-});
-
 // Send notification
 router.post('/', authenticateToken, requireTeacher, async (req, res) => {
   console.log('🔔 POST /notifications - Request received');

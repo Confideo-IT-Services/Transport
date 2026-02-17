@@ -307,12 +307,6 @@ INSERT INTO notification_recipients (id, notification_id, recipient_type, recipi
 VALUES (UUID(), @notif1, 'teacher', @t1a, FALSE);
 
 -- ----------------------------------------------------------------------------
--- 23) Notification template
--- ----------------------------------------------------------------------------
-INSERT INTO notification_templates (id, school_id, name, title, message, created_by)
-VALUES (UUID(), @school_id, 'Holiday', 'Holiday Notice', 'School will remain closed.', @admin_id);
-
--- ----------------------------------------------------------------------------
 -- 24) ID card template
 -- ----------------------------------------------------------------------------
 INSERT INTO id_card_templates (id, school_id, name, template_data, is_default)
@@ -324,6 +318,7 @@ VALUES (UUID(), @school_id, 'Default ID Card', '{}', TRUE);
 -- Admin:  admin@democonvent.com  /  password
 -- Teachers: teacher_nur_a, teacher_1a, teacher_2a, ... teacher_10b  /  password
 -- ============================================================================
+
 
 
 

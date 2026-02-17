@@ -1541,14 +1541,6 @@ export interface SentNotification {
   attachmentType?: string;
 }
 
-export interface NotificationTemplate {
-  id: string;
-  title: string;
-  message: string;
-  targetType: 'all_classes' | 'selected_classes' | 'all_teachers' | 'all_parents' | 'specific_students';
-  createdAt: string;
-}
-
 export const notificationsApi = {
   getInbox: async (): Promise<Notification[]> => {
     return apiRequest<Notification[]>('/notifications/inbox');
@@ -1556,10 +1548,6 @@ export const notificationsApi = {
 
   getSent: async (): Promise<SentNotification[]> => {
     return apiRequest<SentNotification[]>('/notifications/sent');
-  },
-
-  getTemplates: async (): Promise<NotificationTemplate[]> => {
-    return apiRequest<NotificationTemplate[]>('/notifications/templates');
   },
 
   send: async (data: {
