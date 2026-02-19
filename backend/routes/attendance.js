@@ -615,12 +615,20 @@ router.get('/stats/monthly', authenticateToken, async (req, res) => {
 
     if (req.user.role === 'admin') {
       // Filter by school classes
+      if (!req.user.schoolId) {
+        console.error('Get monthly stats error: School ID not found for admin user');
+        return res.status(400).json({ error: 'School ID not found for admin user' });
+      }
       query += ` AND class_id IN (
         SELECT id FROM classes WHERE school_id = ?
       )`;
       params.push(req.user.schoolId);
     } else if (req.user.role === 'teacher') {
       // Filter by teacher's classes
+      if (!req.user.schoolId || !req.user.id) {
+        console.error('Get monthly stats error: School ID or user ID not found for teacher user');
+        return res.status(400).json({ error: 'School ID or user ID not found for teacher user' });
+      }
       query += ` AND class_id IN (
         SELECT id FROM classes WHERE school_id = ? AND class_teacher_id = ?
       )`;

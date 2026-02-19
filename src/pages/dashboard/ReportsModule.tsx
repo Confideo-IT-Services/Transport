@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useLocation } from "react-router-dom";
 import { UnifiedLayout } from "@/components/layout/UnifiedLayout";
 import { useAuth } from "@/contexts/AuthContext";
@@ -171,39 +171,64 @@ export default function ReportsModule() {
 
   const getStudentById = (id: string | number) => students.find(s => s.id === id || String(s.id) === String(id));
 
-  // Load classes
+  // Track if we're in the initial load phase
+  const isInitialLoad = useRef(true);
+
+  // Load all data on mount - same pattern as other pages
   useEffect(() => {
-    const loadClasses = async () => {
+    const loadData = async () => {
+      isInitialLoad.current = true; // Mark as initial load
+      setIsLoadingTests(true);
       try {
+        // Load classes
         const classesData = await classesApi.getAll();
         setClasses(classesData || []);
+        
         if (classesData && classesData.length > 0) {
           if (!isAdmin) {
-            // For teachers, find their assigned class
-            const assignedClass = classesData.find((c: any) => 
+            // For teachers, find all their assigned classes (where they are class teacher)
+            const assignedClasses = classesData.filter((c: any) => 
               c.class_teacher_id === user?.id
             );
-            if (assignedClass) {
-              setSelectedClass(`${assignedClass.name}${assignedClass.section ? ` - Section ${assignedClass.section}` : ''}`);
+            
+            if (assignedClasses.length > 0) {
+              // If only one class assigned, auto-select it
+              // If multiple classes assigned, select the first one by default
+              const assignedClass = assignedClasses[0];
+              const classDisplayName = `${assignedClass.name}${assignedClass.section ? ` - Section ${assignedClass.section}` : ''}`;
+              setSelectedClass(classDisplayName);
               setSelectedClassId(assignedClass.id);
+              
+              // Immediately load tests for the selected class (in same function)
+              const testsData = await testsApi.getAll();
+              const filteredTests = testsData.filter((t: any) => t.classId === assignedClass.id);
+              setTests(filteredTests);
             }
-            setHasMultipleClasses(classesData.length > 1); // Track if multiple classes
+            setHasMultipleClasses(assignedClasses.length > 1);
           } else {
             // For admin: Don't auto-select a class, leave it empty to show all tests initially
-            // selectedClassId and selectedClass remain empty
             setHasMultipleClasses(classesData.length > 1);
+            
+            // For admin with no class selected, load all tests immediately
+            const testsData = await testsApi.getAll();
+            setTests(testsData);
           }
         }
       } catch (error) {
-        console.error('Error loading classes:', error);
+        console.error('Error loading data:', error);
+        setTests([]);
         toast({
           title: "Error",
-          description: "Failed to load classes",
+          description: "Failed to load data",
           variant: "destructive"
         });
+      } finally {
+        setIsLoadingTests(false);
+        isInitialLoad.current = false; // Mark initial load as complete
       }
     };
-    loadClasses();
+    
+    loadData();
   }, [isAdmin, user]);
 
   // Load students
@@ -246,22 +271,31 @@ export default function ReportsModule() {
     loadSubjects();
   }, []);
 
-  // Load tests from database
+  // Load tests when class selection changes (for when user manually changes class)
   useEffect(() => {
+    // Skip if this is the initial load (tests already loaded in loadData)
+    if (isInitialLoad.current) {
+      return;
+    }
+    
+    // Skip if classes haven't loaded yet
+    if (classes.length === 0) {
+      return;
+    }
+    
     const loadTests = async () => {
-      if (!selectedClassId) {
+      if (!selectedClassId && !isAdmin) {
         setTests([]);
         return;
       }
+      
       setIsLoadingTests(true);
       try {
         const testsData = await testsApi.getAll();
-        // For admin: if no class selected, show all tests; if class selected, filter by that class
-        // For teacher: filter by selected class
         const filteredTests = isAdmin 
           ? (selectedClassId 
-              ? testsData.filter((t: any) => t.classId === selectedClassId)  // Filter by selected class
-              : testsData)  // Show all tests when no class selected
+              ? testsData.filter((t: any) => t.classId === selectedClassId)
+              : testsData)
           : testsData.filter((t: any) => t.classId === selectedClassId);
         setTests(filteredTests);
       } catch (error) {
@@ -276,21 +310,30 @@ export default function ReportsModule() {
         setIsLoadingTests(false);
       }
     };
+    
     loadTests();
-  }, [selectedClassId, isAdmin]);
+  }, [selectedClassId, isAdmin, classes.length]);
 
   // Load analytics data
   useEffect(() => {
     const loadAnalytics = async () => {
-      // Wait for classes to load if admin, or wait for selectedClassId if teacher
+      // Only load analytics if we're on the analytics tab (for admins)
+      if (isAdmin && activeTab !== 'analytics') {
+        return;
+      }
+      
+      // For teachers, don't load analytics at all (they don't have analytics tab)
+      if (!isAdmin) {
+        return;
+      }
+      
+      // Wait for classes to load if admin
       if (isAdmin && classes.length === 0) {
-        // For admin, wait for classes to load - will retry when classes are set
         return;
       }
-      if (!isAdmin && !selectedClassId) {
-        // For teacher, need selectedClassId - will retry when selectedClassId is set
-        return;
-      }
+      
+      // Don't load if no class selected and we need one for specific analytics
+      // But admin can load general analytics without class selection
       
       setIsLoadingAnalytics(true);
       try {
@@ -432,6 +475,7 @@ export default function ReportsModule() {
           } catch (trendError) {
             console.error('Error loading attendance trend:', trendError);
             setAttendanceTrend([]);
+            // Don't show toast - analytics errors shouldn't block the page
           }
         }
         
@@ -588,18 +632,15 @@ export default function ReportsModule() {
         
       } catch (error) {
         console.error('Error loading analytics:', error);
-        toast({
-          title: "Error",
-          description: "Failed to load analytics data",
-          variant: "destructive"
-        });
+        // Don't show toast - analytics errors shouldn't block the page
+        // Analytics are optional and errors are already logged
       } finally {
         setIsLoadingAnalytics(false);
       }
     };
     
     loadAnalytics();
-  }, [selectedClassId, isAdmin, classes]);
+  }, [selectedClassId, isAdmin, classes.length, activeTab]); // Add activeTab to prevent loading when on tests tab
 
   const calculateGrade = (marks: number, maxMarks: number): string => {
     const percentage = (marks / maxMarks) * 100;
@@ -1060,13 +1101,34 @@ export default function ReportsModule() {
           <div className="flex items-center gap-3">
             {/* Only show class selector for admin OR teacher with multiple classes */}
             {(isAdmin || (!isAdmin && hasMultipleClasses)) && (
-              <Select value={selectedClassId || ""} onValueChange={(value) => {
+              <Select value={selectedClassId || ""} onValueChange={async (value) => {
                 setSelectedClassId(value);
                 const cls = classes.find(c => c.id === value);
                 if (cls) {
                   setSelectedClass(`${cls.name}${cls.section ? ` - Section ${cls.section}` : ''}`);
+                  
+                  // Reload tests for the newly selected class
+                  setIsLoadingTests(true);
+                  try {
+                    const testsData = await testsApi.getAll();
+                    const filteredTests = isAdmin 
+                      ? (value ? testsData.filter((t: any) => t.classId === value) : testsData)
+                      : testsData.filter((t: any) => t.classId === value);
+                    setTests(filteredTests);
+                  } catch (error) {
+                    console.error('Error loading tests:', error);
+                    setTests([]);
+                    toast({
+                      title: "Error",
+                      description: "Failed to load tests",
+                      variant: "destructive"
+                    });
+                  } finally {
+                    setIsLoadingTests(false);
+                  }
                 } else {
                   setSelectedClass("");
+                  setTests([]);
                 }
               }}>
                 <SelectTrigger className="w-48">

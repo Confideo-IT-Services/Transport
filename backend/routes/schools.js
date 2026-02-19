@@ -322,4 +322,44 @@ router.post('/:id/deactivate', authenticateToken, requireSuperAdmin, async (req,
   }
 });
 
+// Reset admin password (Super Admin only)
+router.put('/:id/reset-admin-password', authenticateToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const { id } = req.params; // school id
+    const { adminId, newPassword } = req.body;
+
+    if (!adminId || !newPassword) {
+      return res.status(400).json({ error: 'Admin ID and new password are required' });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+
+    // Verify the admin belongs to this school
+    const [admins] = await db.query(
+      'SELECT id FROM users WHERE id = ? AND school_id = ? AND role = ?',
+      [adminId, id, 'admin']
+    );
+
+    if (admins.length === 0) {
+      return res.status(404).json({ error: 'Admin not found for this school' });
+    }
+
+    // Hash and update password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    await db.query(
+      'UPDATE users SET password = ? WHERE id = ?',
+      [hashedPassword, adminId]
+    );
+
+    console.log('✅ Admin password reset:', { adminId, schoolId: id });
+
+    res.json({ success: true, message: 'Admin password reset successfully' });
+  } catch (error) {
+    console.error('Reset admin password error:', error);
+    res.status(500).json({ error: 'Failed to reset admin password' });
+  }
+});
+
 module.exports = router;

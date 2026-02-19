@@ -148,17 +148,36 @@ export default function IDCardGeneration() {
       setIsLoading(true);
       const data = await idCardGenerationApi.getStudents(selectedSchool, selectedTemplateId);
       const rawStudents = Array.isArray(data.students) ? data.students : [];
+      
+      // Debug: Log first few students to verify we're getting latest photo URLs
+      console.log('[ID Card Gen] Sample students from backend:', rawStudents.slice(0, 3).map(s => ({
+        id: s.id,
+        name: s.name,
+        photoUrl: s.photoUrl ?? s.photo_url,
+        photo_url: s.photo_url
+      })));
+      
       // Normalize so name/admissionNumber/rollNo are always strings (avoid crash on filter/render)
-      const studentsWithSelection = rawStudents.map((s: any) => ({ 
-        ...s, 
-        name: s.name != null ? String(s.name) : "",
-        admissionNumber: s.admissionNumber ?? s.admission_number ?? "",
-        rollNo: s.rollNo ?? s.roll_no ?? "",
-        class: s.class ?? s.className ?? s.class_name ?? "",
-        className: s.className ?? s.class_name ?? s.class ?? "",
-        photoUrl: s.photoUrl ?? s.photo_url ?? "",
-        selected: false 
-      }));
+      const studentsWithSelection = rawStudents.map((s: any) => {
+        const photoUrl = s.photoUrl ?? s.photo_url ?? "";
+        
+        // Debug: Log photo URLs for verification - especially for Arjun Saxena
+        if (photoUrl && (s.name?.toLowerCase().includes('arjun') || s.id === rawStudents.find((st: any) => st.name?.toLowerCase().includes('arjun'))?.id)) {
+          console.log(`[ID Card Gen] Arjun Saxena photo URL:`, photoUrl);
+        }
+        
+        return {
+          ...s, 
+          name: s.name != null ? String(s.name) : "",
+          admissionNumber: s.admissionNumber ?? s.admission_number ?? "",
+          rollNo: s.rollNo ?? s.roll_no ?? "",
+          class: s.class ?? s.className ?? s.class_name ?? "",
+          className: s.className ?? s.class_name ?? s.class ?? "",
+          photoUrl: photoUrl,
+          selected: false 
+        };
+      });
+      console.log(`[ID Card Gen] Processed ${studentsWithSelection.length} students`);
       setStudents(studentsWithSelection);
       setSelectedClassFilter(ALL_CLASSES_VALUE);
       
@@ -180,6 +199,15 @@ export default function IDCardGeneration() {
         orientation: (meta.orientation ?? selectedTemplate?.orientation ?? "portrait") as any,
         backgroundImageUrl: meta.background_image_url ?? selectedTemplate?.backgroundImageUrl,
       });
+      
+      // Debug: Log photo elements to verify photoShape is preserved
+      const photoElements = normalizedLayout.elements.filter(el => el.type === 'photo');
+      if (photoElements.length > 0) {
+        console.log('[ID Card Gen] Photo elements with photoShape:', photoElements.map(el => ({
+          id: el.id,
+          photoShape: el.photoShape
+        })));
+      }
       
       console.log('Loaded template layout:', {
         backgroundImageUrl: normalizedLayout.backgroundImageUrl,
@@ -477,6 +505,18 @@ export default function IDCardGeneration() {
     const fontSizePt = (px: number) => Math.max(6, (px || 14) * 0.75);
 
     for (const el of layout.elements || []) {
+      // Debug: Log photo elements to verify photoShape
+      if (el.type === "photo") {
+        console.log('[PDF] Processing photo element:', {
+          id: el.id,
+          photoShape: el.photoShape,
+          x_percent: el.x_percent,
+          y_percent: el.y_percent,
+          width_percent: el.width_percent,
+          height_percent: el.height_percent
+        });
+      }
+      
       const elX = cardX + (cardW * (el.x_percent || 0)) / 100;
       const elY = cardY + (cardH * (el.y_percent || 0)) / 100;
       const elW = (cardW * (el.width_percent || 0)) / 100;
@@ -509,14 +549,86 @@ export default function IDCardGeneration() {
         }
         if (dataUrl) {
           const fmt = dataUrl.startsWith("data:image/png") ? "PNG" : "JPEG";
+          
+          // Apply clipping based on photoShape (only for photos, not logos)
+          const photoShape = el.type === "photo" ? (el.photoShape || "rectangle") : "rectangle";
+          
+          // Debug logging
+          if (el.type === "photo") {
+            console.log('[PDF Generation] Photo element:', {
+              id: el.id,
+              photoShape: photoShape,
+              elX, elY, elW, elH
+            });
+          }
+          
+          // Save graphics state before clipping
+          pdf.saveGraphicsState();
+          
           try {
-            pdf.addImage(dataUrl, fmt, elX, elY, elW, elH);
-          } catch {
+            if (photoShape === "circle") {
+              // Create circular clipping path using circle method
+              const centerX = elX + elW / 2;
+              const centerY = elY + elH / 2;
+              const radius = Math.min(elW, elH) / 2;
+              
+              // Use circle method if available, otherwise use ellipse
+              if (typeof (pdf as any).circle === 'function') {
+                (pdf as any).circle(centerX, centerY, radius);
+              } else {
+                // Fallback to ellipse
+                pdf.ellipse(centerX, centerY, radius, radius, {});
+              }
+              pdf.clip();
+              pdf.addImage(dataUrl, fmt, elX, elY, elW, elH);
+            } else if (photoShape === "rounded") {
+              // Create rounded rectangle using rect with rounded corners
+              const cornerRadius = Math.min(2.12, Math.min(elW, elH) / 4);
+              
+              // Try using roundedRect if available
+              if (typeof (pdf as any).roundedRect === 'function') {
+                (pdf as any).roundedRect(elX, elY, elW, elH, cornerRadius);
+                pdf.clip();
+                pdf.addImage(dataUrl, fmt, elX, elY, elW, elH);
+              } else {
+                // Fallback: create rounded rectangle using path
+                try {
+                  pdf.path([
+                    ['M', elX + cornerRadius, elY],
+                    ['L', elX + elW - cornerRadius, elY],
+                    ['Q', elX + elW, elY, elX + elW, elY + cornerRadius],
+                    ['L', elX + elW, elY + elH - cornerRadius],
+                    ['Q', elX + elW, elY + elH, elX + elW - cornerRadius, elY + elH],
+                    ['L', elX + cornerRadius, elY + elH],
+                    ['Q', elX, elY + elH, elX, elY + elH - cornerRadius],
+                    ['L', elX, elY + cornerRadius],
+                    ['Q', elX, elY, elX + cornerRadius, elY],
+                    ['Z']
+                  ]);
+                  pdf.clip();
+                  pdf.addImage(dataUrl, fmt, elX, elY, elW, elH);
+                } catch (pathError) {
+                  console.warn('[PDF] Rounded rectangle path failed, using rectangle:', pathError);
+                  pdf.restoreGraphicsState();
+                  pdf.addImage(dataUrl, fmt, elX, elY, elW, elH);
+                }
+              }
+            } else {
+              // Rectangle or square - no clipping needed
+              pdf.addImage(dataUrl, fmt, elX, elY, elW, elH);
+            }
+          } catch (error) {
+            console.error('[PDF] Error applying photo shape clipping:', error, { photoShape, elX, elY, elW, elH });
+            // Fallback: try different format without clipping
             try {
+              pdf.restoreGraphicsState();
               pdf.addImage(dataUrl, fmt === "PNG" ? "JPEG" : "PNG", elX, elY, elW, elH);
             } catch {
               // skip image
             }
+          } finally {
+            // Restore graphics state after clipping
+            pdf.restoreGraphicsState();
           }
         }
       }
@@ -882,8 +994,16 @@ export default function IDCardGeneration() {
                         </td>
                         <td className="p-4">
                           <div className="flex items-center gap-3">
-                            <Avatar className="w-10 h-10">
-                              <AvatarImage src={student.photoUrl ?? student.photo_url} alt="" />
+                            <Avatar 
+                              className="w-10 h-10"
+                              key={`avatar-${student.id}-${student.photoUrl ?? student.photo_url}`}
+                            >
+                              <AvatarImage 
+                                src={student.photoUrl ?? student.photo_url} 
+                                alt=""
+                                key={`img-${student.id}-${student.photoUrl ?? student.photo_url}`}
+                                loading="eager"
+                              />
                               <AvatarFallback className="bg-primary/10 text-primary">
                                 {((student.name ?? "").toString().split(" ").map((n: string) => n[0] || "").join("") || "?").substring(0, 2).toUpperCase()}
                               </AvatarFallback>

@@ -120,6 +120,10 @@ router.post('/photo', uploadImages.single('photo'), async (req, res) => {
         Body: processedImage,
         ContentType: contentType,
         ACL: 'public-read', // Make publicly accessible
+        CacheControl: 'no-cache, no-store, must-revalidate', // Prevent caching
+        Metadata: {
+          'uploaded-at': new Date().toISOString() // Track when uploaded
+        }
       });
       await s3Client.send(command);
     } catch (aclError) {
@@ -131,6 +135,10 @@ router.post('/photo', uploadImages.single('photo'), async (req, res) => {
           Key: fileName,
           Body: processedImage,
           ContentType: contentType,
+          CacheControl: 'no-cache, no-store, must-revalidate', // Prevent caching
+          Metadata: {
+            'uploaded-at': new Date().toISOString()
+          }
         });
         await s3Client.send(command);
       } else {

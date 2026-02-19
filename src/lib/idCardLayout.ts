@@ -19,6 +19,7 @@ export interface IDCardElement {
   fontWeight?: string;
   color?: string;
   align?: IDCardAlign;
+  photoShape?: 'circle' | 'square' | 'rounded' | 'rectangle';
 }
 
 export interface IDCardLayout {
@@ -101,6 +102,7 @@ export function normalizeElement(el: any): IDCardElement {
     fontWeight: el?.fontWeight,
     color: el?.color,
     align: (el?.align ?? el?.textAlign) as IDCardAlign | undefined,
+    photoShape: el?.photoShape ?? (type === 'photo' ? 'rectangle' : undefined),
   };
 }
 

@@ -17,6 +17,20 @@ function getAlignStyle(align?: string) {
   return { justifyContent: "center", textAlign: "center" as const };
 }
 
+function getPhotoBorderRadius(photoShape?: string): string {
+  switch (photoShape) {
+    case "circle":
+      return "50%";
+    case "square":
+      return "0";
+    case "rounded":
+      return "8px";
+    case "rectangle":
+    default:
+      return "0";
+  }
+}
+
 function renderElementContent(el: IDCardElement, layout: IDCardLayout, student?: any) {
   if (el.type === "text") {
     if (!student) return el.templateField || el.label || "";
@@ -26,6 +40,7 @@ function renderElementContent(el: IDCardElement, layout: IDCardLayout, student?:
 
   // photo / logo
   if (!student) {
+    const borderRadius = getPhotoBorderRadius(el.photoShape);
     return (
       <div
         style={{
@@ -39,7 +54,7 @@ function renderElementContent(el: IDCardElement, layout: IDCardLayout, student?:
           fontSize: "12px",
           fontWeight: "500",
           border: "1px dashed #9ca3af",
-          borderRadius: "4px",
+          borderRadius: borderRadius,
         }}
       >
         {el.type.toUpperCase()}
@@ -64,6 +79,7 @@ function renderElementContent(el: IDCardElement, layout: IDCardLayout, student?:
   }
   
   if (!url) {
+    const borderRadius = getPhotoBorderRadius(el.photoShape);
     return (
       <div
         style={{
@@ -77,7 +93,7 @@ function renderElementContent(el: IDCardElement, layout: IDCardLayout, student?:
           fontSize: "12px",
           fontWeight: "500",
           border: "1px dashed #9ca3af",
-          borderRadius: "4px",
+          borderRadius: borderRadius,
         }}
       >
         {el.type.toUpperCase()}
@@ -85,12 +101,20 @@ function renderElementContent(el: IDCardElement, layout: IDCardLayout, student?:
     );
   }
 
+  // Apply photoShape styles to the image
+  const borderRadius = getPhotoBorderRadius(el.photoShape);
+  const objectFit = el.type === "photo" ? "cover" : "contain";
+
   return (
     <img
       src={url}
       alt=""
       className="w-full h-full"
-      style={{ objectFit: el.type === "photo" ? "cover" : "contain" }}
+      style={{ 
+        objectFit,
+        borderRadius,
+        overflow: "hidden",
+      }}
       crossOrigin="anonymous"
     />
   );
@@ -115,6 +139,9 @@ export function IDCardRenderer({ layout, student, renderHeightPx }: Props) {
     >
       {layout.elements.map((el) => {
         const alignStyle = getAlignStyle(el.align);
+        const isPhoto = el.type === "photo";
+        const borderRadius = isPhoto ? getPhotoBorderRadius(el.photoShape) : undefined;
+        
         return (
           <div
             key={el.id}
@@ -131,6 +158,7 @@ export function IDCardRenderer({ layout, student, renderHeightPx }: Props) {
               fontFamily: el.fontFamily || "Arial",
               fontWeight: el.fontWeight || "normal",
               fontSize: `${(el.fontSize || 14) * scale}px`,
+              borderRadius: borderRadius,
               ...alignStyle,
             }}
           >

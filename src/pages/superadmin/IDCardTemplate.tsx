@@ -252,7 +252,7 @@ export default function IDCardTemplate() {
         color: el.color,
         templateField: el.templateField,
         field: el.templateField, // keep legacy
-        photoShape: "rectangle",
+        photoShape: el.photoShape || "rectangle",
       }));
 
       setEditingTemplate({
@@ -468,6 +468,7 @@ export default function IDCardTemplate() {
           fontWeight: el.fontWeight,
           color: el.color,
           align: el.textAlign,
+          photoShape: el.photoShape,
         })),
         fieldMappings,
       };
@@ -880,6 +881,7 @@ export default function IDCardTemplate() {
                                   fontWeight: el.fontWeight,
                                   color: el.color,
                                   align: el.textAlign,
+                                  photoShape: el.photoShape,
                                 })),
                                 fieldMappings,
                               },

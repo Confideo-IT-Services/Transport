@@ -281,6 +281,13 @@ export const schoolsApi = {
       body: JSON.stringify(data),
     });
   },
+
+  resetAdminPassword: async (schoolId: string, data: { adminId: string; newPassword: string }): Promise<{ success: boolean }> => {
+    return apiRequest(`/schools/${schoolId}/reset-admin-password`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
 };
 
 // ============ SCHOOL ADMINS API (SuperAdmin) ============

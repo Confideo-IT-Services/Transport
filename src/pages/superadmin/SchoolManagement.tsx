@@ -44,7 +44,7 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
-import { schoolsApi, School } from "@/lib/api";
+import { schoolsApi, schoolAdminsApi, School } from "@/lib/api";
 
 export default function SchoolManagement() {
   const navigate = useNavigate();
@@ -68,6 +68,15 @@ export default function SchoolManagement() {
   const [adminName, setAdminName] = useState("");
   const [adminEmail, setAdminEmail] = useState("");
   const [adminPassword, setAdminPassword] = useState("");
+
+  // Edit/Manage states
+  const [isEditSchoolOpen, setIsEditSchoolOpen] = useState(false);
+  const [isManageAdminsOpen, setIsManageAdminsOpen] = useState(false);
+  const [editingSchool, setEditingSchool] = useState<School | null>(null);
+  const [managingSchool, setManagingSchool] = useState<School | null>(null);
+  const [schoolAdmins, setSchoolAdmins] = useState<any[]>([]);
+  const [selectedAdminId, setSelectedAdminId] = useState("");
+  const [newAdminPassword, setNewAdminPassword] = useState("");
 
   // Load schools on mount
   useEffect(() => {
@@ -172,6 +181,127 @@ export default function SchoolManagement() {
   const copySchoolCode = (code: string) => {
     navigator.clipboard.writeText(code);
     toast.success("School code copied!");
+  };
+
+  const handleEditSchool = async (school: School) => {
+    setEditingSchool(school);
+    setSchoolName(school.name);
+    setSchoolType(school.type);
+    setSchoolLocation(school.location || "");
+    setSchoolPhone(school.phone || "");
+    setSchoolEmail(school.email);
+    setSchoolAddress(school.address || "");
+    
+    // Load admins for this school
+    try {
+      const admins = await schoolAdminsApi.getBySchool(school.id);
+      setSchoolAdmins(admins);
+      if (admins.length > 0) {
+        setSelectedAdminId(admins[0].id);
+        setAdminEmail(admins[0].email);
+        setAdminName(admins[0].name);
+      }
+    } catch (error) {
+      console.error("Failed to load admins:", error);
+      setSchoolAdmins([]);
+    }
+    
+    setNewAdminPassword("");
+    setIsEditSchoolOpen(true);
+  };
+
+  const handleUpdateSchool = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingSchool) return;
+
+    setIsSubmitting(true);
+    try {
+      // Update school details
+      await schoolsApi.update(editingSchool.id, {
+        name: schoolName,
+        type: schoolType,
+        location: schoolLocation,
+        address: schoolAddress,
+        phone: schoolPhone,
+        email: schoolEmail,
+      });
+
+      // If password is provided, reset it
+      if (newAdminPassword && selectedAdminId) {
+        try {
+          await schoolsApi.resetAdminPassword(editingSchool.id, {
+            adminId: selectedAdminId,
+            newPassword: newAdminPassword,
+          });
+        } catch (error) {
+          console.error("Failed to reset password:", error);
+          // Continue even if password reset fails
+        }
+      }
+
+      toast.success("School updated successfully!");
+      setIsEditSchoolOpen(false);
+      setEditingSchool(null);
+      loadSchools();
+    } catch (error: any) {
+      toast.error(error?.message || "Failed to update school");
+    } finally {
+      setIsSubmitting(false);
+      // Reset form
+      setSchoolName("");
+      setSchoolType("");
+      setSchoolLocation("");
+      setSchoolPhone("");
+      setSchoolEmail("");
+      setSchoolAddress("");
+      setNewAdminPassword("");
+      setSelectedAdminId("");
+    }
+  };
+
+  const handleManageAdmins = async (school: School) => {
+    setManagingSchool(school);
+    try {
+      const admins = await schoolAdminsApi.getBySchool(school.id);
+      setSchoolAdmins(admins);
+      if (admins.length > 0) {
+        setSelectedAdminId(admins[0].id);
+      }
+    } catch (error) {
+      console.error("Failed to load admins:", error);
+      setSchoolAdmins([]);
+    }
+    setNewAdminPassword("");
+    setIsManageAdminsOpen(true);
+  };
+
+  const handleResetAdminPassword = async () => {
+    if (!managingSchool || !selectedAdminId || !newAdminPassword) {
+      toast.error("Please select an admin and enter a new password");
+      return;
+    }
+
+    if (newAdminPassword.length < 6) {
+      toast.error("Password must be at least 6 characters");
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      await schoolsApi.resetAdminPassword(managingSchool.id, {
+        adminId: selectedAdminId,
+        newPassword: newAdminPassword,
+      });
+      toast.success("Admin password reset successfully!");
+      setNewAdminPassword("");
+      // Reload admins
+      const admins = await schoolAdminsApi.getBySchool(managingSchool.id);
+      setSchoolAdmins(admins);
+    } catch (error: any) {
+      toast.error(error?.message || "Failed to reset password");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -403,13 +533,14 @@ export default function SchoolManagement() {
         </div>
 
         {/* Schools Table */}
-        <div className="data-table">
+        <div className="data-table overflow-x-auto">
           {isLoading ? (
             <div className="flex items-center justify-center p-8">
               <Loader2 className="w-8 h-8 animate-spin text-primary" />
             </div>
           ) : (
-            <table className="w-full">
+            <div className="min-w-full">
+              <table className="w-full">
               <thead>
                 <tr>
                   <th>School</th>
@@ -489,11 +620,11 @@ export default function SchoolManagement() {
                             <Eye className="w-4 h-4 mr-2" />
                             View Details
                           </DropdownMenuItem>
-                          <DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => handleEditSchool(school)}>
                             <Edit className="w-4 h-4 mr-2" />
                             Edit School
                           </DropdownMenuItem>
-                          <DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => handleManageAdmins(school)}>
                             <Users className="w-4 h-4 mr-2" />
                             Manage Admins
                           </DropdownMenuItem>
@@ -510,7 +641,8 @@ export default function SchoolManagement() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+              </table>
+            </div>
           )}
         </div>
 
@@ -590,6 +722,233 @@ export default function SchoolManagement() {
                     {selectedSchool.email}
                   </div>
                 </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+
+        {/* Edit School Dialog */}
+        <Dialog open={isEditSchoolOpen} onOpenChange={setIsEditSchoolOpen}>
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Edit School</DialogTitle>
+              <DialogDescription>
+                Update school details and reset admin password if needed.
+              </DialogDescription>
+            </DialogHeader>
+            <form onSubmit={handleUpdateSchool} className="space-y-6 pt-4">
+              {/* School Details */}
+              <div className="space-y-4">
+                <h4 className="font-medium text-foreground">School Details</h4>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="editSchoolName">School Name *</Label>
+                    <Input
+                      id="editSchoolName"
+                      placeholder="e.g., Springfield Elementary"
+                      value={schoolName}
+                      onChange={(e) => setSchoolName(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="editSchoolType">School Type *</Label>
+                    <Select value={schoolType} onValueChange={setSchoolType} required>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Primary">Primary</SelectItem>
+                        <SelectItem value="Secondary">Secondary</SelectItem>
+                        <SelectItem value="High School">High School</SelectItem>
+                        <SelectItem value="K-12">K-12</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="editSchoolPhone">Phone Number</Label>
+                    <Input
+                      id="editSchoolPhone"
+                      placeholder="+1 234-567-8900"
+                      value={schoolPhone}
+                      onChange={(e) => setSchoolPhone(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="editSchoolEmail">School Email *</Label>
+                    <Input
+                      id="editSchoolEmail"
+                      type="email"
+                      placeholder="admin@school.edu"
+                      value={schoolEmail}
+                      onChange={(e) => setSchoolEmail(e.target.value)}
+                      required
+                    />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="editSchoolLocation">City, State *</Label>
+                  <Input
+                    id="editSchoolLocation"
+                    placeholder="e.g., New York, NY"
+                    value={schoolLocation}
+                    onChange={(e) => setSchoolLocation(e.target.value)}
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="editSchoolAddress">Full Address</Label>
+                  <Textarea
+                    id="editSchoolAddress"
+                    placeholder="Enter complete address..."
+                    rows={2}
+                    value={schoolAddress}
+                    onChange={(e) => setSchoolAddress(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              {/* Admin Password Reset */}
+              <div className="space-y-4 pt-4 border-t border-border">
+                <h4 className="font-medium text-foreground">Reset Admin Password</h4>
+                <p className="text-sm text-muted-foreground">
+                  Select an admin and set a new password. Leave empty if you don't want to change the password.
+                </p>
+                {schoolAdmins.length > 0 ? (
+                  <>
+                    <div className="space-y-2">
+                      <Label htmlFor="selectAdmin">Select Admin</Label>
+                      <Select value={selectedAdminId} onValueChange={setSelectedAdminId}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select admin" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {schoolAdmins.map((admin) => (
+                            <SelectItem key={admin.id} value={admin.id}>
+                              {admin.name} ({admin.email})
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="newAdminPassword">New Password</Label>
+                      <Input
+                        id="newAdminPassword"
+                        type="password"
+                        placeholder="Leave empty to keep current password"
+                        value={newAdminPassword}
+                        onChange={(e) => setNewAdminPassword(e.target.value)}
+                        minLength={6}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Minimum 6 characters. Leave empty if you don't want to change the password.
+                      </p>
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-sm text-muted-foreground">No admins found for this school.</p>
+                )}
+              </div>
+
+              <div className="flex justify-end gap-3 pt-4">
+                <Button type="button" variant="outline" onClick={() => setIsEditSchoolOpen(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={isSubmitting}>
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Updating...
+                    </>
+                  ) : (
+                    <>
+                      <Edit className="w-4 h-4 mr-2" />
+                      Update School
+                    </>
+                  )}
+                </Button>
+              </div>
+            </form>
+          </DialogContent>
+        </Dialog>
+
+        {/* Manage Admins Dialog */}
+        <Dialog open={isManageAdminsOpen} onOpenChange={setIsManageAdminsOpen}>
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Manage School Admins</DialogTitle>
+              <DialogDescription>
+                View and reset passwords for school administrators.
+              </DialogDescription>
+            </DialogHeader>
+            {managingSchool && (
+              <div className="space-y-4 pt-4">
+                <div>
+                  <h4 className="font-medium mb-2">{managingSchool.name}</h4>
+                  <p className="text-sm text-muted-foreground">Code: {managingSchool.code}</p>
+                </div>
+                
+                {schoolAdmins.length > 0 ? (
+                  <>
+                    <div className="space-y-2">
+                      <Label htmlFor="selectAdminForReset">Select Admin</Label>
+                      <Select value={selectedAdminId} onValueChange={setSelectedAdminId}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select admin" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {schoolAdmins.map((admin) => (
+                            <SelectItem key={admin.id} value={admin.id}>
+                              {admin.name} ({admin.email})
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <Label htmlFor="resetPassword">New Password</Label>
+                      <Input
+                        id="resetPassword"
+                        type="password"
+                        placeholder="Enter new password"
+                        value={newAdminPassword}
+                        onChange={(e) => setNewAdminPassword(e.target.value)}
+                        minLength={6}
+                        required
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Minimum 6 characters. This will reset the admin's password.
+                      </p>
+                    </div>
+                    
+                    <div className="flex justify-end gap-3 pt-4">
+                      <Button type="button" variant="outline" onClick={() => setIsManageAdminsOpen(false)}>
+                        Cancel
+                      </Button>
+                      <Button onClick={handleResetAdminPassword} disabled={isSubmitting || !newAdminPassword}>
+                        {isSubmitting ? (
+                          <>
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            Resetting...
+                          </>
+                        ) : (
+                          <>
+                            <Edit className="w-4 h-4 mr-2" />
+                            Reset Password
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-sm text-muted-foreground text-center py-4">
+                    No admins found for this school.
+                  </p>
+                )}
               </div>
             )}
           </DialogContent>
