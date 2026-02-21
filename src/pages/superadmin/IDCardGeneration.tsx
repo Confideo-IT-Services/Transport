@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
 import {
   Select,
   SelectContent,
@@ -30,6 +31,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import jsPDF from "jspdf";
+import JSZip from "jszip";
 import * as XLSX from "xlsx";
 import { 
   Printer, 
@@ -55,6 +57,7 @@ import {
   StudentForIDCard,
   IDCardTemplate 
 } from "@/lib/api";
+import { useAuth } from "@/contexts/AuthContext";
 import { IDCardRenderer } from "@/components/idcards/IDCardRenderer";
 import { IDCardLayout, normalizeLayout, PX_PER_MM, resolveElementValue } from "@/lib/idCardLayout";
 import type { IDCardElement } from "@/lib/idCardLayout";
@@ -65,6 +68,7 @@ interface Student extends StudentForIDCard {
 
 export default function IDCardGeneration() {
   const navigate = useNavigate();
+  const { logout } = useAuth();
   const cardPreviewRef = useRef<HTMLDivElement>(null);
   
   const [students, setStudents] = useState<Student[]>([]);
@@ -81,6 +85,9 @@ export default function IDCardGeneration() {
   const [pdfSheetSize, setPdfSheetSize] = useState<"A4" | "12x18" | "13x19">("A4");
   const [isLoading, setIsLoading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [generationProgress, setGenerationProgress] = useState(0);
+  const [isDownloadingZip, setIsDownloadingZip] = useState(false);
+  const [zipProgress, setZipProgress] = useState(0);
   const [previewLoading, setPreviewLoading] = useState(false);
   
   // Dialogs
@@ -378,20 +385,18 @@ export default function IDCardGeneration() {
       img.src = dataUrl;
     });
 
-  /** DPI used for PDF card bitmaps so zoomed view stays sharp */
-  const PDF_DPI = 300;
-
-  /** Render a single card to a 300 DPI canvas and return PNG data URL for embedding in PDF */
-  const renderCardToHighResDataUrl = async (
+  /** Render a single card to canvas and return image data URL (JPEG for smaller size). Use 300 DPI for printable quality. */
+  const renderCardToDataUrl = async (
     layout: IDCardLayout,
     student: Student,
     cardWidthMm: number,
     cardHeightMm: number,
-    imageCache: Map<string, string | null>
+    imageCache: Map<string, string | null>,
+    dpi: number
   ): Promise<string> => {
-    const w = (cardWidthMm / 25.4) * PDF_DPI;
-    const h = (cardHeightMm / 25.4) * PDF_DPI;
-    const scale = PDF_DPI / 96;
+    const w = (cardWidthMm / 25.4) * dpi;
+    const h = (cardHeightMm / 25.4) * dpi;
+    const scale = dpi / 96;
     const canvas = document.createElement("canvas");
     canvas.width = Math.round(w);
     canvas.height = Math.round(h);
@@ -466,8 +471,8 @@ export default function IDCardGeneration() {
         }
       }
     }
-
-    return canvas.toDataURL("image/png");
+    // JPEG is much smaller than PNG; avoids "Invalid string length" for 100+ cards
+    return canvas.toDataURL("image/jpeg", 0.88);
   };
 
   /** Draw a single ID card on the PDF using jsPDF (no html2canvas = no blank/CORS issues) */
@@ -648,6 +653,7 @@ export default function IDCardGeneration() {
 
     try {
       setIsGenerating(true);
+      setGenerationProgress(0);
 
       const sheetSize = pdfSheetSize;
       const orientation = selectedTemplate.orientation;
@@ -672,8 +678,8 @@ export default function IDCardGeneration() {
         sheetHeight = 210;
         cardsPerRow = 5;
         cardsPerColumn = 2;
-        const m = Math.max(2, Math.min((297 - 5 * cardWidth - 4 * gap) / 2, (210 - 2 * cardHeight - 1 * gap) / 2));
-        marginLeft = marginRight = marginTop = marginBottom = m;
+        marginLeft = marginRight = Math.max(2, (297 - 5 * cardWidth - 4 * gap) / 2);
+        marginTop = marginBottom = Math.max(2, (210 - 2 * cardHeight - 1 * gap) / 2);
       } else if (sheetSize === "12x18") {
         // 12×18: Top/Bottom 7mm, Left/Right 9mm, gap 2mm
         marginTop = marginBottom = 7;
@@ -702,6 +708,7 @@ export default function IDCardGeneration() {
       }
 
       const cardsPerPage = cardsPerRow * cardsPerColumn;
+      const pages = Math.ceil(selectedCount / cardsPerPage);
 
       const a4Landscape = sheetSize === "A4";
       const pdfFormat =
@@ -715,11 +722,12 @@ export default function IDCardGeneration() {
       });
 
       const imageCache = new Map<string, string | null>();
-      const pages = Math.ceil(selectedCount / cardsPerPage);
+      const totalCards = selectedCount;
+      const PDF_DPI = 300;
+      let cardsDone = 0;
 
       for (let page = 0; page < pages; page++) {
         if (page > 0) pdf.addPage();
-
         const pageStudents = selectedStudents.slice(
           page * cardsPerPage,
           (page + 1) * cardsPerPage
@@ -732,19 +740,20 @@ export default function IDCardGeneration() {
           const x = marginLeft + col * (cardWidth + gap);
           const y = marginTop + row * (cardHeight + gap);
 
-          const cardDataUrl = await renderCardToHighResDataUrl(
+          const cardDataUrl = await renderCardToDataUrl(
             templateLayout,
             student,
             cardWidth,
             cardHeight,
-            imageCache
+            imageCache,
+            PDF_DPI
           );
           if (cardDataUrl) {
             try {
-              pdf.addImage(cardDataUrl, "PNG", x, y, cardWidth, cardHeight);
+              pdf.addImage(cardDataUrl, "JPEG", x, y, cardWidth, cardHeight);
             } catch {
               try {
-                pdf.addImage(cardDataUrl, "JPEG", x, y, cardWidth, cardHeight);
+                pdf.addImage(cardDataUrl, "PNG", x, y, cardWidth, cardHeight);
               } catch {
                 await drawCardOnPdf(pdf, templateLayout, student, x, y, cardWidth, cardHeight, imageCache);
               }
@@ -752,10 +761,12 @@ export default function IDCardGeneration() {
           } else {
             await drawCardOnPdf(pdf, templateLayout, student, x, y, cardWidth, cardHeight, imageCache);
           }
-          // Border around each ID card (light gray stroke)
           pdf.setDrawColor(180, 180, 180);
           pdf.setLineWidth(0.25);
           pdf.rect(x, y, cardWidth, cardHeight);
+
+          cardsDone++;
+          setGenerationProgress(Math.round((cardsDone / totalCards) * 100));
         }
       }
 
@@ -766,8 +777,11 @@ export default function IDCardGeneration() {
       toast.error(error.message || "Failed to generate PDF");
     } finally {
       setIsGenerating(false);
+      setGenerationProgress(0);
     }
   };
+
+  const getUniqueId = (_s: Student, index: number) => String(index + 1);
 
   const handleExportExcel = () => {
     if (students.length === 0) {
@@ -775,19 +789,24 @@ export default function IDCardGeneration() {
       return;
     }
 
-    const exportData = students.map(s => ({
-      "Student Name": s.name,
-      "Admission Number": s.admissionNumber || "",
-      "Roll Number": s.rollNo || "",
-      "Class": s.className || "",
-      "Section": s.section || "",
-      "Date of Birth": s.dateOfBirth || "",
-      "Gender": s.gender || "",
-      "Blood Group": s.bloodGroup || "",
-      "Father Name": s.fatherName || "",
-      "Mother Name": s.motherName || "",
-      "Address": s.address || "",
-    }));
+    const exportData = students.map((s, idx) => {
+      const uid = getUniqueId(s, idx);
+      return {
+        "Unique_ID": uid,
+        "Photo_File": `${uid}.jpg`,
+        "Student Name": s.name,
+        "Admission Number": s.admissionNumber || "",
+        "Roll Number": s.rollNo || "",
+        "Class": s.className || "",
+        "Section": s.section || "",
+        "Date of Birth": s.dateOfBirth || "",
+        "Gender": s.gender || "",
+        "Blood Group": s.bloodGroup || "",
+        "Father Name": s.fatherName || "",
+        "Mother Name": s.motherName || "",
+        "Address": s.address || "",
+      };
+    });
 
     const ws = XLSX.utils.json_to_sheet(exportData);
     const wb = XLSX.utils.book_new();
@@ -796,7 +815,93 @@ export default function IDCardGeneration() {
     toast.success("Excel file exported successfully!");
   };
 
-  const handleLogout = () => navigate("/");
+  const handleDownloadExcelAndPhotosZip = async () => {
+    if (students.length === 0) {
+      toast.error("No students to export");
+      return;
+    }
+    try {
+      setIsDownloadingZip(true);
+      setZipProgress(0);
+      const zip = new JSZip();
+      const exportData = students.map((s, idx) => {
+        const uid = getUniqueId(s, idx);
+        return {
+          "Unique_ID": uid,
+          "Photo_File": `${uid}.jpg`,
+          "Student Name": s.name,
+          "Admission Number": s.admissionNumber || "",
+          "Roll Number": s.rollNo || "",
+          "Class": s.className || "",
+          "Section": s.section || "",
+          "Date of Birth": s.dateOfBirth || "",
+          "Gender": s.gender || "",
+          "Blood Group": s.bloodGroup || "",
+          "Father Name": s.fatherName || "",
+          "Mother Name": s.motherName || "",
+          "Address": s.address || "",
+        };
+      });
+      const ws = XLSX.utils.json_to_sheet(exportData);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Students");
+      const excelBuffer = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+      zip.file("Students.xlsx", excelBuffer);
+
+      const photosFolder = zip.folder("photos");
+      if (!photosFolder) throw new Error("Could not create photos folder");
+      const total = students.length;
+      const apiBase = import.meta.env.VITE_API_URL || "http://localhost:3000/api";
+      const token = getToken();
+      for (let idx = 0; idx < students.length; idx++) {
+        const s = students[idx];
+        const uid = getUniqueId(s, idx);
+        const photoUrl = s.photoUrl ?? (s as any).photo_url ?? "";
+        if (photoUrl && photoUrl.startsWith("http")) {
+          let blob: Blob | null = null;
+          try {
+            const res = await fetch(photoUrl, { mode: "cors", credentials: "omit" });
+            if (res.ok) blob = await res.blob();
+          } catch {
+            // CORS – try backend proxy
+          }
+          if (!blob) {
+            try {
+              const res = await fetch(
+                `${apiBase}/id-cards/proxy-image?url=${encodeURIComponent(photoUrl)}`,
+                { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+              );
+              if (res.ok) blob = await res.blob();
+            } catch {
+              // ignore
+            }
+          }
+          if (blob) {
+            const ext = blob.type?.includes("png") ? "png" : "jpg";
+            photosFolder.file(`${uid}.${ext}`, blob);
+          }
+        }
+        setZipProgress(Math.round(((idx + 1) / total) * 100));
+      }
+
+      const content = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(content);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Students_${selectedSchool}_${Date.now()}.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success("ZIP downloaded! Contains Excel + photos (Unique_ID matches Photo_File names).");
+    } catch (err: any) {
+      console.error("Zip download error:", err);
+      toast.error(err.message || "Failed to create ZIP");
+    } finally {
+      setIsDownloadingZip(false);
+      setZipProgress(0);
+    }
+  };
+
+  const handleLogout = () => logout();
 
   return (
     <DashboardLayout role="superadmin" userName="Super Admin" onLogout={handleLogout}>
@@ -817,6 +922,18 @@ export default function IDCardGeneration() {
               Export to Excel
             </Button>
             <Button 
+              variant="outline" 
+              onClick={handleDownloadExcelAndPhotosZip}
+              disabled={students.length === 0 || isDownloadingZip}
+            >
+              {isDownloadingZip ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <FileDown className="w-4 h-4 mr-2" />
+              )}
+              Download Excel & Photos (ZIP)
+            </Button>
+            <Button 
               onClick={handleGeneratePDF} 
               disabled={selectedCount === 0 || !selectedTemplate || isGenerating}
             >
@@ -829,6 +946,34 @@ export default function IDCardGeneration() {
             </Button>
           </div>
         </div>
+
+        {isGenerating && (
+          <Card>
+            <CardContent className="pt-6">
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">Generating PDF at 300 DPI…</span>
+                  <span className="font-medium">{generationProgress}%</span>
+                </div>
+                <Progress value={generationProgress} className="h-2" />
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {isDownloadingZip && (
+          <Card>
+            <CardContent className="pt-6">
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">Downloading Excel & Photos (ZIP)…</span>
+                  <span className="font-medium">{zipProgress}%</span>
+                </div>
+                <Progress value={zipProgress} className="h-2" />
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Selection Filters */}
         <Card>

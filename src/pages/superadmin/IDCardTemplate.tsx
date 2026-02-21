@@ -37,6 +37,7 @@ import {
   Trash2
 } from "lucide-react";
 import { schoolsApi, idCardTemplatesApi, uploadApi, IDCardTemplate } from "@/lib/api";
+import { useAuth } from "@/contexts/AuthContext";
 import { DndContext, DragEndEvent } from "@dnd-kit/core";
 import { IDCardRenderer } from "@/components/idcards/IDCardRenderer";
 import { IDCardLayout, normalizeLayout, PX_PER_MM } from "@/lib/idCardLayout";
@@ -128,6 +129,7 @@ function calculateCardsPerSheet(cardWidth: number, cardHeight: number, sheetSize
 
 export default function IDCardTemplate() {
   const navigate = useNavigate();
+  const { logout } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   const [templates, setTemplates] = useState<IDCardTemplate[]>([]);
@@ -544,7 +546,7 @@ export default function IDCardTemplate() {
       )
     : null;
 
-  const handleLogout = () => navigate("/");
+  const handleLogout = () => logout();
 
   return (
     <DashboardLayout role="superadmin" userName="Super Admin" onLogout={handleLogout}>

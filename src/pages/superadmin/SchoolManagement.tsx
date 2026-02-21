@@ -98,7 +98,6 @@ export default function SchoolManagement() {
 
   const handleLogout = () => {
     logout();
-    navigate("/");
   };
 
   const filteredSchools = schools.filter((school) => {
