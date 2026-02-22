@@ -683,26 +683,25 @@ export default function IDCardTemplate() {
           <div className="text-center py-12">Loading templates...</div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filteredTemplates.map(template => (
+            {filteredTemplates.map(template => {
+              const td = (template as any).templateData || {};
+              const miniLayout = normalizeLayout(
+                { elements: td.elements || [], fieldMappings: td.field_mappings || td.fieldMappings || {} },
+                {
+                  name: template.name,
+                  width_mm: template.cardWidth || 54,
+                  height_mm: template.cardHeight || 86,
+                  orientation: (template.orientation || "portrait") as any,
+                  backgroundImageUrl: template.backgroundImageUrl,
+                }
+              );
+              return (
               <Card key={template.id} className="overflow-hidden">
-                <div 
-                  className="h-48 relative border-b border-border"
-                  style={{ 
-                    backgroundColor: "#ffffff",
-                    backgroundImage: template.backgroundImageUrl ? `url(${template.backgroundImageUrl})` : undefined,
-                    backgroundSize: "cover",
-                    backgroundPosition: "center",
-                  }}
-                >
-                  {/* Mini Preview */}
-                  <div className="absolute inset-4 flex flex-col items-center justify-center">
-                    <div className="w-16 h-20 bg-muted rounded-lg mb-2 flex items-center justify-center border-2 border-dashed">
-                      <User className="w-8 h-8 text-muted-foreground" />
-                    </div>
-                    <div className="text-xs font-medium text-foreground bg-background/80 px-2 py-1 rounded">
-                      Student Name
-                    </div>
-                  </div>
+                <div className="h-48 relative border-b border-border flex items-center justify-center bg-muted/30 p-2">
+                  <IDCardRenderer
+                    layout={miniLayout}
+                    renderHeightPx={180}
+                  />
                 </div>
                 <CardContent className="pt-4">
                   <h3 className="font-semibold text-foreground">{template.name}</h3>
@@ -733,7 +732,8 @@ export default function IDCardTemplate() {
                   </div>
                 </CardContent>
               </Card>
-            ))}
+            );
+            })}
             
             {filteredTemplates.length === 0 && !isLoading && (
               <div className="col-span-full text-center py-12 text-muted-foreground">
@@ -1373,23 +1373,58 @@ export default function IDCardTemplate() {
 
         {/* Preview Dialog */}
         <Dialog open={showPreview} onOpenChange={setShowPreview}>
-          <DialogContent className="max-w-md">
+          <DialogContent className="max-w-lg">
             <DialogHeader>
               <DialogTitle>ID Card Preview</DialogTitle>
             </DialogHeader>
-            {selectedTemplate && (
-              <div 
-                className="relative border border-border rounded-lg mx-auto bg-white"
-                style={{ 
-                  width: `${(selectedTemplate.cardWidth / selectedTemplate.cardHeight) * 300}px`,
-                  height: "300px",
-                  backgroundImage: selectedTemplate.backgroundImageUrl ? `url(${selectedTemplate.backgroundImageUrl})` : undefined,
-                  backgroundSize: "cover",
-                }}
-              >
-                {/* Preview content would render template elements here */}
-              </div>
-            )}
+            {selectedTemplate && (() => {
+              const td = (selectedTemplate as any).templateData || {};
+              const previewLayout = normalizeLayout(
+                {
+                  elements: td.elements || [],
+                  fieldMappings: td.field_mappings || td.fieldMappings || {},
+                  backgroundImageUrl: selectedTemplate.backgroundImageUrl,
+                },
+                {
+                  name: selectedTemplate.name,
+                  width_mm: selectedTemplate.cardWidth || 54,
+                  height_mm: selectedTemplate.cardHeight || 86,
+                  orientation: (selectedTemplate.orientation || "portrait") as any,
+                  backgroundImageUrl: selectedTemplate.backgroundImageUrl,
+                }
+              );
+              return (
+                <div className="flex flex-col gap-4">
+                  <div className="border border-border rounded-lg overflow-hidden bg-white mx-auto">
+                    <IDCardRenderer layout={previewLayout} renderHeightPx={400} />
+                  </div>
+                  {(td.backEnabled && Array.isArray(td.backElements) && td.backElements.length > 0) && (
+                    <>
+                      <h4 className="text-sm font-medium">Back</h4>
+                      <div className="border border-border rounded-lg overflow-hidden bg-white mx-auto">
+                        <IDCardRenderer
+                          layout={normalizeLayout(
+                            {
+                              elements: td.backElements,
+                              fieldMappings: td.backFieldMappings || td.back_field_mappings || {},
+                              backgroundImageUrl: td.backBackgroundImageUrl || td.back_background_image_url,
+                            },
+                            {
+                              name: selectedTemplate.name,
+                              width_mm: selectedTemplate.cardWidth || 54,
+                              height_mm: selectedTemplate.cardHeight || 86,
+                              orientation: (selectedTemplate.orientation || "portrait") as any,
+                              backgroundImageUrl: td.backBackgroundImageUrl || td.back_background_image_url,
+                            }
+                          )}
+                          renderHeightPx={400}
+                        />
+                      </div>
+                    </>
+                  )}
+                </div>
+              );
+            })()}
             <DialogFooter>
               <Button variant="outline" onClick={() => setShowPreview(false)}>
                 Close
