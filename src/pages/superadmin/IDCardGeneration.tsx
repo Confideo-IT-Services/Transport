@@ -78,6 +78,7 @@ export default function IDCardGeneration() {
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [selectedTemplate, setSelectedTemplate] = useState<IDCardTemplate | null>(null);
   const [templateLayout, setTemplateLayout] = useState<IDCardLayout | null>(null);
+  const [backLayout, setBackLayout] = useState<IDCardLayout | null>(null);
   const [templateMetadata, setTemplateMetadata] = useState<any>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const ALL_CLASSES_VALUE = "__all__";
@@ -223,6 +224,18 @@ export default function IDCardGeneration() {
       });
       
       setTemplateLayout(normalizedLayout);
+      const back = data.back_layout;
+      if (back) {
+        setBackLayout(normalizeLayout(back, {
+          name: selectedTemplate?.name || "Template",
+          width_mm: meta.card_width ?? selectedTemplate?.cardWidth ?? 54,
+          height_mm: meta.card_height ?? selectedTemplate?.cardHeight ?? 86,
+          orientation: (meta.orientation ?? selectedTemplate?.orientation ?? "portrait") as any,
+          backgroundImageUrl: (back as any).backgroundImageUrl,
+        }));
+      } else {
+        setBackLayout(null);
+      }
       setTemplateMetadata(meta);
       
       toast.success(`Loaded ${studentsWithSelection.length} students`);
@@ -723,6 +736,7 @@ export default function IDCardGeneration() {
 
       const imageCache = new Map<string, string | null>();
       const totalCards = selectedCount;
+      const totalWork = backLayout ? totalCards * 2 : totalCards;
       const PDF_DPI = 300;
       let cardsDone = 0;
 
@@ -766,12 +780,62 @@ export default function IDCardGeneration() {
           pdf.rect(x, y, cardWidth, cardHeight);
 
           cardsDone++;
-          setGenerationProgress(Math.round((cardsDone / totalCards) * 100));
+          setGenerationProgress(Math.round((cardsDone / totalWork) * 100));
         }
       }
 
-      pdf.save(`ID_Cards_${selectedSchool}_${Date.now()}.pdf`);
-      toast.success("PDF generated successfully!");
+      pdf.save(`ID_Cards_Front_${selectedSchool}_${Date.now()}.pdf`);
+      toast.success(backLayout ? "Front PDF generated! Generating back..." : "PDF generated successfully!");
+
+      if (backLayout) {
+        const pdfBack = new jsPDF({
+          orientation: a4Landscape || orientation === "landscape" ? "landscape" : "portrait",
+          unit: "mm",
+          format: pdfFormat,
+        });
+        for (let page = 0; page < pages; page++) {
+          if (page > 0) pdfBack.addPage();
+          const pageStudents = selectedStudents.slice(
+            page * cardsPerPage,
+            (page + 1) * cardsPerPage
+          );
+          for (let index = 0; index < pageStudents.length; index++) {
+            const student = pageStudents[index];
+            const row = Math.floor(index / cardsPerRow);
+            const col = index % cardsPerRow;
+            const x = marginLeft + col * (cardWidth + gap);
+            const y = marginTop + row * (cardHeight + gap);
+            const cardDataUrl = await renderCardToDataUrl(
+              backLayout,
+              student,
+              cardWidth,
+              cardHeight,
+              imageCache,
+              PDF_DPI
+            );
+            if (cardDataUrl) {
+              try {
+                pdfBack.addImage(cardDataUrl, "JPEG", x, y, cardWidth, cardHeight);
+              } catch {
+                try {
+                  pdfBack.addImage(cardDataUrl, "PNG", x, y, cardWidth, cardHeight);
+                } catch {
+                  await drawCardOnPdf(pdfBack, backLayout, student, x, y, cardWidth, cardHeight, imageCache);
+                }
+              }
+            } else {
+              await drawCardOnPdf(pdfBack, backLayout, student, x, y, cardWidth, cardHeight, imageCache);
+            }
+            pdfBack.setDrawColor(180, 180, 180);
+            pdfBack.setLineWidth(0.25);
+            pdfBack.rect(x, y, cardWidth, cardHeight);
+            cardsDone++;
+            setGenerationProgress(Math.round((cardsDone / totalWork) * 100));
+          }
+        }
+        pdfBack.save(`ID_Cards_Back_${selectedSchool}_${Date.now()}.pdf`);
+        toast.success("Front and back PDFs generated successfully!");
+      }
     } catch (error: any) {
       console.error("PDF generation error:", error);
       toast.error(error.message || "Failed to generate PDF");

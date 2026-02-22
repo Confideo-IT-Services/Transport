@@ -20,6 +20,8 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Slider } from "@/components/ui/slider";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { 
   Save, 
@@ -149,6 +151,11 @@ export default function IDCardTemplate() {
   const [layoutFile, setLayoutFile] = useState<File | null>(null);
   const [s3LayoutUrl, setS3LayoutUrl] = useState<string>("");
   const [fieldMappings, setFieldMappings] = useState<Record<string, string>>({});
+  const [editorTab, setEditorTab] = useState<"front" | "back">("front");
+  const [backEnabled, setBackEnabled] = useState(false);
+  const [backBackgroundImageUrl, setBackBackgroundImageUrl] = useState<string>("");
+  const [backFieldMappings, setBackFieldMappings] = useState<Record<string, string>>({});
+  const backFileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     loadSchools();
@@ -200,20 +207,21 @@ export default function IDCardTemplate() {
       return;
     }
     
-    const school = schools.find(s => s.id === selectedSchool);
-    const newTemplate: Partial<IDCardTemplate> = {
+    setEditingTemplate({
       id: "",
       name: "New Template",
       schoolId: selectedSchool,
-      templateData: { elements: [] },
+      templateData: { elements: [], backElements: [] },
       cardWidth: 54,
       cardHeight: 86,
       orientation: "portrait",
       sheetSize: "A4",
       isDefault: false,
-    };
-    
-    setEditingTemplate(newTemplate);
+    });
+    setBackEnabled(false);
+    setBackBackgroundImageUrl("");
+    setBackFieldMappings({});
+    setEditorTab("front");
     setShowEditor(true);
   };
 
@@ -257,9 +265,31 @@ export default function IDCardTemplate() {
         photoShape: el.photoShape || "rectangle",
       }));
 
+      const td = fullTemplate.templateData as any || {};
+      const backElementsRaw = td.backElements || [];
+      const backElements: TemplateElement[] = Array.isArray(backElementsRaw)
+        ? backElementsRaw.map((el: any) => ({
+            id: el.id ?? `el-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            type: (el.type === "textbox" ? "text" : el.type) || "text",
+            label: el.label ?? "Field",
+            x: el.x_percent ?? el.x ?? 0,
+            y: el.y_percent ?? el.y ?? 0,
+            width: el.width_percent ?? el.width ?? 30,
+            height: el.height_percent ?? el.height ?? 10,
+            fontSize: el.fontSize ?? 12,
+            fontFamily: el.fontFamily,
+            fontWeight: el.fontWeight,
+            textAlign: el.align ?? el.textAlign,
+            color: el.color,
+            templateField: el.templateField ?? el.field,
+            field: el.templateField ?? el.field,
+            photoShape: el.photoShape ?? "rectangle",
+          }))
+        : [];
+
       setEditingTemplate({
         ...fullTemplate,
-        templateData: { elements },
+        templateData: { elements, backElements },
         cardWidth: normalized.width_mm,
         cardHeight: normalized.height_mm,
         orientation: normalized.orientation,
@@ -267,6 +297,9 @@ export default function IDCardTemplate() {
       });
 
       const mappings = normalized.fieldMappings || {};
+      setBackEnabled(!!td.backEnabled);
+      setBackBackgroundImageUrl(td.backBackgroundImageUrl || td.back_background_image_url || "");
+      setBackFieldMappings(td.backFieldMappings || td.back_field_mappings || {});
       
       // Log field mappings for debugging
       console.log('[IDCardTemplate] Loaded template field mappings:', mappings);
@@ -277,7 +310,7 @@ export default function IDCardTemplate() {
       }
       
       setFieldMappings(mappings);
-      
+      setEditorTab("front");
       setShowEditor(true);
     } catch (error) {
       toast.error("Failed to load template");
@@ -303,6 +336,19 @@ export default function IDCardTemplate() {
     }
   };
 
+  const handleBackBackgroundUpload = async (file: File) => {
+    try {
+      setIsLoading(true);
+      const result = await uploadApi.uploadIdTemplate(file);
+      setBackBackgroundImageUrl(result.templateUrl);
+      toast.success("Back background uploaded successfully!");
+    } catch (error: any) {
+      toast.error(error.message || "Failed to upload back background");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleLayoutUpload = async (file: File) => {
     try {
       setIsLoading(true);
@@ -315,6 +361,32 @@ export default function IDCardTemplate() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const getCurrentElements = () =>
+    editorTab === "front"
+      ? (editingTemplate?.templateData?.elements || [])
+      : (editingTemplate?.templateData?.backElements || []);
+
+  const setCurrentElements = (els: TemplateElement[]) => {
+    if (!editingTemplate) return;
+    if (editorTab === "front") {
+      setEditingTemplate({
+        ...editingTemplate,
+        templateData: { ...editingTemplate.templateData, elements: els },
+      });
+    } else {
+      setEditingTemplate({
+        ...editingTemplate,
+        templateData: { ...editingTemplate.templateData, backElements: els },
+      });
+    }
+  };
+
+  const getCurrentMappings = () => (editorTab === "front" ? fieldMappings : backFieldMappings);
+  const setCurrentMappings = (m: Record<string, string>) => {
+    if (editorTab === "front") setFieldMappings(m);
+    else setBackFieldMappings(m);
   };
 
   const handleAddField = (fieldType: "text" | "photo" | "logo" | "textbox") => {
@@ -338,19 +410,14 @@ export default function IDCardTemplate() {
       photoShape: "rectangle",
     };
 
-    setEditingTemplate({
-      ...editingTemplate,
-      templateData: {
-        ...editingTemplate.templateData,  // Preserve existing templateData properties
-        elements: [...(editingTemplate.templateData?.elements || []), newElement],
-      },
-    });
+    const current = getCurrentElements();
+    setCurrentElements([...current, newElement]);
     
-    // Set default field mapping for photo/logo - use "photo_url" to match STUDENT_FIELDS dropdown
+    const maps = getCurrentMappings();
     if (fieldType === "photo") {
-      setFieldMappings({ ...fieldMappings, photo: "photo_url" });
+      setCurrentMappings({ ...maps, photo: "photo_url" });
     } else if (fieldType === "logo") {
-      setFieldMappings({ ...fieldMappings, logo: "schoolLogo" });
+      setCurrentMappings({ ...maps, logo: "schoolLogo" });
     }
     
     setSelectedElement(newElement);
@@ -389,18 +456,14 @@ export default function IDCardTemplate() {
       photoShape: "rectangle",
     };
 
-    setEditingTemplate({
-      ...editingTemplate,
-      templateData: {
-        elements: [...(editingTemplate.templateData?.elements || []), newElement],
-      },
-    });
+    const current = getCurrentElements();
+    setCurrentElements([...current, newElement]);
     
-    // Set default field mapping for photo/logo - use "photo_url" to match STUDENT_FIELDS dropdown
+    const maps = getCurrentMappings();
     if (elementType === "photo") {
-      setFieldMappings({ ...fieldMappings, photo: "photo_url" });
+      setCurrentMappings({ ...maps, photo: "photo_url" });
     } else if (elementType === "logo") {
-      setFieldMappings({ ...fieldMappings, logo: "schoolLogo" });
+      setCurrentMappings({ ...maps, logo: "schoolLogo" });
     }
     
     setSelectedElement(newElement);
@@ -409,15 +472,11 @@ export default function IDCardTemplate() {
   const handleElementChange = (elementId: string, changes: Partial<TemplateElement>) => {
     if (!editingTemplate || !editingTemplate.templateData) return;
     
-    setEditingTemplate({
-      ...editingTemplate,
-      templateData: {
-        ...editingTemplate.templateData,  // Preserve existing templateData properties
-        elements: editingTemplate.templateData.elements.map(el => 
-          el.id === elementId ? { ...el, ...changes } : el
-        ),
-      },
-    });
+    const current = getCurrentElements();
+    const updated = current.map(el => 
+      el.id === elementId ? { ...el, ...changes } : el
+    );
+    setCurrentElements(updated);
     
     if (selectedElement?.id === elementId) {
       setSelectedElement({ ...selectedElement, ...changes });
@@ -427,13 +486,8 @@ export default function IDCardTemplate() {
   const handleRemoveElement = (elementId: string) => {
     if (!editingTemplate || !editingTemplate.templateData) return;
     
-    setEditingTemplate({
-      ...editingTemplate,
-      templateData: {
-        ...editingTemplate.templateData,  // Preserve existing templateData properties
-        elements: editingTemplate.templateData.elements.filter(el => el.id !== elementId),
-      },
-    });
+    const current = getCurrentElements();
+    setCurrentElements(current.filter(el => el.id !== elementId));
     
     if (selectedElement?.id === elementId) {
       setSelectedElement(null);
@@ -482,7 +536,7 @@ export default function IDCardTemplate() {
         cardSize: `${layout.width_mm}x${layout.height_mm}mm`,
       });
 
-      // Upload layout JSON to S3 (for generation). Keep URL in DB if supported.
+      // Upload layout JSON to S3 (front only for generation)
       let layoutJsonUrl: string | undefined = undefined;
       try {
         const json = JSON.stringify(layout);
@@ -493,11 +547,35 @@ export default function IDCardTemplate() {
       } catch (e) {
         // Non-fatal: DB layout JSON will still exist
       }
+
+      const backElementsNorm = (editingTemplate.templateData?.backElements || []).map((el) => ({
+        id: el.id,
+        type: (el.type === "textbox" ? "text" : (el.type as any)),
+        label: el.label,
+        templateField: el.templateField || el.field,
+        x_percent: el.x,
+        y_percent: el.y,
+        width_percent: el.width,
+        height_percent: el.height,
+        fontSize: el.fontSize,
+        fontFamily: el.fontFamily,
+        fontWeight: el.fontWeight,
+        color: el.color,
+        align: el.textAlign,
+        photoShape: el.photoShape,
+      }));
+      const templateDataWithBack = {
+        ...layout,
+        backEnabled,
+        backBackgroundImageUrl: backEnabled ? backBackgroundImageUrl : undefined,
+        backElements: backEnabled ? backElementsNorm : [],
+        backFieldMappings: backEnabled ? backFieldMappings : {},
+      } as any;
       
       if (editingTemplate.id) {
         await idCardTemplatesApi.update(editingTemplate.id, {
           name: editingTemplate.name,
-          templateData: layout as any,
+          templateData: templateDataWithBack,
           layoutJsonUrl,
           backgroundImageUrl: editingTemplate.backgroundImageUrl,
           cardWidth: editingTemplate.cardWidth,
@@ -510,7 +588,7 @@ export default function IDCardTemplate() {
         await idCardTemplatesApi.create({
           schoolId: selectedSchool,
           name: editingTemplate.name || "New Template",
-          templateData: layout as any,
+          templateData: templateDataWithBack,
           layoutJsonUrl,
           backgroundImageUrl: editingTemplate.backgroundImageUrl,
           cardWidth: editingTemplate.cardWidth || 54,
@@ -526,6 +604,10 @@ export default function IDCardTemplate() {
       setEditingTemplate(null);
       setS3LayoutUrl("");
       setFieldMappings({});
+      setBackEnabled(false);
+      setBackBackgroundImageUrl("");
+      setBackFieldMappings({});
+      setEditorTab("front");
     } catch (error: any) {
       toast.error(error.message || "Failed to save template");
     } finally {
@@ -742,6 +824,62 @@ export default function IDCardTemplate() {
                   <div className="lg:col-span-2">
                     <div className="space-y-4">
                       {/* Template Settings */}
+                      <div className="flex items-center space-x-2 pb-2">
+                        <Checkbox
+                          id="back-enabled"
+                          checked={backEnabled}
+                          onCheckedChange={(checked) => {
+                            setBackEnabled(!!checked);
+                            if (!checked) setEditorTab("front");
+                          }}
+                        />
+                        <label
+                          htmlFor="back-enabled"
+                          className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                        >
+                          Enable back template
+                        </label>
+                      </div>
+
+                      {backEnabled && (
+                        <Tabs value={editorTab} onValueChange={(v) => { setEditorTab(v as "front" | "back"); setSelectedElement(null); }} className="mb-4">
+                          <TabsList>
+                            <TabsTrigger value="front">Front</TabsTrigger>
+                            <TabsTrigger value="back">Back</TabsTrigger>
+                          </TabsList>
+                          <TabsContent value="front" className="mt-2" />
+                          <TabsContent value="back" className="mt-2 space-y-2">
+                            <div>
+                              <Label>Back Background Image</Label>
+                              <div className="flex gap-2 mt-1">
+                                <Input
+                                  ref={backFileInputRef}
+                                  type="file"
+                                  accept="image/*"
+                                  className="hidden"
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) handleBackBackgroundUpload(file);
+                                  }}
+                                />
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => backFileInputRef.current?.click()}
+                                >
+                                  <Upload className="w-4 h-4 mr-2" />
+                                  Upload Back Background
+                                </Button>
+                                {backBackgroundImageUrl && (
+                                  <span className="text-sm text-green-600 flex items-center">✓ Uploaded</span>
+                                )}
+                              </div>
+                            </div>
+                          </TabsContent>
+                        </Tabs>
+                      )}
+
                       <div className="grid grid-cols-2 gap-4">
                         <div>
                           <Label>Template Name</Label>
@@ -857,7 +995,7 @@ export default function IDCardTemplate() {
 
                       {/* Field mappings are now edited per-element in the right panel to keep a single source of truth */}
 
-                      <Label>ID Card Preview</Label>
+                      <Label>ID Card Preview {editorTab === "back" && "(Back)"}</Label>
                       {editingTemplate && (
                         <div className="relative border-2 border-dashed border-border rounded-lg mx-auto bg-white p-2">
                           <IDCardRenderer
@@ -868,8 +1006,8 @@ export default function IDCardTemplate() {
                                 width_mm: editingTemplate.cardWidth || 54,
                                 height_mm: editingTemplate.cardHeight || 86,
                                 orientation: editingTemplate.orientation || "portrait",
-                                backgroundImageUrl: editingTemplate.backgroundImageUrl,
-                                elements: (editingTemplate.templateData?.elements || []).map((el) => ({
+                                backgroundImageUrl: editorTab === "front" ? editingTemplate.backgroundImageUrl : backBackgroundImageUrl,
+                                elements: getCurrentElements().map((el) => ({
                                   id: el.id,
                                   type: (el.type === "textbox" ? "text" : (el.type as any)),
                                   label: el.label,
@@ -885,7 +1023,7 @@ export default function IDCardTemplate() {
                                   align: el.textAlign,
                                   photoShape: el.photoShape,
                                 })),
-                                fieldMappings,
+                                fieldMappings: getCurrentMappings(),
                               },
                               undefined
                             )}
@@ -900,7 +1038,7 @@ export default function IDCardTemplate() {
                               height: "400px",
                             }}
                           >
-                            {(editingTemplate.templateData?.elements || []).map((element) => (
+                            {getCurrentElements().map((element) => (
                               <div
                                 key={element.id}
                                 className={`absolute cursor-pointer border-2 transition-all ${
@@ -971,14 +1109,15 @@ export default function IDCardTemplate() {
                                   onChange={(e) => {
                                     const newKey = e.target.value;
                                     const oldKey = selectedElement.templateField || selectedElement.field || "";
+                                    const maps = getCurrentMappings();
                                     // Update element key
                                     handleElementChange(selectedElement.id, { templateField: newKey, field: newKey });
                                     // Move mapping key if needed
-                                    if (oldKey && oldKey !== newKey && fieldMappings[oldKey]) {
-                                      const next = { ...fieldMappings };
+                                    if (oldKey && oldKey !== newKey && maps[oldKey]) {
+                                      const next = { ...maps };
                                       next[newKey] = next[oldKey];
                                       delete next[oldKey];
-                                      setFieldMappings(next);
+                                      setCurrentMappings(next);
                                     }
                                   }}
                                 />
@@ -990,7 +1129,7 @@ export default function IDCardTemplate() {
                                   value={
                                     (() => {
                                       const key = selectedElement.templateField || selectedElement.field || "";
-                                      return key ? (fieldMappings[key] || "") : "";
+                                      return key ? (getCurrentMappings()[key] || "") : "";
                                     })()
                                   }
                                   onValueChange={(v) => {
@@ -999,7 +1138,7 @@ export default function IDCardTemplate() {
                                       toast.error("Please set Template Field Key first");
                                       return;
                                     }
-                                    setFieldMappings({ ...fieldMappings, [key]: v });
+                                    setCurrentMappings({ ...getCurrentMappings(), [key]: v });
                                   }}
                                 >
                                   <SelectTrigger>
@@ -1104,14 +1243,15 @@ export default function IDCardTemplate() {
                                   onChange={(e) => {
                                     const newKey = e.target.value;
                                     const oldKey = selectedElement.templateField || selectedElement.field || "";
+                                    const maps = getCurrentMappings();
                                     // Update element key
                                     handleElementChange(selectedElement.id, { templateField: newKey, field: newKey });
                                     // Move mapping key if needed
-                                    if (oldKey && oldKey !== newKey && fieldMappings[oldKey]) {
-                                      const next = { ...fieldMappings };
+                                    if (oldKey && oldKey !== newKey && maps[oldKey]) {
+                                      const next = { ...maps };
                                       next[newKey] = next[oldKey];
                                       delete next[oldKey];
-                                      setFieldMappings(next);
+                                      setCurrentMappings(next);
                                     }
                                   }}
                                 />
@@ -1123,7 +1263,7 @@ export default function IDCardTemplate() {
                                   value={
                                     (() => {
                                       const key = selectedElement.templateField || selectedElement.field || "";
-                                      return key ? (fieldMappings[key] || "") : "";
+                                      return key ? (getCurrentMappings()[key] || "") : "";
                                     })()
                                   }
                                   onValueChange={(v) => {
@@ -1132,7 +1272,7 @@ export default function IDCardTemplate() {
                                       toast.error("Please set Template Field Key first");
                                       return;
                                     }
-                                    setFieldMappings({ ...fieldMappings, [key]: v });
+                                    setCurrentMappings({ ...getCurrentMappings(), [key]: v });
                                   }}
                                 >
                                   <SelectTrigger>
