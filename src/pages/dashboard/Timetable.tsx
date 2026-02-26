@@ -46,6 +46,7 @@ import {
   XCircle
 } from "lucide-react";
 import { format, addDays, startOfWeek, isWithinInterval, isSameDay } from "date-fns";
+import { getTodayIST, parseDateOnlyIST, formatDateOnlyIST } from "@/lib/date-ist";
 import { toast } from "@/hooks/use-toast";
 import { useConfirmDialog } from "@/hooks/use-confirm-dialog";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -140,8 +141,9 @@ export default function Timetable() {
   const [leaveEndDate, setLeaveEndDate] = useState<Date | undefined>(undefined);
   const [editEntry, setEditEntry] = useState({ subjectCode: "", teacherName: "" });
   
-  const today = new Date();
-  const todayName = today.toLocaleDateString("en-US", { weekday: "long" });
+  const today = getTodayIST();
+  const todayStart = today;
+  const todayName = today.toLocaleDateString("en-US", { weekday: "long", timeZone: "Asia/Kolkata" });
 
   // Load initial data
   useEffect(() => {
@@ -191,7 +193,7 @@ export default function Timetable() {
         const holidaysData = await timetableApi.getHolidays();
         const transformedHolidays = (holidaysData || []).map(h => ({
           id: h.id,
-          date: new Date(h.date),
+          date: parseDateOnlyIST(h.date),
           name: h.name,
           type: h.type
         }));
@@ -332,7 +334,7 @@ export default function Timetable() {
       // Create a holiday for each selected date
       for (const date of selectedHolidayDates) {
         try {
-          const dateStr = date.toISOString().split('T')[0];
+          const dateStr = formatDateOnlyIST(date);
           const result = await timetableApi.createHoliday({
             date: dateStr,
             name: newHoliday.name.trim(),
@@ -349,7 +351,7 @@ export default function Timetable() {
           newHolidays.push(holiday);
           successCount++;
         } catch (error: any) {
-          console.error(`Failed to add holiday for date ${date.toISOString().split('T')[0]}:`, error);
+          console.error(`Failed to add holiday for date ${formatDateOnlyIST(date)}:`, error);
           errorCount++;
         }
       }
@@ -423,8 +425,8 @@ export default function Timetable() {
         return;
       }
 
-      const startDateStr = leaveStartDate.toISOString().split('T')[0];
-      const endDateStr = leaveEndDate.toISOString().split('T')[0];
+      const startDateStr = formatDateOnlyIST(leaveStartDate);
+      const endDateStr = formatDateOnlyIST(leaveEndDate);
 
       const result = await timetableApi.createLeave({
         teacherId: teacher.id,
@@ -1332,9 +1334,12 @@ export default function Timetable() {
                 <CardContent>
                   <Calendar
                     mode="single"
-                    className="rounded-md border pointer-events-auto"
+                    className="rounded-md border pointer-events-auto timetable-holidays-calendar"
                     modifiers={{
                       holiday: holidays.map(h => h.date)
+                    }}
+                    modifiersClassNames={{
+                      holiday: "holiday-day"
                     }}
                     modifiersStyles={{
                       holiday: { backgroundColor: "hsl(var(--chart-4))", color: "white", fontWeight: "bold" }
@@ -1350,7 +1355,7 @@ export default function Timetable() {
                 <CardContent>
                   <div className="space-y-3">
                     {holidays
-                      .filter(h => h.date >= today)
+                      .filter(h => h.date >= todayStart)
                       .sort((a, b) => a.date.getTime() - b.date.getTime())
                       .map((holiday) => (
                         <div 
@@ -1382,7 +1387,7 @@ export default function Timetable() {
                           </div>
                         </div>
                       ))}
-                    {holidays.filter(h => h.date >= today).length === 0 && (
+                    {holidays.filter(h => h.date >= todayStart).length === 0 && (
                       <p className="text-center text-muted-foreground py-8">No upcoming holidays</p>
                     )}
                   </div>

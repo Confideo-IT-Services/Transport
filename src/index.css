@@ -163,6 +163,18 @@
   .badge-danger {
     @apply bg-destructive/10 text-destructive;
   }
+
+  /* Timetable Holidays Calendar: blast emoji on holiday dates */
+  .timetable-holidays-calendar .holiday-day {
+    @apply relative;
+  }
+  .timetable-holidays-calendar .holiday-day::after {
+    content: "🎉";
+    display: block;
+    font-size: 0.5rem;
+    line-height: 1;
+    margin-top: -2px;
+  }
 }
 
 @layer utilities {

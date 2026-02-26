@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { Progress } from "@/components/ui/progress";
+import { getTodayISTString } from "@/lib/date-ist";
 import { homeworkApi, classesApi, studentsApi } from "@/lib/api";
 import { format } from "date-fns";
 import {
@@ -94,7 +95,7 @@ const defaultSubjects = [
 
 const initialHomework: HomeworkItem[] = [
   {
-    id: 1,
+    id: "1",
     subjects: [
       { subjectId: "mathematics", subjectName: "Mathematics", description: "Complete exercises 1-20 from Chapter 5" },
       { subjectId: "english", subjectName: "English", description: "Write an essay on 'My Favorite Festival'" },
@@ -106,7 +107,7 @@ const initialHomework: HomeworkItem[] = [
     students: defaultStudents.map((s, i) => ({ ...s, completed: i < 5 })),
   },
   {
-    id: 2,
+    id: "2",
     subjects: [
       { subjectId: "science", subjectName: "Science", description: "Draw and label the human digestive system" },
     ],
@@ -244,7 +245,7 @@ export default function HomeworkModule() {
             }],
             dueDate: h.dueDate || '',
             status: h.status === 'completed' ? 'completed' : h.status === 'active' ? 'active' : 'draft',
-            createdAt: h.createdAt || new Date().toISOString().split('T')[0],
+            createdAt: h.createdAt || getTodayISTString(),
             sentToParents: false, // Backend doesn't track this yet
             students: h.students || [],
             classId: h.classId // Store classId for future reference
@@ -363,7 +364,7 @@ export default function HomeworkModule() {
       for (const subjectId of selectedSubjects) {
         const subjectName = subjects.find(s => s.id === subjectId)?.name || subjectId;
         const description = subjectDescriptions[subjectId] || "";
-        const title = `${subjectName} - ${dueDate || new Date().toISOString().split('T')[0]}`;
+        const title = `${subjectName} - ${dueDate || getTodayISTString()}`;
         
         try {
           const result = await homeworkApi.create({
@@ -400,15 +401,15 @@ export default function HomeworkModule() {
           }
           
           createdHomework.push({
-            id: parseInt(result.homeworkId) || Date.now(),
+            id: String(result.homeworkId ?? Date.now()),
             subjects: [{
               subjectId,
               subjectName,
               description
             }],
-            dueDate: dueDate || new Date().toISOString().split('T')[0],
+            dueDate: dueDate || getTodayISTString(),
             status: isDraft ? "draft" : "active",
-            createdAt: new Date().toISOString().split('T')[0],
+            createdAt: getTodayISTString(),
             sentToParents: false,
             students: students,
             classId: selectedClassId
@@ -508,15 +509,15 @@ export default function HomeworkModule() {
           }));
           
           return {
-            id: parseInt(h.id) || Date.now(),
+            id: String(h.id),
             subjects: [{
               subjectId: h.subject?.toLowerCase().replace(/\s+/g, "-") || "subject",
               subjectName: h.subject || "Subject",
               description: h.description || ""
             }],
-            dueDate: h.dueDate || new Date().toISOString().split('T')[0],
+            dueDate: h.dueDate || getTodayISTString(),
             status: h.status || "active",
-            createdAt: h.createdAt || new Date().toISOString().split('T')[0],
+            createdAt: h.createdAt || getTodayISTString(),
             sentToParents: false,
             students: students,
             classId: h.classId
@@ -770,7 +771,7 @@ export default function HomeworkModule() {
       // Handle both timestamp strings and date-only strings
       const dateKey = hw.createdAt 
         ? (hw.createdAt.includes('T') ? hw.createdAt.split('T')[0] : hw.createdAt)
-        : new Date().toISOString().split('T')[0];
+        : getTodayISTString();
       
       if (!grouped[dateKey]) {
         grouped[dateKey] = [];
@@ -833,7 +834,7 @@ export default function HomeworkModule() {
         }
       } else {
         // Handle case where result.success is false (shouldn't happen, but just in case)
-        const errorMsg = result?.message || "Failed to send messages. Please try again.";
+        const errorMsg = (result as { message?: string })?.message || "Failed to send messages. Please try again.";
         toast.error(errorMsg);
         console.error('Send to all parents failed:', result);
       }

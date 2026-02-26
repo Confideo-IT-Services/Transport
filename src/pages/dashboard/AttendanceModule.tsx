@@ -57,6 +57,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format, isSameDay, startOfMonth } from "date-fns";
+import { getTodayIST, getTodayISTString, formatInIST } from "@/lib/date-ist";
 import { toast } from "@/hooks/use-toast";
 import { useConfirmDialog } from "@/hooks/use-confirm-dialog";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -130,9 +131,9 @@ export default function AttendanceModule() {
   const [historyStatusFilter, setHistoryStatusFilter] = useState<"all" | "present" | "absent" | "leave">("all");
   const [searchParams, setSearchParams] = useSearchParams();
 
-  // Memoize today's date string to prevent infinite loops
-  const today = useMemo(() => new Date(), []);
-  const todayStr = useMemo(() => format(new Date(), "yyyy-MM-dd"), []);
+  // Memoize today's date string in IST to prevent infinite loops
+  const today = useMemo(() => getTodayIST(), []);
+  const todayStr = useMemo(() => getTodayISTString(), []);
 
   // Mark teacher attendance
   const markTeacherAttendance = async (teacherId: string) => {
@@ -1371,7 +1372,7 @@ export default function AttendanceModule() {
                             setAttendanceStartDate(newDate);
                           }
                         }}
-                        max={format(new Date(), "yyyy-MM-dd")}
+                        max={getTodayISTString()}
                         className="w-40"
                       />
                     </div>
@@ -1550,7 +1551,7 @@ export default function AttendanceModule() {
                               const date = new Date(result.checkInTime);
                               timeStr = date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
                             } else {
-                              timeStr = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+                              timeStr = formatInIST(new Date(), { hour: '2-digit', minute: '2-digit', hour12: true });
                             }
                             setCheckInTime(timeStr);
                             toast({
@@ -1593,7 +1594,7 @@ export default function AttendanceModule() {
                               const date = new Date(result.checkOutTime);
                               timeStr = date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
                             } else {
-                              timeStr = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+                              timeStr = formatInIST(new Date(), { hour: '2-digit', minute: '2-digit', hour12: true });
                             }
                             setCheckOutTime(timeStr);
                             toast({
@@ -1629,7 +1630,7 @@ export default function AttendanceModule() {
                           type="date" 
                           value={leaveFromDate}
                           onChange={(e) => setLeaveFromDate(e.target.value)}
-                          min={format(new Date(), "yyyy-MM-dd")}
+                          min={getTodayISTString()}
                         />
                       </div>
                       <div className="space-y-2">
@@ -2023,7 +2024,7 @@ export default function AttendanceModule() {
                         </div>
 
                         <p className="text-xs text-muted-foreground text-center">
-                          Marked at: {format(record.markedAt, "hh:mm a")}
+                          Marked at: {formatInIST(new Date(record.markedAt), { hour: "2-digit", minute: "2-digit", hour12: true })}
                         </p>
                       </div>
                     );

@@ -23,6 +23,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { format } from "date-fns";
+import { getTodayISTString } from "@/lib/date-ist";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 
@@ -128,7 +129,7 @@ export default function Attendance() {
         // Load today's attendance if classId is available
         const currentClassId = foundClassId || classId;
         if (currentClassId && filteredStudents.length > 0) {
-          const todayStr = format(new Date(), "yyyy-MM-dd");
+          const todayStr = getTodayISTString();
           try {
             const attendanceData = await attendanceApi.getStudentAttendance(currentClassId, todayStr);
             if (attendanceData && attendanceData.students) {
@@ -441,7 +442,7 @@ export default function Attendance() {
                       return;
                     }
                     try {
-                      const todayStr = format(new Date(), "yyyy-MM-dd");
+                      const todayStr = getTodayISTString();
                       await attendanceApi.saveStudentAttendance({
                         classId: classId,
                         date: todayStr,

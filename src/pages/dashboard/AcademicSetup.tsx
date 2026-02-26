@@ -47,8 +47,10 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
-import { Plus, Edit, Users, BookOpen, Calendar, ChevronRight, GraduationCap, UserCheck, Check, ChevronsUpDown, ArrowRight } from "lucide-react";
+import { Plus, Edit, Users, BookOpen, Calendar, ChevronRight, GraduationCap, UserCheck, Check, ChevronsUpDown, ArrowRight, ChevronDown } from "lucide-react";
+import { getTodayIST } from "@/lib/date-ist";
 import { PromoteStudentsModal } from "@/components/promotion/PromoteStudentsModal";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 
 export default function AcademicSetup() {
@@ -119,7 +121,7 @@ export default function AcademicSetup() {
 
   // Function to calculate current academic year
   const getCurrentAcademicYear = () => {
-    const now = new Date();
+    const now = getTodayIST();
     const currentYear = now.getFullYear();
     const currentMonth = now.getMonth() + 1; // 1-12
     
@@ -813,35 +815,78 @@ export default function AcademicSetup() {
                 </Dialog>
               )}
             </div>
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-              {academicYears.map((year) => (
-                <Card key={year.id} className={year.status === "active" ? "border-primary" : ""}>
-                  <CardContent className="pt-6">
-                    <div className="flex items-center justify-between mb-4">
-                      <h3 className="text-xl font-semibold">{year.name}</h3>
-                      <Badge variant={year.status === "active" ? "default" : "secondary"}>
-                        {year.status}
-                      </Badge>
+            {/* Current academic year - only active, editable */}
+            {(() => {
+              const activeYears = academicYears.filter((y) => y.status === "active");
+              const completedYears = academicYears
+                .filter((y) => y.status === "completed")
+                .sort((a, b) => (b.startYear ?? 0) - (a.startYear ?? 0));
+              return (
+                <>
+                  <h3 className="text-sm font-medium text-muted-foreground mt-6 mb-2">Current academic year</h3>
+                  {activeYears.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No active academic year.</p>
+                  ) : (
+                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                      {activeYears.map((year) => (
+                        <Card key={year.id} className="border-primary">
+                          <CardContent className="pt-6">
+                            <div className="flex items-center justify-between mb-4">
+                              <h3 className="text-xl font-semibold">{year.name}</h3>
+                              <Badge variant="default">active</Badge>
+                            </div>
+                            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                              <Calendar className="w-4 h-4" />
+                              <span>{year.startDate} - {year.endDate}</span>
+                            </div>
+                            {isAdmin && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="w-full mt-2"
+                                onClick={() => handleOpenEditAcademicYear(year)}
+                              >
+                                <Edit className="w-4 h-4 mr-2" />
+                                Edit
+                              </Button>
+                            )}
+                          </CardContent>
+                        </Card>
+                      ))}
                     </div>
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <Calendar className="w-4 h-4" />
-                      <span>{year.startDate} - {year.endDate}</span>
-                    </div>
-                    {isAdmin && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full mt-2"
-                        onClick={() => handleOpenEditAcademicYear(year)}
-                      >
-                        <Edit className="w-4 h-4 mr-2" />
-                        Edit
-                      </Button>
-                    )}
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
+                  )}
+                  {/* Past academic years - collapsible, no edit */}
+                  {completedYears.length > 0 && (
+                    <Collapsible className="mt-6">
+                      <CollapsibleTrigger asChild>
+                        <Button variant="ghost" className="flex items-center gap-2 -ml-2">
+                          <ChevronDown className="h-4 w-4" />
+                          Past academic years ({completedYears.length})
+                        </Button>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent>
+                        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 pt-2">
+                          {completedYears.map((year) => (
+                            <Card key={year.id}>
+                              <CardContent className="pt-6">
+                                <div className="flex items-center justify-between mb-4">
+                                  <h3 className="text-xl font-semibold">{year.name}</h3>
+                                  <Badge variant="secondary">completed</Badge>
+                                </div>
+                                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                                  <Calendar className="w-4 h-4" />
+                                  <span>{year.startDate} - {year.endDate}</span>
+                                </div>
+                              </CardContent>
+                            </Card>
+                          ))}
+                        </div>
+                      </CollapsibleContent>
+                    </Collapsible>
+                  )}
+                </>
+              );
+            })()}
           </TabsContent>
 
           {/* Classes & Sections */}
