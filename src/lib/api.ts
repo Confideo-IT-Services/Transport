@@ -1487,6 +1487,7 @@ export interface StudentForIDCard {
 
 export interface IDCardGenerationResponse {
   template_layout: any; // Layout JSON from S3
+  back_layout?: any; // Back side layout when back template is enabled
   template_metadata: {
     id: string;
     name: string;
@@ -1495,6 +1496,7 @@ export interface IDCardGenerationResponse {
     orientation: string;
     sheet_size: string;
     background_image_url?: string;
+    back_enabled?: boolean;
   };
   students: StudentForIDCard[];
   missing_fields: Array<{

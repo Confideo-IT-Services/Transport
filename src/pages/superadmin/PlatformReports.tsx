@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { BarChart3, Download, Building2, Users, GraduationCap, TrendingUp } from "lucide-react";
 import { schoolsApi } from "@/lib/api";
@@ -28,6 +29,7 @@ import {
 
 export default function PlatformReports() {
   const navigate = useNavigate();
+  const { logout } = useAuth();
   const [period, setPeriod] = useState("6months");
   const [stats, setStats] = useState({
     totalSchools: 0,
@@ -100,9 +102,7 @@ export default function PlatformReports() {
     }
   };
 
-  const handleLogout = () => {
-    navigate("/");
-  };
+  const handleLogout = () => logout();
 
   return (
     <DashboardLayout role="superadmin" userName="Platform Admin" onLogout={handleLogout}>

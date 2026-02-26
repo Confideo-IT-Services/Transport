@@ -109,6 +109,28 @@ router.get('/students/:schoolId', authenticateToken, requireSuperAdmin, async (r
     const fieldMappings = { ...(layout.fieldMappings || {}), ...dbMappings };
     layout.fieldMappings = fieldMappings;
 
+    // Build back layout if back template is enabled
+    let backLayout = null;
+    if (templateData.backEnabled) {
+      const backData = {
+        elements: Array.isArray(templateData.backElements) ? templateData.backElements : [],
+        fieldMappings: templateData.backFieldMappings || templateData.back_field_mappings || {},
+        backgroundImageUrl: templateData.backBackgroundImageUrl || templateData.back_background_image_url,
+        width_mm: template.card_width || 54,
+        height_mm: template.card_height || 86,
+        orientation: template.orientation || 'portrait',
+      };
+      // Pass fallback without front background_image_url so back uses backBackgroundImageUrl
+      const backFallback = {
+        ...template,
+        background_image_url: backData.backgroundImageUrl || undefined,
+      };
+      backLayout = normalizeLayout(backData, backFallback);
+      const backDbMappings = templateData.backFieldMappings || templateData.back_field_mappings || {};
+      backLayout.fieldMappings = { ...(backLayout.fieldMappings || {}), ...backDbMappings };
+      backLayout.backgroundImageUrl = backData.backgroundImageUrl || backLayout.backgroundImageUrl;
+    }
+
     // Fetch all approved students
     const [students] = await db.query(
       `SELECT 
@@ -258,6 +280,7 @@ router.get('/students/:schoolId', authenticateToken, requireSuperAdmin, async (r
 
     res.json({
       template_layout: layout,
+      back_layout: backLayout,
       template_metadata: {
         id: template.id,
         name: template.name,
@@ -266,7 +289,8 @@ router.get('/students/:schoolId', authenticateToken, requireSuperAdmin, async (r
         orientation: template.orientation,
         sheet_size: template.sheet_size,
         background_image_url: template.background_image_url,
-        layout_json_url: template.layout_json_url || null
+        layout_json_url: template.layout_json_url || null,
+        back_enabled: !!backLayout
       },
       students: flattenedStudents,
       missing_fields: missingFields

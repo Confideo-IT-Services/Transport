@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -12,6 +13,7 @@ import { toast } from "sonner";
 
 export default function PlatformSettings() {
   const navigate = useNavigate();
+  const { logout } = useAuth();
   const [platformName, setPlatformName] = useState("ConventPulse");
   const [supportEmail, setSupportEmail] = useState("support@conventpulse.com");
   const [maintenanceMode, setMaintenanceMode] = useState(false);
@@ -19,9 +21,7 @@ export default function PlatformSettings() {
   const [emailNotifications, setEmailNotifications] = useState(true);
   const [smsNotifications, setSmsNotifications] = useState(false);
 
-  const handleLogout = () => {
-    navigate("/");
-  };
+  const handleLogout = () => logout();
 
   const handleSave = () => {
     toast.success("Settings saved successfully!");
