@@ -58,6 +58,7 @@ import { useConfirmDialog } from "@/hooks/use-confirm-dialog";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { feesApi, classesApi, academicYearsApi } from "@/lib/api";
 import { format } from "date-fns";
+import { getTodayISTString, formatInIST } from "@/lib/date-ist";
 
 export default function FeesModule() {
   const { user } = useAuth();
@@ -99,7 +100,7 @@ export default function FeesModule() {
   const [newPayment, setNewPayment] = useState({
     component: "",
     amount: "",
-    paymentDate: format(new Date(), "yyyy-MM-dd"),
+    paymentDate: getTodayISTString(),
     paymentMethod: "cash" as "cash" | "cheque" | "online" | "bank_transfer",
     transactionId: "",
     receiptNumber: "",
@@ -114,7 +115,7 @@ export default function FeesModule() {
     academicYearId: "",
     frequency: "yearly" as "yearly" | "quarterly" | "monthly",
     otherComponents: [] as Array<{ id: string; name: string; amount: string }>,
-    dueDate: format(new Date(), "yyyy-MM-dd")
+    dueDate: getTodayISTString()
   });
   const [editingStructure, setEditingStructure] = useState<any>(null);
   const [structureForm, setStructureForm] = useState({
@@ -290,7 +291,7 @@ export default function FeesModule() {
       setNewPayment({
         component: "",
         amount: "",
-        paymentDate: format(new Date(), "yyyy-MM-dd"),
+        paymentDate: getTodayISTString(),
         paymentMethod: "cash",
         transactionId: "",
         receiptNumber: "",
@@ -421,7 +422,7 @@ th{font-weight:600;}
 <tr><th>Pending</th><td>₹${(s.pendingAmount ?? 0).toLocaleString()}</td></tr>
 <tr><th>Status</th><td>${s.status || "-"}</td></tr>
 </table>
-<div class="footer">Generated on ${format(new Date(), "dd MMM yyyy, HH:mm")} · ConventPulse</div>
+<div class="footer">Generated on ${formatInIST(new Date(), { dateStyle: "medium", timeStyle: "short" })} · ConventPulse</div>
 </body>
 </html>`;
     const w = window.open("", "_blank");
@@ -562,7 +563,7 @@ th{font-weight:600;}
         academicYearId: "",
         frequency: "yearly",
         otherComponents: [],
-        dueDate: format(new Date(), "yyyy-MM-dd")
+        dueDate: getTodayISTString()
       });
       
       // Reload data
@@ -1109,7 +1110,7 @@ th{font-weight:600;}
                                           academicYearId,
                                           frequency,
                                           otherComponents: finalComponents,
-                                          dueDate: feeDetails.dueDate || format(new Date(), "yyyy-MM-dd")
+                                          dueDate: feeDetails.dueDate || getTodayISTString()
                                         });
                                         
                                         setIsEditFeeOpen(true);
@@ -1144,14 +1145,14 @@ th{font-weight:600;}
                                             name: c.name || "",
                                             amount: c.amount?.toString() || ""
                                           })),
-                                          dueDate: format(new Date(), "yyyy-MM-dd")
+                                          dueDate: getTodayISTString()
                                         });
                                       } else {
                                         setNewStudentFee({
                                           academicYearId: "",
                                           frequency: "yearly",
                                           otherComponents: [],
-                                          dueDate: format(new Date(), "yyyy-MM-dd")
+                                          dueDate: getTodayISTString()
                                         });
                                       }
                                       setIsCreateFeeOpen(true);
@@ -1572,7 +1573,7 @@ th{font-weight:600;}
                     setNewPayment({
                       component: "",
                       amount: "",
-                      paymentDate: format(new Date(), "yyyy-MM-dd"),
+                      paymentDate: getTodayISTString(),
                       paymentMethod: "cash",
                       transactionId: "",
                       receiptNumber: "",
@@ -1599,7 +1600,7 @@ th{font-weight:600;}
               academicYearId: "",
               frequency: "yearly",
               otherComponents: [],
-              dueDate: format(new Date(), "yyyy-MM-dd")
+              dueDate: getTodayISTString()
             });
           }
         }}>
@@ -1761,7 +1762,7 @@ th{font-weight:600;}
                     academicYearId: "",
                     frequency: "yearly",
                     otherComponents: [],
-                    dueDate: format(new Date(), "yyyy-MM-dd")
+                    dueDate: getTodayISTString()
                   });
                 }}>
                   Cancel

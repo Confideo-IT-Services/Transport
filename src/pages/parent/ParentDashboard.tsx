@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { User, Download, FileText, CheckCircle2, Calendar, Clock, BookOpen } from "lucide-react";
 import { format } from "date-fns";
+import { getTodayISTString, formatInIST } from "@/lib/date-ist";
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { useToast } from "@/hooks/use-toast";
@@ -159,7 +160,7 @@ function ChildDetails({
   const [loading, setLoading] = useState(true);
   
   // Date filter states - default to today
-  const today = new Date().toISOString().split('T')[0];
+  const today = getTodayISTString();
   const [attendanceStartDate, setAttendanceStartDate] = useState<string>(today);
   const [attendanceEndDate, setAttendanceEndDate] = useState<string>(today);
   const [homeworkStartDate, setHomeworkStartDate] = useState<string>(today);
@@ -435,7 +436,7 @@ function ChildDetails({
   ` : ''}
   
   <div class="footer">
-    Generated on ${format(new Date(), "dd MMM yyyy, HH:mm")} · ConventPulse
+    Generated on ${formatInIST(new Date(), { dateStyle: "medium", timeStyle: "short" })} · ConventPulse
   </div>
 </body>
 </html>`;
@@ -480,7 +481,7 @@ function ChildDetails({
       }
 
       // Download PDF
-      const fileName = `Fee_Receipt_${childInfo.name.replace(/\s+/g, '_')}_${format(new Date(), 'yyyyMMdd')}.pdf`;
+      const fileName = `Fee_Receipt_${childInfo.name.replace(/\s+/g, '_')}_${getTodayISTString().replace(/-/g, '')}.pdf`;
       pdf.save(fileName);
     } catch (error) {
       console.error('Failed to generate PDF:', error);
@@ -523,7 +524,7 @@ function ChildDetails({
                     variant="outline"
                     size="sm"
                     onClick={() => {
-                      const today = new Date().toISOString().split('T')[0];
+                      const today = getTodayISTString();
                       setAttendanceStartDate(today);
                       setAttendanceEndDate(today);
                     }}
@@ -590,7 +591,7 @@ function ChildDetails({
                     variant="outline"
                     size="sm"
                     onClick={() => {
-                      const today = new Date().toISOString().split('T')[0];
+                      const today = getTodayISTString();
                       setHomeworkStartDate(today);
                       setHomeworkEndDate(today);
                     }}
@@ -697,13 +698,7 @@ function ChildDetails({
                             </p>
                             <span className="text-xs text-muted-foreground">•</span>
                             <p className="text-xs text-muted-foreground">
-                              {new Date(notif.createdAt).toLocaleString('en-US', {
-                                year: 'numeric',
-                                month: 'short',
-                                day: 'numeric',
-                                hour: '2-digit',
-                                minute: '2-digit'
-                              })}
+                              {formatInIST(new Date(notif.createdAt), { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                             </p>
                           </div>
                           {notif.attachmentUrl && (

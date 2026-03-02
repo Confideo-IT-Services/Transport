@@ -13,6 +13,7 @@ import { Copy, Eye, X, Calendar, Filter, Loader2, Link2, Trash2 } from "lucide-r
 import { toast } from "sonner";
 import { useConfirmDialog } from "@/hooks/use-confirm-dialog";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { formatInIST } from "@/lib/date-ist";
 import { registrationLinksApi, classesApi } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -405,7 +406,7 @@ export default function RegistrationLinksManagement() {
                         <div className="flex items-center gap-2">
                           <Calendar className="w-4 h-4" />
                           <span>
-                            Created: {new Date(link.createdAt).toLocaleString()}
+                            Created: {formatInIST(new Date(link.createdAt), { dateStyle: "medium", timeStyle: "short" })}
                           </span>
                           {link.expiresAt && (
                             <>

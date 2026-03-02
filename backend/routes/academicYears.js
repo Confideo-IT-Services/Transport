@@ -147,14 +147,18 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'School ID not found' });
     }
 
-    // Verify academic year belongs to school
+    // Verify academic year belongs to school and get status
     const [years] = await db.query(
-      'SELECT id FROM academic_years WHERE id = ? AND school_id = ?',
+      'SELECT id, status FROM academic_years WHERE id = ? AND school_id = ?',
       [id, schoolId]
     );
 
     if (years.length === 0) {
       return res.status(404).json({ error: 'Academic year not found or access denied' });
+    }
+
+    if (years[0].status === 'completed') {
+      return res.status(400).json({ error: 'Cannot edit a completed academic year. Only the active year can be edited.' });
     }
 
     // Normalize dates to YYYY-MM-DD for MySQL

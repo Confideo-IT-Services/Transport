@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Phone, CheckCircle2, Clock, XCircle, Search } from "lucide-react";
 import { toast } from "sonner";
 import { visitorRequestsApi } from "@/lib/api";
-import { format } from "date-fns";
+import { formatInIST } from "@/lib/date-ist";
 
 interface VisitorRequest {
   id: string;
@@ -210,7 +210,7 @@ export default function AdminVisitorManagement() {
                               <p><strong>Class:</strong> {request.class_name} {request.class_section ? `- ${request.class_section}` : ''}</p>
                               <p><strong>Parent:</strong> {request.parent_name || 'N/A'} ({request.parent_phone})</p>
                               <p><strong>Reason:</strong> {getReasonText(request)}</p>
-                              <p><strong>Requested:</strong> {format(new Date(request.created_at), 'MMM dd, yyyy HH:mm')}</p>
+                              <p><strong>Requested:</strong> {formatInIST(new Date(request.created_at), { dateStyle: "medium", timeStyle: "short" })}</p>
                             </div>
                           </div>
                         </div>

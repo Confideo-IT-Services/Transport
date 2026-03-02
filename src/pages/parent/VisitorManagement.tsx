@@ -24,7 +24,7 @@ import {
 import { UserPlus, Phone, CheckCircle2, Clock, XCircle, Download } from "lucide-react";
 import { toast } from "sonner";
 import { visitorRequestsApi, parentsApi } from "@/lib/api";
-import { format } from "date-fns";
+import { formatInIST } from "@/lib/date-ist";
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 
@@ -308,7 +308,7 @@ export default function VisitorManagement() {
                             <p>Student: {request.student_name}</p>
                             <p>Class: {request.class_name} {request.class_section ? `- ${request.class_section}` : ''}</p>
                             <p>Reason: {getReasonText(request)}</p>
-                            <p>Requested: {format(new Date(request.created_at), 'MMM dd, yyyy HH:mm')}</p>
+                            <p>Requested: {formatInIST(new Date(request.created_at), { dateStyle: "medium", timeStyle: "short" })}</p>
                           </div>
                         </div>
                         

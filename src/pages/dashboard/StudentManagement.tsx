@@ -26,6 +26,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
+import { getTodayISTString } from "@/lib/date-ist";
 import { studentsApi, classesApi, registrationLinksApi, teachersApi, academicYearsApi } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { QuickEntryDialog } from "@/components/students/QuickEntryDialog";
@@ -1387,7 +1388,7 @@ export default function StudentManagement() {
                             const url = URL.createObjectURL(blob);
                             const a = document.createElement("a");
                             a.href = url;
-                            a.download = `failed-import-rows-${new Date().toISOString().slice(0, 10)}.csv`;
+                            a.download = `failed-import-rows-${getTodayISTString()}.csv`;
                             a.click();
                             URL.revokeObjectURL(url);
                             toast.success("Failed rows downloaded as CSV");

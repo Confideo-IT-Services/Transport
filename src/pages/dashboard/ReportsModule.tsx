@@ -63,6 +63,7 @@ import {
 import { toast } from "@/hooks/use-toast";
 import { useConfirmDialog } from "@/hooks/use-confirm-dialog";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { getTodayIST, getTodayISTString, formatDateOnlyIST } from "@/lib/date-ist";
 import { attendanceApi, homeworkApi, studentsApi, classesApi, testsApi, timetableApi } from "@/lib/api";
 
 // Interfaces
@@ -319,7 +320,7 @@ export default function ReportsModule() {
           // First, try to get today's attendance for average calculation
           // Formula: (present students / total students) * 100
           try {
-            const today = new Date().toISOString().split('T')[0];
+            const today = getTodayISTString();
             const todayAttendance = await attendanceApi.getStudentAttendance(selectedClassId, today);
             
             if (todayAttendance && todayAttendance.students) {
@@ -417,8 +418,8 @@ export default function ReportsModule() {
                 sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
                 const attendanceHistory = await attendanceApi.getStudentAttendanceHistory(
                   selectedClassId,
-                  sixMonthsAgo.toISOString().split('T')[0],
-                  new Date().toISOString().split('T')[0]
+                  formatDateOnlyIST(sixMonthsAgo),
+                  getTodayISTString()
                 );
                 
                 if (attendanceHistory && attendanceHistory.length > 0) {
@@ -1452,7 +1453,7 @@ export default function ReportsModule() {
                       <Label>Test Date *</Label>
                       <Input 
                         type="date"
-                        value={editingTest.testDate ? new Date(editingTest.testDate).toISOString().split('T')[0] : ''} 
+                        value={editingTest.testDate ? (typeof editingTest.testDate === 'string' ? editingTest.testDate.slice(0, 10) : formatDateOnlyIST(new Date(editingTest.testDate))) : ''} 
                         onChange={(e) => setEditingTest({ ...editingTest, testDate: e.target.value })} 
                       />
                     </div>

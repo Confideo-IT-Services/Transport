@@ -277,6 +277,7 @@ router.post('/', async (req, res) => {
     let finalClassId = classId;
     let finalName = name || studentName;
     let linkType = null; // Store link type for validation
+    let fieldConfig = []; // From registration link for dynamic validation
 
     // If registrationCode is provided, get schoolId and classId from registration link
     if (registrationCode) {
@@ -297,15 +298,13 @@ router.post('/', async (req, res) => {
           finalClassId = links[0].class_id;
         }
         console.log('✅ Registration link found:', { registrationCode, schoolId: finalSchoolId, classId: finalClassId, linkType });
-        
-        // Check if OTP verification is required
-        let fieldConfig = [];
+
         try {
           fieldConfig = JSON.parse(links[0].field_config || '[]');
         } catch (e) {
           console.error('Error parsing field_config:', e);
         }
-        
+
         // Try to extract name from custom fields if not already set
         if (!finalName || finalName.trim() === '') {
           // Check common name field names
@@ -356,23 +355,46 @@ router.post('/', async (req, res) => {
       }
     }
 
-    // Validate required fields
-    if (!finalName || finalName.trim() === '') {
-      return res.status(400).json({ error: 'Name is required' });
-    }
-    
+    // School and class are always required (structural)
     if (!finalSchoolId) {
-      return res.status(400).json({ error: 'School is required' });
+      return res.status(400).json({ success: false, message: 'School is required', error: 'School is required' });
     }
-    
-    // Class is always required
     if (!finalClassId) {
-      return res.status(400).json({ error: 'Class is required' });
+      return res.status(400).json({ success: false, message: 'Class is required', error: 'Class is required' });
     }
 
-    // Validate admission number if provided (should be mandatory)
-    if (!admissionNumber || admissionNumber.trim() === '') {
-      return res.status(400).json({ error: 'Admission number is required' });
+    // Dynamic validation from registration link field_config (only when we have a link)
+    if (registrationCode && Array.isArray(fieldConfig) && fieldConfig.length > 0) {
+      for (const field of fieldConfig) {
+        const isMandatory = field.mandatory === true || field.is_mandatory === true;
+        if (!isMandatory) continue;
+
+        const fieldName = field.fieldName || field.field_id || field.id;
+        if (!fieldName) continue;
+
+        let value = req.body[fieldName];
+        if (field.fieldType === 'file' && (fieldName === 'photo' || field.fieldName === 'photo')) {
+          value = req.body.photoUrl || value;
+        }
+
+        const isEmpty = value === undefined || value === null ||
+          (typeof value === 'string' && value.trim() === '') ||
+          (field.fieldType === 'checkbox' && !value);
+
+        if (isEmpty) {
+          const label = field.label || fieldName;
+          return res.status(400).json({
+            success: false,
+            message: `${label} is required`,
+            error: `${label} is required`
+          });
+        }
+      }
+    } else if (!registrationCode) {
+      // No link: minimal validation for direct API calls
+      if (!finalName || finalName.trim() === '') {
+        return res.status(400).json({ success: false, message: 'Name is required', error: 'Name is required' });
+      }
     }
 
     // Verify school exists
@@ -414,14 +436,18 @@ router.post('/', async (req, res) => {
       }
     }
 
-    // Check if admission number already exists in this school
-    const trimmedAdmissionNumber = admissionNumber.trim();
-    const [existingAdmission] = await db.query(
-      'SELECT id FROM students WHERE admission_number = ? AND school_id = ?',
-      [trimmedAdmissionNumber, finalSchoolId]
-    );
-    if (existingAdmission.length > 0) {
-      return res.status(400).json({ error: 'Admission number already exists in this school' });
+    // Admission number: optional; when provided, must be unique per school
+    const trimmedAdmissionNumber = (admissionNumber != null && typeof admissionNumber === 'string') ? admissionNumber.trim() : '';
+    const admissionNumberToStore = trimmedAdmissionNumber === '' ? null : trimmedAdmissionNumber;
+
+    if (admissionNumberToStore !== null) {
+      const [existingAdmission] = await db.query(
+        'SELECT id FROM students WHERE admission_number = ? AND school_id = ?',
+        [admissionNumberToStore, finalSchoolId]
+      );
+      if (existingAdmission.length > 0) {
+        return res.status(400).json({ success: false, message: 'Admission number already exists in this school', error: 'Admission number already exists in this school' });
+      }
     }
 
     // Map form fields to database columns
@@ -475,8 +501,8 @@ router.post('/', async (req, res) => {
       }
     }
 
-    // Add admissionNumber to submittedData for reference
-    submittedData.admissionNumber = trimmedAdmissionNumber;
+    // Add admissionNumber to submittedData for reference (may be null if optional and not provided)
+    submittedData.admissionNumber = admissionNumberToStore;
 
     const [result] = await db.query(
       `INSERT INTO students (id, name, roll_no, class_id, school_id, parent_phone, parent_email, 
@@ -484,7 +510,7 @@ router.post('/', async (req, res) => {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NOW())`,
       [studentId, finalName, rollNo || null, finalClassId, finalSchoolId, finalParentPhone, 
        finalParentEmail, finalParentName, address || null, dateOfBirth || null,
-       gender || null, bloodGroup || null, photoUrl || null, registrationCode || null, JSON.stringify(submittedData), trimmedAdmissionNumber]
+       gender || null, bloodGroup || null, photoUrl || null, registrationCode || null, JSON.stringify(submittedData), admissionNumberToStore]
     );
 
     console.log('✅ Student created:', { 
@@ -492,7 +518,7 @@ router.post('/', async (req, res) => {
       name: finalName, 
       classId: finalClassId, 
       schoolId: finalSchoolId, 
-      admissionNumber: trimmedAdmissionNumber,
+      admissionNumber: admissionNumberToStore,
       status: 'pending',
       registrationCode: registrationCode || 'none'
     });
