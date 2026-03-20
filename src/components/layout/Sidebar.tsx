@@ -9,6 +9,7 @@ import {
   FileText,
   Bell,
   BarChart3,
+  MessageSquare,
   UserCheck,
   LogOut,
   School,
@@ -51,6 +52,7 @@ const superadminNavItems: NavItem[] = [
   { label: "ID Templates", href: "/superadmin/id-templates", icon: Palette },
   { label: "Generate ID Cards", href: "/superadmin/id-cards", icon: CreditCard },
   { label: "Reports", href: "/superadmin/reports", icon: BarChart3 },
+  { label: "Chatbot", href: "/superadmin/chatbot", icon: MessageSquare },
   { label: "Settings", href: "/superadmin/settings", icon: FileText },
 ];
 

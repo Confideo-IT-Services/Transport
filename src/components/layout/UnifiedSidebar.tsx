@@ -10,6 +10,7 @@ import {
   Calendar,
   Bell,
   BarChart3,
+  MessageSquare,
   LogOut,
   User,
   IndianRupee,
@@ -128,6 +129,12 @@ const adminNavSections: NavSection[] = [
         label: "Reports", 
         href: "/dashboard/reports", 
         icon: BarChart3,
+        roles: ["admin"]
+      },
+      { 
+        label: "Chatbot", 
+        href: "/dashboard/chatbot", 
+        icon: MessageSquare,
         roles: ["admin"]
       },
     ]

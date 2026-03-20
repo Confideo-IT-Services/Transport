@@ -1683,3 +1683,24 @@ export const visitorRequestsApi = {
   },
 };
 
+// ============ RAG / CHATBOT API ============
+export const ragApi = {
+  ask: async (data: {
+    question: string;
+    conversationSummary?: string | null;
+  }): Promise<{
+    question: string;
+    answer: string;
+    new_conversation_summary?: string;
+    error?: string;
+  }> => {
+    return apiRequest(`/rag/ask`, {
+      method: 'POST',
+      body: JSON.stringify({
+        question: data.question,
+        conversationSummary: data.conversationSummary ?? null,
+      }),
+    });
+  },
+};
+
