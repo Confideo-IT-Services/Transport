@@ -207,6 +207,10 @@ export function TutorChatbot({ title }: { title?: string }) {
 
   const normalizeErrorToUserMessage = (raw: string): string => {
     const s = raw.toLowerCase();
+    // If backend included troubleshooting/path details, show them as-is.
+    if (s.includes("tutor_faiss_index") || s.includes("index.faiss") || s.includes("index_dir")) {
+      return raw;
+    }
     if (s.includes("not configured") || s.includes("index")) {
       return "Tutor syllabus knowledge base is not configured yet. Please try again later.";
     }

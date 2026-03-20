@@ -1,26 +1,28 @@
 """
 Text-to-SQL agent using AWS Bedrock. Uses schema + execute_sql tools with role-based filtering.
 """
+
 import re
+
 from langchain_aws import ChatBedrockConverse
 from langchain_core.agents import AgentAction, AgentFinish
-from langchain_core.tools import tool
 from langchain_core.prompts import PromptTemplate
-from langchain_classic.agents import create_react_agent, AgentExecutor
+from langchain_core.tools import tool
+from langchain_classic.agents import AgentExecutor, create_react_agent
 from langchain_classic.agents.output_parsers.react_single_input import (
-    ReActSingleInputOutputParser,
     FINAL_ANSWER_ACTION,
+    ReActSingleInputOutputParser,
 )
 
 from app.config import AWS_REGION, BEDROCK_MODEL_ID
-from app.database import get_schema, execute_sql
+from app.sql_agent.database import execute_sql, get_schema
 
 
 class ReActSQLOutputParser(ReActSingleInputOutputParser):
-    """Parses ReAct output and also accepts function-call style: execute_sql_tool(query=\"...\")."""
+    """Parses ReAct output and also accepts function-call style: execute_sql_tool(query="...")."""
 
     def parse(self, text: str) -> AgentAction | AgentFinish:
-        # Handle "Action: execute_sql_tool(query=\"...\")" (double-quoted; content may contain ')
+        # Handle "Action: execute_sql_tool(query="...")" (double-quoted; content may contain ')
         m = re.search(
             r"Action\s*\d*\s*:\s*execute_sql_tool\s*\(\s*query\s*=\s*\"((?:[^\"\\]|\\.)*)\"\s*\)",
             text,
@@ -29,6 +31,7 @@ class ReActSQLOutputParser(ReActSingleInputOutputParser):
         if m:
             query = m.group(1).replace('\\"', '"').strip()
             return AgentAction(tool="execute_sql_tool", tool_input=query, log=text)
+
         # Handle "Action: execute_sql_tool(query='...')" (single-quoted)
         m = re.search(
             r"Action\s*\d*\s*:\s*execute_sql_tool\s*\(\s*query\s*=\s*'((?:[^'\\]|\\.)*)'\s*\)",
@@ -38,10 +41,13 @@ class ReActSQLOutputParser(ReActSingleInputOutputParser):
         if m:
             query = m.group(1).replace("\\'", "'").strip()
             return AgentAction(tool="execute_sql_tool", tool_input=query, log=text)
+
         # Handle "Action: get_schema_tool()"
         if re.search(r"Action\s*\d*\s*:\s*get_schema_tool\s*\(\s*\)", text):
             return AgentAction(tool="get_schema_tool", tool_input="", log=text)
+
         return super().parse(text)
+
 
 REACT_PROMPT_TEMPLATE = """You are a helpful assistant that answers questions about a school database by writing and running MySQL SELECT queries.
 
@@ -71,7 +77,6 @@ RULES:
     (updated rolling summary text; keep <= 300 characters)
 
 You have access to the following tools:
-
 {tools}
 
 Use the following format:
@@ -101,11 +106,13 @@ def _make_tools(role: str, school_id: str | int | None):
     @tool
     def get_schema_tool() -> str:
         """Get the database schema (tables and columns). Call this first to understand the database structure."""
+
         return get_schema()
 
     @tool
     def execute_sql_tool(query: str) -> str:
-        """Execute a MySQL SELECT query and return the result. Use only SELECT. For school_admin, use %(school_id)s in your WHERE clause for tables that have school_id."""
+        """Execute a MySQL SELECT query and return the result. Use only SELECT. For school_admin, use %(school_id)s in your WHERE clause."""
+
         return execute_sql(query, params=None, role=role, school_id=school_id)
 
     return [get_schema_tool, execute_sql_tool]
@@ -113,6 +120,7 @@ def _make_tools(role: str, school_id: str | int | None):
 
 def get_bedrock_llm():
     """Create Bedrock chat model (uses AWS credentials from env or IAM)."""
+
     return ChatBedrockConverse(
         model_id=BEDROCK_MODEL_ID,
         region_name=AWS_REGION,
@@ -121,12 +129,17 @@ def get_bedrock_llm():
     )
 
 
-def create_school_agent(role: str = "super_admin", school_id: str | int | None = None, conversation_summary: str | None = None):
+def create_school_agent(
+    role: str = "super_admin",
+    school_id: str | int | None = None,
+    conversation_summary: str | None = None,
+):
     """
     Create the Text-to-SQL agent with role and school_id bound.
     role: "school_admin" | "super_admin"
     school_id: required when role is school_admin; can be UUID string or int.
     """
+
     llm = get_bedrock_llm()
     tools = _make_tools(role=role, school_id=school_id)
     prompt = PromptTemplate.from_template(REACT_PROMPT_TEMPLATE).partial(
@@ -152,12 +165,10 @@ def _parse_answer_and_summary(final_output: str) -> tuple[str, str]:
       - NEW_CONVERSATION_SUMMARY: ...
     from the agent's final output.
     """
+
     text = (final_output or "").strip()
 
     # Be tolerant to marker order and tool-parser artifacts.
-    # Support:
-    # - ANSWER then NEW_CONVERSATION_SUMMARY
-    # - NEW_CONVERSATION_SUMMARY then ANSWER
     answer_match = re.search(
         r"ANSWER:\s*(.*?)(?:\n\s*NEW_CONVERSATION_SUMMARY:|\Z)",
         text,
@@ -178,12 +189,10 @@ def _parse_answer_and_summary(final_output: str) -> tuple[str, str]:
 
     # Enforce <= 300 chars for safety (truncate after cleanup).
     if new_summary:
-        # Remove common junk artifacts that the agent executor injects.
-        new_summary = re.sub(r"\s+\\n\s+", "\n", new_summary).strip().replace('"', '').strip()
+        new_summary = re.sub(r"\s+\\n\s+", "\n", new_summary).strip().replace('"', "").strip()
         new_summary = new_summary[:300]
 
     # Remove literal placeholder artifacts if the model copied them verbatim.
-    # These strings may appear in the prompt text and must never reach the UI.
     def strip_placeholder_artifacts(s: str) -> str:
         if not s:
             return s
@@ -205,7 +214,6 @@ def _parse_answer_and_summary(final_output: str) -> tuple[str, str]:
     if answer:
         return answer, new_summary
 
-    # Fallback: if markers are missing, return best-effort answer = whole output.
     return text, new_summary
 
 
@@ -216,6 +224,7 @@ def run_agent(
     conversation_summary: str | None = None,
 ) -> dict:
     """Run the Text-to-SQL agent and return answer + updated conversation summary."""
+
     executor = create_school_agent(
         role=role,
         school_id=school_id,
@@ -228,3 +237,4 @@ def run_agent(
         "answer": answer if answer else output,
         "new_conversation_summary": new_summary if new_summary else (conversation_summary or ""),
     }
+

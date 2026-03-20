@@ -140,9 +140,20 @@ export default function TutorPDFIngestionPage() {
       }
 
       toast.success("Tutor knowledge base updated successfully!");
+      const chunksIndexed =
+        typeof data?.chunks_indexed === "number" ? data.chunks_indexed : null;
+      const indexDir = typeof data?.index_dir === "string" ? data.index_dir : null;
+
+      const successText =
+        chunksIndexed !== null && indexDir
+          ? chunksIndexed > 0
+            ? `Upload successful. Indexed ${chunksIndexed} chunks for Tutor KB.`
+            : "Upload successful, but 0 chunks were indexed. PDFs may be scanned (no extractable text)."
+          : "Upload successful. Tutor knowledge base updated.";
+
       setUploadMessage({
         type: "success",
-        text: "Upload successful. Tutor knowledge base updated.",
+        text: successText + (indexDir ? ` (Index: ${indexDir})` : ""),
       });
       setPdfFiles([]);
       setResetIndex(false);

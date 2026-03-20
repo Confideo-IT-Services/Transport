@@ -2,7 +2,7 @@ from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from app.agent import run_agent
+from app.sql_agent.agent import run_agent
 from app.tutor.tutor_agent import run_tutor_agent
 from app.tutor.tutor_ingest import ingest_pdfs
 
