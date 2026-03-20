@@ -34,6 +34,7 @@ import MyStudents from "./pages/dashboard/MyStudents";
 import ExitFormalities from "./pages/dashboard/ExitFormalities";
 import AdminVisitorManagement from "./pages/dashboard/VisitorManagement";
 import ParentVisitorManagement from "./pages/parent/VisitorManagement";
+import DashboardChatbot from "./pages/dashboard/Chatbot";
 
 // Super Admin pages
 import SuperAdminDashboard from "./pages/superadmin/SuperAdminDashboard";
@@ -43,6 +44,7 @@ import PlatformSettings from "./pages/superadmin/PlatformSettings";
 import SuperAdminLogin from "./pages/superadmin/SuperAdminLogin";
 import IDCardTemplate from "./pages/superadmin/IDCardTemplate";
 import IDCardGeneration from "./pages/superadmin/IDCardGeneration";
+import SuperAdminChatbot from "./pages/superadmin/Chatbot";
 
 const queryClient = new QueryClient();
 
@@ -77,6 +79,7 @@ const AppContent = () => {
       <Route path="/dashboard/fees" element={<FeesModule />} />
       <Route path="/dashboard/reports" element={<ReportsModule />} />
       <Route path="/dashboard/notifications" element={<NotificationsModule />} />
+      <Route path="/dashboard/chatbot" element={<DashboardChatbot />} />
       <Route path="/dashboard/profile" element={<ProfilePage />} />
       <Route path="/dashboard/teachers" element={<TeacherManagement />} />
       <Route path="/dashboard/homework" element={<HomeworkModule />} />
@@ -92,6 +95,7 @@ const AppContent = () => {
       <Route path="/superadmin/schools" element={<SchoolManagement />} />
       <Route path="/superadmin/reports" element={<PlatformReports />} />
       <Route path="/superadmin/settings" element={<PlatformSettings />} />
+      <Route path="/superadmin/chatbot" element={<SuperAdminChatbot />} />
       <Route path="/superadmin/id-templates" element={<IDCardTemplate />} />
       <Route path="/superadmin/id-cards" element={<IDCardGeneration />} />
       
