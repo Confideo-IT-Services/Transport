@@ -47,6 +47,7 @@ const notificationsRoutes = require('./routes/notifications');
 const whatsappRoutes = require('./routes/whatsapp');
 const parentRoutes = require('./routes/parents');
 const visitorRequestsRoutes = require('./routes/visitorRequests');
+const tutorRoutes = require('./routes/tutor');
 const ragRoutes = require('./routes/rag');
 
 // Use routes
@@ -71,6 +72,7 @@ app.use('/api/notifications', notificationsRoutes);
 app.use('/api/whatsapp', whatsappRoutes);
 app.use('/api/parents', parentRoutes);
 app.use('/api/visitor-requests', visitorRequestsRoutes);
+app.use('/api/tutor', tutorRoutes);
 app.use('/api/rag', ragRoutes);
 
 // Import background jobs (optional)

@@ -28,6 +28,8 @@ CREATE TABLE IF NOT EXISTS schools (
     name VARCHAR(200) NOT NULL,
     code VARCHAR(20) NOT NULL UNIQUE,
     type VARCHAR(50) DEFAULT 'K-12',
+    -- Fixed syllabus board for this school (e.g. state_board, CBSE, ICSE, CAIE, IGCSE, IB, or any free-text)
+    board VARCHAR(200) DEFAULT 'state_board',
     location VARCHAR(100),
     address TEXT,
     phone VARCHAR(20),

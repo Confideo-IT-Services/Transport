@@ -49,6 +49,7 @@ const teacherNavItems: NavItem[] = [
 const superadminNavItems: NavItem[] = [
   { label: "Dashboard", href: "/superadmin", icon: LayoutDashboard },
   { label: "Schools", href: "/superadmin/schools", icon: School },
+  { label: "Tutor PDFs", href: "/superadmin/tutor-ingestion", icon: BookOpen },
   { label: "ID Templates", href: "/superadmin/id-templates", icon: Palette },
   { label: "Generate ID Cards", href: "/superadmin/id-cards", icon: CreditCard },
   { label: "Reports", href: "/superadmin/reports", icon: BarChart3 },

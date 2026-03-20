@@ -35,6 +35,7 @@ import ExitFormalities from "./pages/dashboard/ExitFormalities";
 import AdminVisitorManagement from "./pages/dashboard/VisitorManagement";
 import ParentVisitorManagement from "./pages/parent/VisitorManagement";
 import DashboardChatbot from "./pages/dashboard/Chatbot";
+import TeacherTutorPage from "./pages/dashboard/Tutor";
 
 // Super Admin pages
 import SuperAdminDashboard from "./pages/superadmin/SuperAdminDashboard";
@@ -45,6 +46,8 @@ import SuperAdminLogin from "./pages/superadmin/SuperAdminLogin";
 import IDCardTemplate from "./pages/superadmin/IDCardTemplate";
 import IDCardGeneration from "./pages/superadmin/IDCardGeneration";
 import SuperAdminChatbot from "./pages/superadmin/Chatbot";
+import TutorPDFIngestionPage from "./pages/superadmin/TutorPDFIngestion";
+import ParentTutorPage from "./pages/parent/Tutor";
 
 const queryClient = new QueryClient();
 
@@ -70,6 +73,7 @@ const AppContent = () => {
       <Route path="/parent/dashboard" element={<ParentDashboard />} />
       <Route path="/parent/dashboard/:section" element={<ParentDashboard />} />
       <Route path="/parent/dashboard/visitor-management" element={<ParentVisitorManagement />} />
+      <Route path="/parent/dashboard/tutor" element={<ParentTutorPage />} />
       
       {/* Unified Dashboard Routes (School Admin & Teacher) */}
       <Route path="/dashboard" element={<UnifiedDashboard />} />
@@ -80,6 +84,7 @@ const AppContent = () => {
       <Route path="/dashboard/reports" element={<ReportsModule />} />
       <Route path="/dashboard/notifications" element={<NotificationsModule />} />
       <Route path="/dashboard/chatbot" element={<DashboardChatbot />} />
+      <Route path="/dashboard/tutor" element={<TeacherTutorPage />} />
       <Route path="/dashboard/profile" element={<ProfilePage />} />
       <Route path="/dashboard/teachers" element={<TeacherManagement />} />
       <Route path="/dashboard/homework" element={<HomeworkModule />} />
@@ -96,6 +101,7 @@ const AppContent = () => {
       <Route path="/superadmin/reports" element={<PlatformReports />} />
       <Route path="/superadmin/settings" element={<PlatformSettings />} />
       <Route path="/superadmin/chatbot" element={<SuperAdminChatbot />} />
+      <Route path="/superadmin/tutor-ingestion" element={<TutorPDFIngestionPage />} />
       <Route path="/superadmin/id-templates" element={<IDCardTemplate />} />
       <Route path="/superadmin/id-cards" element={<IDCardGeneration />} />
       

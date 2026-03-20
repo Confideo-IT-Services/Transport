@@ -65,6 +65,9 @@ export default function SchoolManagement() {
   const [schoolPhone, setSchoolPhone] = useState("");
   const [schoolEmail, setSchoolEmail] = useState("");
   const [schoolAddress, setSchoolAddress] = useState("");
+  // Fixed per-school syllabus board (for Tutor agent KB filtering later)
+  const [boardChoice, setBoardChoice] = useState<string>("state_board");
+  const [boardOtherText, setBoardOtherText] = useState<string>("");
   const [adminName, setAdminName] = useState("");
   const [adminEmail, setAdminEmail] = useState("");
   const [adminPassword, setAdminPassword] = useState("");
@@ -77,6 +80,10 @@ export default function SchoolManagement() {
   const [schoolAdmins, setSchoolAdmins] = useState<any[]>([]);
   const [selectedAdminId, setSelectedAdminId] = useState("");
   const [newAdminPassword, setNewAdminPassword] = useState("");
+
+  // Edit/Manage states: board fields for edit dialog
+  const [editBoardChoice, setEditBoardChoice] = useState<string>("state_board");
+  const [editBoardOtherText, setEditBoardOtherText] = useState<string>("");
 
   // Load schools on mount
   useEffect(() => {
@@ -114,6 +121,13 @@ export default function SchoolManagement() {
     setIsSubmitting(true);
 
     try {
+      const normalizedBoard =
+        boardChoice === "OTHER" ? boardOtherText : boardChoice;
+      if (boardChoice === "OTHER" && !boardOtherText.trim()) {
+        toast.error("Please enter the board name in the Others textbox.");
+        return;
+      }
+
       await schoolsApi.create({
         name: schoolName,
         type: schoolType,
@@ -121,6 +135,7 @@ export default function SchoolManagement() {
         address: schoolAddress,
         phone: schoolPhone,
         email: schoolEmail,
+        board: normalizedBoard,
         adminName,
         adminEmail,
         adminPassword,
@@ -136,6 +151,7 @@ export default function SchoolManagement() {
         name: schoolName,
         code: `SCH${String(schools.length + 1).padStart(3, '0')}`,
         type: schoolType,
+        board: boardChoice === "OTHER" ? boardOtherText : boardChoice,
         location: schoolLocation,
         phone: schoolPhone,
         email: schoolEmail,
@@ -157,6 +173,8 @@ export default function SchoolManagement() {
       setSchoolPhone("");
       setSchoolEmail("");
       setSchoolAddress("");
+      setBoardChoice("state_board");
+      setBoardOtherText("");
       setAdminName("");
       setAdminEmail("");
       setAdminPassword("");
@@ -190,6 +208,18 @@ export default function SchoolManagement() {
     setSchoolPhone(school.phone || "");
     setSchoolEmail(school.email);
     setSchoolAddress(school.address || "");
+
+    const fixedBoards = ["state_board", "CBSE", "ICSE", "CAIE", "IGCSE", "IB"];
+    if (school.board && fixedBoards.includes(school.board)) {
+      setEditBoardChoice(school.board);
+      setEditBoardOtherText("");
+    } else if (school.board && school.board.trim()) {
+      setEditBoardChoice("OTHER");
+      setEditBoardOtherText(school.board);
+    } else {
+      setEditBoardChoice("state_board");
+      setEditBoardOtherText("");
+    }
     
     // Load admins for this school
     try {
@@ -215,6 +245,13 @@ export default function SchoolManagement() {
 
     setIsSubmitting(true);
     try {
+      const normalizedBoard =
+        editBoardChoice === "OTHER" ? editBoardOtherText : editBoardChoice;
+      if (editBoardChoice === "OTHER" && !normalizedBoard?.trim()) {
+        toast.error("Please enter the board name in the Others textbox.");
+        return;
+      }
+
       // Update school details
       await schoolsApi.update(editingSchool.id, {
         name: schoolName,
@@ -223,6 +260,7 @@ export default function SchoolManagement() {
         address: schoolAddress,
         phone: schoolPhone,
         email: schoolEmail,
+        board: normalizedBoard,
       });
 
       // If password is provided, reset it
@@ -255,6 +293,8 @@ export default function SchoolManagement() {
       setSchoolAddress("");
       setNewAdminPassword("");
       setSelectedAdminId("");
+      setEditBoardChoice("state_board");
+      setEditBoardOtherText("");
     }
   };
 
@@ -356,6 +396,35 @@ export default function SchoolManagement() {
                       </Select>
                     </div>
                   </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="schoolBoard">Board *</Label>
+                    <Select value={boardChoice} onValueChange={setBoardChoice} required>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select board" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="state_board">State</SelectItem>
+                        <SelectItem value="CBSE">CBSE</SelectItem>
+                        <SelectItem value="ICSE">ICSE</SelectItem>
+                        <SelectItem value="CAIE">CAIE</SelectItem>
+                        <SelectItem value="IGCSE">IGCSE</SelectItem>
+                        <SelectItem value="IB">IB</SelectItem>
+                        <SelectItem value="OTHER">Others</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {boardChoice === "OTHER" && (
+                    <div className="space-y-2">
+                      <Label htmlFor="schoolBoardOther">Others (free text) *</Label>
+                      <Input
+                        id="schoolBoardOther"
+                        placeholder="Enter board name exactly as provided in syllabus"
+                        value={boardOtherText}
+                        onChange={(e) => setBoardOtherText(e.target.value)}
+                        required
+                      />
+                    </div>
+                  )}
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="schoolPhone">Phone Number</Label>
@@ -765,6 +834,35 @@ export default function SchoolManagement() {
                     </Select>
                   </div>
                 </div>
+                <div className="space-y-2">
+                  <Label htmlFor="editSchoolBoard">Board *</Label>
+                  <Select value={editBoardChoice} onValueChange={setEditBoardChoice} required>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select board" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="state_board">State</SelectItem>
+                      <SelectItem value="CBSE">CBSE</SelectItem>
+                      <SelectItem value="ICSE">ICSE</SelectItem>
+                      <SelectItem value="CAIE">CAIE</SelectItem>
+                      <SelectItem value="IGCSE">IGCSE</SelectItem>
+                      <SelectItem value="IB">IB</SelectItem>
+                      <SelectItem value="OTHER">Others</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {editBoardChoice === "OTHER" && (
+                  <div className="space-y-2">
+                    <Label htmlFor="editSchoolBoardOther">Others (free text) *</Label>
+                    <Input
+                      id="editSchoolBoardOther"
+                      placeholder="Enter board name exactly as provided in syllabus"
+                      value={editBoardOtherText}
+                      onChange={(e) => setEditBoardOtherText(e.target.value)}
+                      required
+                    />
+                  </div>
+                )}
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="editSchoolPhone">Phone Number</Label>

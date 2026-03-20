@@ -31,6 +31,7 @@ export interface School {
   name: string;
   code: string;
   type: string;
+  board?: string;
   location: string;
   address?: string;
   phone: string;
@@ -241,6 +242,7 @@ export const schoolsApi = {
   create: async (data: {
     name: string;
     type: string;
+    board: string;
     location: string;
     address?: string;
     phone?: string;
@@ -1698,6 +1700,32 @@ export const ragApi = {
       method: 'POST',
       body: JSON.stringify({
         question: data.question,
+        conversationSummary: data.conversationSummary ?? null,
+      }),
+    });
+  },
+};
+
+// ============ TUTOR / CHATBOT API ============
+export const tutorApi = {
+  ask: async (data: {
+    question: string;
+    classLevel: number | string;
+    subject: string;
+    topic?: string;
+    conversationSummary?: string | null;
+  }): Promise<{
+    answer: string;
+    new_conversation_summary?: string;
+    error?: string;
+  }> => {
+    return apiRequest(`/tutor/ask`, {
+      method: 'POST',
+      body: JSON.stringify({
+        question: data.question,
+        classLevel: data.classLevel,
+        subject: data.subject,
+        topic: data.topic ?? "",
         conversationSummary: data.conversationSummary ?? null,
       }),
     });
