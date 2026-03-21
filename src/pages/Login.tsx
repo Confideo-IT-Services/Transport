@@ -8,17 +8,26 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
+function homePathForRole(role: string | undefined): string {
+  if (role === "superadmin") return "/superadmin";
+  if (role === "parent") return "/parent/dashboard";
+  if (role === "admin" || role === "teacher") return "/dashboard";
+  return "/login";
+}
+
 export default function Login() {
   const navigate = useNavigate();
-  const { login, isAuthenticated, isLoading: authLoading } = useAuth();
+  const { login, user, isAuthenticated, isLoading: authLoading } = useAuth();
   const { toast } = useToast();
   
-  // Redirect if already authenticated
+  // Redirect if already authenticated (school admin / teacher only on this page)
   useEffect(() => {
-    if (!authLoading && isAuthenticated) {
-      navigate("/dashboard", { replace: true });
+    if (authLoading || !isAuthenticated || !user) return;
+    const path = homePathForRole(user.role);
+    if (path !== "/login") {
+      navigate(path, { replace: true });
     }
-  }, [isAuthenticated, authLoading, navigate]);
+  }, [isAuthenticated, authLoading, navigate, user]);
   const [showPassword, setShowPassword] = useState(false);
   const [email, setEmail] = useState("");
   const [username, setUsername] = useState("");
@@ -41,7 +50,8 @@ export default function Login() {
         title: "Welcome back!",
         description: "You have successfully logged in.",
       });
-      navigate("/dashboard");
+      // This page is only for school admin / teacher; always land on school dashboard.
+      navigate("/dashboard", { replace: true });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
       toast({

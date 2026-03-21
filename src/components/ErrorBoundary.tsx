@@ -23,7 +23,7 @@ function ErrorFallbackContent({
   onReset: () => void;
 }) {
   const handleGoHome = () => {
-    window.location.href = '/dashboard';
+    window.location.href = '/';
   };
 
   return (
