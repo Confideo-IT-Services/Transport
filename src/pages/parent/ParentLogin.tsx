@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { GraduationCap, Phone } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -9,11 +9,22 @@ import { useToast } from "@/hooks/use-toast";
 
 export default function ParentLogin() {
   const navigate = useNavigate();
-  const { login } = useAuth();
+  const { login, user, isAuthenticated, isLoading: authLoading } = useAuth();
   const { toast } = useToast();
   
   const [phone, setPhone] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    if (authLoading || !isAuthenticated || !user) return;
+    if (user.role === "parent") {
+      navigate("/parent/dashboard", { replace: true });
+    } else if (user.role === "superadmin") {
+      navigate("/superadmin", { replace: true });
+    } else if (user.role === "admin" || user.role === "teacher") {
+      navigate("/dashboard", { replace: true });
+    }
+  }, [authLoading, isAuthenticated, user, navigate]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -46,6 +57,17 @@ export default function ParentLogin() {
       setIsLoading(false);
     }
   };
+
+  if (authLoading || (isAuthenticated && user?.role === "parent")) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4" />
+          <p className="text-muted-foreground text-sm">Loading…</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">

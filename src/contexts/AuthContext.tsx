@@ -111,17 +111,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(null);
       removeToken();
       localStorage.removeItem("conventpulse_user");
-      
-      // Navigate to appropriate login page
+
+      const currentPath = window.location.pathname;
+      const target =
+        currentPath.startsWith("/parent")
+          ? "/parent/login"
+          : currentPath.startsWith("/superadmin")
+            ? "/superadmin/login"
+            : "/login";
+
       if (navigateRef.current) {
-        const currentPath = window.location.pathname;
-        if (currentPath.startsWith('/parent')) {
-          navigateRef.current('/parent/login');
-        } else if (currentPath.startsWith('/superadmin')) {
-          navigateRef.current('/superadmin/login');
-        } else {
-          navigateRef.current('/login');
-        }
+        navigateRef.current(target);
+      } else {
+        window.location.assign(target);
       }
     };
 
@@ -280,13 +282,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     navigateRef.current = navigateFn;
   };
 
+  const isAuthenticated =
+    !!user &&
+    !!user.role &&
+    (user.role === "superadmin" ||
+      user.role === "admin" ||
+      user.role === "teacher" ||
+      user.role === "parent");
+
   return (
     <AuthContext.Provider value={{ 
       user, 
       isLoading, 
       login, 
       logout, 
-      isAuthenticated: !!user, 
+      isAuthenticated, 
       setUser,
       setNavigate
     }}>

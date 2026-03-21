@@ -1,5 +1,5 @@
 import { ReactNode } from "react";
-import { Navigate } from "react-router-dom";
+import { Navigate, useLocation } from "react-router-dom";
 import { UnifiedSidebar } from "./UnifiedSidebar";
 import { UnifiedHeader } from "./UnifiedHeader";
 import { useAuth } from "@/contexts/AuthContext";
@@ -11,6 +11,7 @@ interface UnifiedLayoutProps {
 
 export function UnifiedLayout({ children, role }: UnifiedLayoutProps) {
   const { isAuthenticated, isLoading, user } = useAuth();
+  const location = useLocation();
 
   // Wait for authentication check to complete before redirecting
   if (isLoading) {
@@ -28,6 +29,15 @@ export function UnifiedLayout({ children, role }: UnifiedLayoutProps) {
     // Redirect to appropriate login page based on role
     const loginPath = role === "parent" ? "/parent/login" : "/login";
     return <Navigate to={loginPath} replace />;
+  }
+
+  // Superadmin must never use school/parent shell (even if a child passes role="teacher")
+  if (user?.role === "superadmin") {
+    return <Navigate to="/superadmin" replace />;
+  }
+  // Parent belongs under /parent/* only
+  if (user?.role === "parent" && !location.pathname.startsWith("/parent")) {
+    return <Navigate to="/parent/dashboard" replace />;
   }
 
   // Verify user role matches expected role
