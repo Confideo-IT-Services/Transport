@@ -43,8 +43,8 @@ INSTRUCTIONS:
 3. If you cannot find enough information in the excerpts, ask a brief clarifying question instead of guessing.
 4. Keep language simple and student-friendly.
 5. Formatting: Do NOT use LaTeX wrappers like `\\[ ... \\]` or `\\( ... \\)`.
-   Do NOT use LaTeX commands like `\\text{...}`, `\\mathrm{...}`, `\\frac{...}{...}`, `\\sqrt{...}`, or trigonometric wrappers like `\\sin`, `\\cos`, `\\tan`, etc.
-   For equations/reactions, use plain text like: `A + B -> C` and use subscripts in plain form (e.g., `C_nH_{2n}O`).
+   Do NOT use LaTeX commands like `\\text{{...}}`, `\\mathrm{{...}}`, `\\frac{{...}}{{...}}`, `\\sqrt{{...}}`, or trigonometric wrappers like `\\sin`, `\\cos`, `\\tan`, etc.
+   For equations/reactions, use plain text like: `A + B -> C` and use subscripts in plain form (e.g., `C_nH_{{2n}}O`).
 
 OUTPUT FORMAT (must match exactly):
 ANSWER:

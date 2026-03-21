@@ -211,7 +211,14 @@ export function TutorChatbot({ title }: { title?: string }) {
     if (s.includes("tutor_faiss_index") || s.includes("index.faiss") || s.includes("index_dir")) {
       return raw;
     }
-    if (s.includes("not configured") || s.includes("index")) {
+    // Do NOT match the substring "index" alone — Python errors like "list index out of range"
+    // were incorrectly mapped to "KB not configured". Only match explicit tutor/KB phrases.
+    if (
+      s.includes("knowledge base is not configured") ||
+      s.includes("tutor knowledge base") ||
+      s.includes("upload syllabus pdf") ||
+      s.includes("syllabus knowledge base")
+    ) {
       return "Tutor syllabus knowledge base is not configured yet. Please try again later.";
     }
     if (s.includes("iteration limit") || s.includes("time limit") || s.includes("invalid format")) {
@@ -262,7 +269,10 @@ export function TutorChatbot({ title }: { title?: string }) {
         conversationSummary: conversationSummary || null,
       });
 
-      if (resp.error) throw new Error(resp.error);
+      // FastAPI may return HTTP 200 with both `answer` (user-facing) and `error` (debug).
+      // Prefer showing `answer`; only throw when there is no usable answer.
+      const hasAnswer = !!(resp.answer || "").trim();
+      if (resp.error && !hasAnswer) throw new Error(resp.error);
 
       const answer = normalizeAnswerToUserMessage(resp.answer || "");
       const newSummary = resp.new_conversation_summary ?? conversationSummary ?? "";

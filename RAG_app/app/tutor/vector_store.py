@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from pathlib import Path
 
 from langchain_community.vectorstores import FAISS
+
+logger = logging.getLogger(__name__)
 from langchain_huggingface import HuggingFaceEmbeddings
 
 from app.config import AWS_REGION, BEDROCK_MODEL_ID
@@ -29,14 +32,20 @@ def load_tutor_vector_db(school_id: str | int) -> FAISS | None:
       - subject
       - topic (optional; depends on how you ingest PDFs)
     """
+    path = get_school_index_path(school_id)
     try:
         embedding_model = get_embedding_model()
         return FAISS.load_local(
-            str(get_school_index_path(school_id)),
+            str(path),
             embedding_model,
             allow_dangerous_deserialization=True,
         )
     except Exception:
+        logger.exception(
+            "Failed to load Tutor FAISS index for school_id=%s at %s",
+            school_id,
+            path,
+        )
         return None
 
 

@@ -1,8 +1,12 @@
+import logging
+
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from app.sql_agent.agent import run_agent
+
+logger = logging.getLogger(__name__)
 from app.tutor.tutor_agent import run_tutor_agent
 from app.tutor.tutor_ingest import ingest_pdfs
 
@@ -103,6 +107,7 @@ def tutor_ask(data: TutorAskRequest):
         )
         return result
     except Exception as e:
+        logger.exception("tutor_ask failed: %s", e)
         return {
             "answer": "Unable to process the tutor request right now. Please try again.",
             "new_conversation_summary": data.conversation_summary or "",
