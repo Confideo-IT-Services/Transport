@@ -239,6 +239,17 @@ const teacherNavSections: NavSection[] = [
       },
     ]
   },
+  {
+    title: "Learning",
+    items: [
+      {
+        label: "Tutor",
+        href: "/dashboard/tutor",
+        icon: MessageSquare,
+        roles: ["teacher"],
+      },
+    ],
+  },
 ];
 
 // Parent sections (flat structure)
@@ -283,6 +294,12 @@ const parentNavItems: NavItem[] = [
     label: "Notifications", 
     href: "/parent/dashboard/notifications", 
     icon: Bell,
+    roles: ["parent"]
+  },
+  { 
+    label: "Tutor", 
+    href: "/parent/dashboard/tutor", 
+    icon: MessageSquare,
     roles: ["parent"]
   },
 ];

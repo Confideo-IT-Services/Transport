@@ -33,6 +33,7 @@ router.get('/', authenticateToken, requireSuperAdmin, async (req, res) => {
       name: school.name,
       code: school.code,
       type: school.type,
+      board: school.board,
       location: school.location,
       address: school.address,
       phone: school.phone,
@@ -74,6 +75,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
       name: school.name,
       code: school.code,
       type: school.type,
+      board: school.board,
       location: school.location,
       address: school.address,
       phone: school.phone,
@@ -122,7 +124,7 @@ router.post('/', authenticateToken, requireSuperAdmin, async (req, res) => {
   try {
     await connection.beginTransaction();
     
-    const { name, type, location, address, phone, email, adminName, adminEmail, adminPassword } = req.body;
+    const { name, type, location, address, phone, email, board, adminName, adminEmail, adminPassword } = req.body;
 
     if (!name || !email || !adminEmail || !adminPassword) {
       await connection.rollback();
@@ -164,10 +166,12 @@ router.post('/', authenticateToken, requireSuperAdmin, async (req, res) => {
 
     // Create school
     const schoolId = uuidv4();
+    const schoolBoard =
+      typeof board === 'string' && board.trim() ? board : 'state_board';
     const [schoolResult] = await connection.query(
-      `INSERT INTO schools (id, name, code, type, location, address, phone, email, status, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', NOW())`,
-      [schoolId, name, schoolCode, type || 'K-12', location || '', address || '', phone || '', email]
+      `INSERT INTO schools (id, name, code, type, board, location, address, phone, email, status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NOW())`,
+      [schoolId, name, schoolCode, type || 'K-12', schoolBoard, location || '', address || '', phone || '', email]
     );
 
     console.log('✅ School created:', { schoolId, name, code: schoolCode });
@@ -273,7 +277,7 @@ router.put('/my-school', authenticateToken, async (req, res) => {
 router.put('/:id', authenticateToken, requireSuperAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, type, location, address, phone, email, status } = req.body;
+    const { name, type, location, address, phone, email, status, board } = req.body;
 
     const updates = [];
     const values = [];
@@ -285,6 +289,11 @@ router.put('/:id', authenticateToken, requireSuperAdmin, async (req, res) => {
     if (phone) { updates.push('phone = ?'); values.push(phone); }
     if (email) { updates.push('email = ?'); values.push(email); }
     if (status) { updates.push('status = ?'); values.push(status); }
+    if (board !== undefined) {
+      // Allow updating board for super admin only
+      updates.push('board = ?');
+      values.push(board);
+    }
 
     if (updates.length === 0) {
       return res.status(400).json({ error: 'No fields to update' });

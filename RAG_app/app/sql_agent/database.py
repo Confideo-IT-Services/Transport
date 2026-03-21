@@ -1,17 +1,41 @@
 import re
+
 import pymysql
-from app.config import DB_HOST, DB_USER, DB_PASSWORD, DB_NAME
+
+from app.config import DB_HOST, DB_NAME, DB_PASSWORD, DB_USER
 
 # Tables that are scoped by school_id (used for school_admin filtering).
 # Tables without school_id are either global (e.g. academic_years, subjects) or linked via FKs.
-SCHOOL_SCOPED_TABLES = frozenset({
-    "schools", "students", "teachers", "classes", "attendance", "student_enrollments",
-    "student_fees", "fee_payments", "fee_structure", "homework", "homework_submissions",
-    "tests", "test_results", "test_subjects", "timetable_entries", "time_slots",
-    "notifications", "notification_classes", "notification_recipients", "teacher_attendance",
-    "teacher_leaves", "visitor_requests", "whatsapp_messages", "users", "registration_links",
-    "id_card_templates",
-})
+SCHOOL_SCOPED_TABLES = frozenset(
+    {
+        "schools",
+        "students",
+        "teachers",
+        "classes",
+        "attendance",
+        "student_enrollments",
+        "student_fees",
+        "fee_payments",
+        "fee_structure",
+        "homework",
+        "homework_submissions",
+        "tests",
+        "test_results",
+        "test_subjects",
+        "timetable_entries",
+        "time_slots",
+        "notifications",
+        "notification_classes",
+        "notification_recipients",
+        "teacher_attendance",
+        "teacher_leaves",
+        "visitor_requests",
+        "whatsapp_messages",
+        "users",
+        "registration_links",
+        "id_card_templates",
+    }
+)
 
 
 def get_connection():
@@ -28,6 +52,7 @@ def get_connection():
 
 def get_schema() -> str:
     """Build a schema description from INFORMATION_SCHEMA for the LLM."""
+
     conn = get_connection()
     try:
         cursor = conn.cursor()
@@ -43,18 +68,15 @@ def get_schema() -> str:
         rows = cursor.fetchall()
         by_table = {}
         for table_name, column_name, data_type, is_nullable, column_key in rows:
-            by_table.setdefault(table_name, []).append({
-                "name": column_name,
-                "type": data_type,
-                "nullable": is_nullable,
-                "key": column_key or "",
-            })
+            by_table.setdefault(table_name, []).append(
+                {"name": column_name, "type": data_type, "nullable": is_nullable, "key": column_key or ""}
+            )
+
         lines = []
         for table in sorted(by_table.keys()):
             cols = by_table[table]
             col_desc = ", ".join(
-                f"{c['name']} ({c['type']})" + (" PK" if c["key"] == "PRI" else "")
-                for c in cols
+                f"{c['name']} ({c['type']})" + (" PK" if c["key"] == "PRI" else "") for c in cols
             )
             has_school = any(c["name"] == "school_id" for c in cols)
             scope = " [SCOPE BY school_id]" if has_school else ""
@@ -66,23 +88,33 @@ def get_schema() -> str:
 
 def _sanitize_sql_input(raw: str) -> str:
     """Strip outer double-quote wrapper and parser artifacts. Never strip single quotes (SQL literals)."""
+
     if not raw or not isinstance(raw, str):
         return ""
     s = raw.strip()
-    # Strip Markdown code fences (the model sometimes returns ```sql ... ```)
-    # Be robust: remove fence markers even if they appear mid-string.
+
+    # Strip Markdown code fences (the model sometimes returns ```sql ... ```).
     s = re.sub(r"(?im)^\s*```[a-z0-9_-]*\s*$", "", s).strip()
     s = s.replace("```sql", "").replace("```SQL", "").replace("```", "").strip()
-    # Remove trailing parser text (ReAct captures "Action Input: "..."Observation" so we can get '"Observation' at end)
+
+    # Remove trailing parser text (ReAct captures "Action Input: "..."Observation"...).
     for marker in (
-        "\nObservation", "\nobservation", "\nIt seems", "\nObservation:",
-        '"Observation', '"observation', "'Observation", "'observation",
+        "\nObservation",
+        "\nobservation",
+        "\nIt seems",
+        "\nObservation:",
+        '"Observation',
+        '"observation',
+        "'Observation",
+        "'observation",
     ):
         idx = s.find(marker)
         if idx != -1:
             s = s[:idx]
+
     s = s.strip()
-    # Strip outer wrapper: \"...\" or "..." (escaped or plain double quotes only at edges)
+
+    # Strip outer wrapper: \"...\" or "..." (escaped or plain double quotes only at edges).
     while s:
         changed = False
         if s.startswith('\\"') and (s.endswith('"') or s.endswith('\\"')):
@@ -96,11 +128,13 @@ def _sanitize_sql_input(raw: str) -> str:
             changed = True
         if not changed:
             break
-    # One more pass: stray double-quote at end (e.g. ...'CittaAI'" from parser)
+
+    # One more pass: stray double-quote at end (e.g. ...'CittaAI'" from parser).
     if s.endswith('"'):
         s = s[:-1].strip()
     if s.startswith('"'):
         s = s[1:].strip()
+
     return s.strip()
 
 
@@ -111,30 +145,33 @@ def execute_sql(
     school_id: str | int | None = None,
 ) -> str:
     """
-    Run a read-only SELECT query. For school_admin, params should include school_id
-    (UUID string or int) so the query can filter by it (use %(school_id)s in the query).
+    Run a read-only SELECT query.
+    For school_admin, params should include school_id (UUID string or int) so the query can filter by it.
     """
+
     query = _sanitize_sql_input(query)
     query = query.rstrip(";").strip()
     if not query.upper().startswith("SELECT"):
         return "Error: Only SELECT queries are allowed."
     if re.search(r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE)\b", query, re.I):
         return "Error: Only SELECT queries are allowed."
+
     if role == "school_admin":
         if school_id is None:
             return "Error: school_id is required for role=school_admin."
-        # Enforce scoping at the API layer: school_admin queries must be parameterized.
-        # This prevents asking for another school's data by hardcoding a different school_id literal.
+
+        # Enforce scoping at the API layer:
         if "%(school_id)s" not in query:
             return "Error: school_admin queries must include the %(school_id)s parameter for scoping."
-        # Disallow any school_id comparison to a literal value. Allow only %(school_id)s.
         if re.search(r"\bschool_id\s*=\s*['\"]", query, re.I):
             return "Error: Do not hardcode school_id. Use %(school_id)s."
         if re.search(r"\bschool_id\s+IN\s*\(", query, re.I) and "%(school_id)s" not in query:
             return "Error: Do not use school_id IN (...) for school_admin. Use school_id = %(school_id)s."
+
     params = dict(params or {})
     if role == "school_admin" and school_id is not None:
         params["school_id"] = school_id
+
     conn = get_connection()
     try:
         cursor = conn.cursor(pymysql.cursors.DictCursor)
@@ -154,6 +191,7 @@ def execute_sql(
 
 def fetch_table_data():
     """Fetch all table rows as text chunks (for FAISS vector store)."""
+
     connection = get_connection()
     try:
         cursor = connection.cursor()
@@ -169,3 +207,4 @@ def fetch_table_data():
         return documents
     finally:
         connection.close()
+

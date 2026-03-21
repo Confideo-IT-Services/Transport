@@ -62,9 +62,10 @@ Desktop.ini
 .pm2
 
 # RAG_app
-RAG_app/
 RAG_app/data/
 RAG_app/data/faiss_index/
+__pycache__/
+**/__pycache__/
 
 RAG_app/__pycache__/
 RAG_app/app/__pycache__/

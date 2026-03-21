@@ -1,8 +1,14 @@
-from fastapi import FastAPI
+import logging
+
+from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from app.agent import run_agent
+from app.sql_agent.agent import run_agent
+
+logger = logging.getLogger(__name__)
+from app.tutor.tutor_agent import run_tutor_agent
+from app.tutor.tutor_ingest import ingest_pdfs
 
 app = FastAPI(title="School RAG API", description="Text-to-SQL over school DB with role-based access")
 
@@ -70,6 +76,78 @@ def ask_question(data: AskRequest):
             "answer": "An error occurred while processing your question.",
             "error": str(e),
         }
+
+
+class TutorAskRequest(BaseModel):
+    question: str
+    school_id: str
+    board: str
+    class_level: str | int
+    subject: str
+    topic: str = ""
+    conversation_summary: str | None = None
+
+
+@app.post("/tutor/ask")
+def tutor_ask(data: TutorAskRequest):
+    """
+    Tutor Q&A over PDF syllabus (no SQL tools). Returns:
+      - answer: final tutor response
+      - new_conversation_summary: updated rolling summary
+    """
+    try:
+        result = run_tutor_agent(
+            school_id=data.school_id,
+            question=data.question,
+            class_level=data.class_level,
+            subject=data.subject,
+            topic=data.topic,
+            board=data.board,
+            conversation_summary=data.conversation_summary,
+        )
+        return result
+    except Exception as e:
+        logger.exception("tutor_ask failed: %s", e)
+        return {
+            "answer": "Unable to process the tutor request right now. Please try again.",
+            "new_conversation_summary": data.conversation_summary or "",
+            "error": str(e),
+        }
+
+
+@app.post("/tutor/ingest")
+async def tutor_ingest(
+    school_id: str = Form(...),
+    board: str = Form(...),
+    class_level: str = Form(...),
+    subject: str = Form(...),
+    topic: str = Form(""),
+    reset_index: str = Form("false"),
+    pdf_files: list[UploadFile] = File(...),
+):
+    """
+    Build/update a Tutor FAISS knowledge base for a given school.
+    Expects multipart/form-data:
+      - pdf_files: list of PDFs
+      - school_id, board, class_level, subject, topic
+      - reset_index: "true"/"false" (optional)
+    """
+    reset_enabled = str(reset_index).lower() in ("1", "true", "yes", "y")
+    pdf_tuples = []
+    for f in pdf_files:
+        content = await f.read()
+        pdf_tuples.append((f.filename or "upload.pdf", content))
+
+    result = ingest_pdfs(
+        school_id=school_id,
+        board=board,
+        class_level=str(class_level),
+        subject=subject,
+        topic=topic,
+        pdf_file_tuples=pdf_tuples,
+        reset_index=reset_enabled,
+    )
+    return result
 
 
 
