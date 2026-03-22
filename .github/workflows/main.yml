@@ -1,36 +1,39 @@
 name: Deploy to AWS ECS
 
 on:
- workflow_dispatch:
+  workflow_dispatch:
     inputs:
       branch:
-        description: 'Select branch to deploy'
+        description: "Select branch to deploy"
         required: true
-        default: 'main'
+        default: "main"
         type: choice
         options:
           - main
           - UAT
       environment:
-        description: "Select environment"
+        description: "Select environment (informational)"
         required: true
         type: choice
         options:
           - main UAT
-          
+      deploy_target:
+        description: "What to build and deploy"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all
+          - backend
+          - frontend
+          - rag
 
-#env:
-  #AWS_REGION: ap-south-1
-  #ECR_REGISTRY: 237343249019.dkr.ecr.ap-south-1.amazonaws.com
-  #ECS_CLUSTER: Conventpulse
-  #FRONTEND_ECR_REPO: allpulse/frontend
-  #BACKEND_ECR_REPO: allpulse/backend
-  #FRONTEND_SERVICE: allpulse-frontend-service
-  #BACKEND_SERVICE: allpulse-backend-service
-  #BACKEND_TASK_DEFINITION: allpulse-backend
-  #FRONTEND_TASK_DEFINITION: allpulse-frontend
-  #BACKEND_CONTAINER_NAME: backend
-  #FRONTEND_CONTAINER_NAME: frontend
+# Repository secrets (Settings → Secrets and variables → Actions):
+#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION
+#   ECR_REGISTRY, ECS_CLUSTER
+#   BACKEND_ECR_REPO, BACKEND_SERVICE, BACKEND_TASK_DEFINITION, BACKEND_CONTAINER_NAME
+#   FRONTEND_ECR_REPO, FRONTEND_SERVICE, FRONTEND_TASK_DEFINITION, FRONTEND_CONTAINER_NAME
+#   RAG_ECR_REPO, RAG_SERVICE, RAG_TASK_DEFINITION, RAG_CONTAINER_NAME
 
 jobs:
   deploy:
@@ -53,6 +56,7 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build and push Backend
+        if: github.event.inputs.deploy_target == 'all' || github.event.inputs.deploy_target == 'backend'
         run: |
           cd backend
           docker build -t ${{ secrets.ECR_REGISTRY }}/${{ secrets.BACKEND_ECR_REPO }}:${{ github.sha }} .
@@ -61,22 +65,34 @@ jobs:
           docker push ${{ secrets.ECR_REGISTRY }}/${{ secrets.BACKEND_ECR_REPO }}:latest
 
       - name: Build and push Frontend
+        if: github.event.inputs.deploy_target == 'all' || github.event.inputs.deploy_target == 'frontend'
         run: |
           docker build --no-cache -t ${{ secrets.ECR_REGISTRY }}/${{ secrets.FRONTEND_ECR_REPO }}:${{ github.sha }} .
           docker tag ${{ secrets.ECR_REGISTRY }}/${{ secrets.FRONTEND_ECR_REPO }}:${{ github.sha }} ${{ secrets.ECR_REGISTRY }}/${{ secrets.FRONTEND_ECR_REPO }}:latest
           docker push ${{ secrets.ECR_REGISTRY }}/${{ secrets.FRONTEND_ECR_REPO }}:${{ github.sha }}
           docker push ${{ secrets.ECR_REGISTRY }}/${{ secrets.FRONTEND_ECR_REPO }}:latest
 
+      - name: Build and push RAG
+        if: github.event.inputs.deploy_target == 'all' || github.event.inputs.deploy_target == 'rag'
+        run: |
+          cd RAG_app
+          docker build -t ${{ secrets.ECR_REGISTRY }}/${{ secrets.RAG_ECR_REPO }}:${{ github.sha }} .
+          docker tag ${{ secrets.ECR_REGISTRY }}/${{ secrets.RAG_ECR_REPO }}:${{ github.sha }} ${{ secrets.ECR_REGISTRY }}/${{ secrets.RAG_ECR_REPO }}:latest
+          docker push ${{ secrets.ECR_REGISTRY }}/${{ secrets.RAG_ECR_REPO }}:${{ github.sha }}
+          docker push ${{ secrets.ECR_REGISTRY }}/${{ secrets.RAG_ECR_REPO }}:latest
+
       - name: Download Backend Task Definition
+        if: github.event.inputs.deploy_target == 'all' || github.event.inputs.deploy_target == 'backend'
         run: |
           aws ecs describe-task-definition \
             --task-definition ${{ secrets.BACKEND_TASK_DEFINITION }} \
             --region ${{ secrets.AWS_REGION }} \
             --query 'taskDefinition' > backend-task-def.json
-          
+
           cat backend-task-def.json | jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' > backend-task-def-clean.json
 
       - name: Update Backend Task Definition Image
+        if: github.event.inputs.deploy_target == 'all' || github.event.inputs.deploy_target == 'backend'
         id: render-backend
         uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
@@ -85,6 +101,7 @@ jobs:
           image: ${{ secrets.ECR_REGISTRY }}/${{ secrets.BACKEND_ECR_REPO }}:latest
 
       - name: Deploy Backend to ECS
+        if: github.event.inputs.deploy_target == 'all' || github.event.inputs.deploy_target == 'backend'
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
           task-definition: ${{ steps.render-backend.outputs.task-definition }}
@@ -93,15 +110,17 @@ jobs:
           wait-for-service-stability: true
 
       - name: Download Frontend Task Definition
+        if: github.event.inputs.deploy_target == 'all' || github.event.inputs.deploy_target == 'frontend'
         run: |
           aws ecs describe-task-definition \
             --task-definition ${{ secrets.FRONTEND_TASK_DEFINITION }} \
             --region ${{ secrets.AWS_REGION }} \
             --query 'taskDefinition' > frontend-task-def.json
-          
+
           cat frontend-task-def.json | jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' > frontend-task-def-clean.json
 
       - name: Update Frontend Task Definition Image
+        if: github.event.inputs.deploy_target == 'all' || github.event.inputs.deploy_target == 'frontend'
         id: render-frontend
         uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
@@ -110,6 +129,7 @@ jobs:
           image: ${{ secrets.ECR_REGISTRY }}/${{ secrets.FRONTEND_ECR_REPO }}:latest
 
       - name: Deploy Frontend to ECS
+        if: github.event.inputs.deploy_target == 'all' || github.event.inputs.deploy_target == 'frontend'
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
           task-definition: ${{ steps.render-frontend.outputs.task-definition }}
@@ -117,8 +137,37 @@ jobs:
           cluster: ${{ secrets.ECS_CLUSTER }}
           wait-for-service-stability: true
 
+      - name: Download RAG Task Definition
+        if: github.event.inputs.deploy_target == 'all' || github.event.inputs.deploy_target == 'rag'
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition ${{ secrets.RAG_TASK_DEFINITION }} \
+            --region ${{ secrets.AWS_REGION }} \
+            --query 'taskDefinition' > rag-task-def.json
+
+          cat rag-task-def.json | jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' > rag-task-def-clean.json
+
+      - name: Update RAG Task Definition Image
+        if: github.event.inputs.deploy_target == 'all' || github.event.inputs.deploy_target == 'rag'
+        id: render-rag
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: rag-task-def-clean.json
+          container-name: ${{ secrets.RAG_CONTAINER_NAME }}
+          image: ${{ secrets.ECR_REGISTRY }}/${{ secrets.RAG_ECR_REPO }}:latest
+
+      - name: Deploy RAG to ECS
+        if: github.event.inputs.deploy_target == 'all' || github.event.inputs.deploy_target == 'rag'
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render-rag.outputs.task-definition }}
+          service: ${{ secrets.RAG_SERVICE }}
+          cluster: ${{ secrets.ECS_CLUSTER }}
+          wait-for-service-stability: true
+
       - name: Deployment Success
         run: |
-          echo "✅ Deployment completed successfully!"
-          echo "Branch deployed: ${{ github.event.inputs.branch }}"
+          echo "Deployment completed successfully."
+          echo "Branch: ${{ github.event.inputs.branch }}"
+          echo "Target: ${{ github.event.inputs.deploy_target }}"
           echo "Commit SHA: ${{ github.sha }}"
