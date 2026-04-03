@@ -10,7 +10,7 @@ langchain-aws
 boto3
 sentence-transformers
 faiss-cpu
-pymysql
+psycopg2-binary
 python-dotenv
 sympy
 pypdf

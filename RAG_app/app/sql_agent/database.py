@@ -1,8 +1,9 @@
 import re
 
-import pymysql
+import psycopg2
+import psycopg2.extras
 
-from app.config import DB_HOST, DB_NAME, DB_PASSWORD, DB_USER
+from app.config import DB_HOST, DB_NAME, DB_PASSWORD, DB_PORT, DB_USER
 
 # Tables that are scoped by school_id (used for school_admin filtering).
 # Tables without school_id are either global (e.g. academic_years, subjects) or linked via FKs.
@@ -40,14 +41,15 @@ SCHOOL_SCOPED_TABLES = frozenset(
 
 def get_connection():
     try:
-        return pymysql.connect(
+        return psycopg2.connect(
             host=DB_HOST,
+            port=DB_PORT,
             user=DB_USER,
             password=DB_PASSWORD,
-            database=DB_NAME,
+            dbname=DB_NAME,
         )
-    except pymysql.err.OperationalError as e:
-        raise Exception(f"Failed to connect to MySQL database: {e}")
+    except psycopg2.OperationalError as e:
+        raise Exception(f"Failed to connect to PostgreSQL database: {e}") from e
 
 
 def get_schema() -> str:
@@ -58,18 +60,22 @@ def get_schema() -> str:
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_KEY
-            FROM INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_SCHEMA = %s
-            ORDER BY TABLE_NAME, ORDINAL_POSITION
+            SELECT table_name, column_name, data_type, is_nullable, column_default
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+            ORDER BY table_name, ordinal_position
             """,
-            (DB_NAME,),
         )
         rows = cursor.fetchall()
         by_table = {}
-        for table_name, column_name, data_type, is_nullable, column_key in rows:
+        for table_name, column_name, data_type, is_nullable, column_default in rows:
             by_table.setdefault(table_name, []).append(
-                {"name": column_name, "type": data_type, "nullable": is_nullable, "key": column_key or ""}
+                {
+                    "name": column_name,
+                    "type": data_type,
+                    "nullable": is_nullable,
+                    "key": "",
+                }
             )
 
         lines = []
@@ -174,7 +180,7 @@ def execute_sql(
 
     conn = get_connection()
     try:
-        cursor = conn.cursor(pymysql.cursors.DictCursor)
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cursor.execute(query, params or None)
         rows = cursor.fetchall()
         if not rows:
@@ -195,7 +201,13 @@ def fetch_table_data():
     connection = get_connection()
     try:
         cursor = connection.cursor()
-        cursor.execute("SHOW TABLES")
+        cursor.execute(
+            """
+            SELECT tablename FROM pg_catalog.pg_tables
+            WHERE schemaname = 'public'
+            ORDER BY tablename
+            """
+        )
         tables = cursor.fetchall()
         documents = []
         for table in tables:
@@ -207,4 +219,3 @@ def fetch_table_data():
         return documents
     finally:
         connection.close()
-

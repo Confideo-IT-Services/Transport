@@ -49,7 +49,7 @@ class ReActSQLOutputParser(ReActSingleInputOutputParser):
         return super().parse(text)
 
 
-REACT_PROMPT_TEMPLATE = """You are a helpful assistant that answers questions about a school database by writing and running MySQL SELECT queries.
+REACT_PROMPT_TEMPLATE = """You are a helpful assistant that answers questions about a school database by writing and running PostgreSQL SELECT queries.
 
 Current user: role={role}, school_id={school_id}. For school_admin you MUST restrict results to their school by using AND school_id = %(school_id)s (or via JOIN) on tables that have school_id. Schema marks such tables with [SCOPE BY school_id].
 
@@ -58,7 +58,7 @@ Conversation summary so far (may be empty): {conversation_summary}
 RULES:
 1. You MUST follow the ReAct format exactly: each tool step must be `Thought:` then `Action:` then `Action Input:` then `Observation:`.
 2. Call `get_schema_tool` first to see table and column names.
-3. Use `execute_sql_tool` only with valid MySQL `SELECT` queries.
+3. Use `execute_sql_tool` only with valid PostgreSQL `SELECT` queries.
 4. For school_admin, you MUST restrict results to their school by using `%(school_id)s` (in WHERE, or via JOIN + filter). Never hardcode school_id as a literal.
 5. Attendance table does NOT have school_id: scope by JOINing `classes` and filtering `classes.school_id = %(school_id)s`.
 6. test_results does NOT have school_id: scope by JOINing `tests` and filtering `tests.school_id = %(school_id)s` (and when joining `subjects` also filter `subjects.school_id = %(school_id)s`).
@@ -111,7 +111,7 @@ def _make_tools(role: str, school_id: str | int | None):
 
     @tool
     def execute_sql_tool(query: str) -> str:
-        """Execute a MySQL SELECT query and return the result. Use only SELECT. For school_admin, use %(school_id)s in your WHERE clause."""
+        """Execute a PostgreSQL SELECT query and return the result. Use only SELECT. For school_admin, use %(school_id)s in your WHERE clause."""
 
         return execute_sql(query, params=None, role=role, school_id=school_id)
 
