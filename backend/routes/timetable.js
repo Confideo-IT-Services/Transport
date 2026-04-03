@@ -79,7 +79,7 @@ router.post('/time-slots', authenticateToken, requireAdmin, async (req, res) => 
     if (error.code === 'ER_NO_SUCH_TABLE' || error.message.includes("doesn't exist") || error.message.includes('does not exist')) {
       return res.status(500).json({ 
         error: 'Database tables not found. Please run the timetable schema SQL file first.',
-        details: 'Run: mysql -h your-rds-endpoint -u admin -p allpulse < backend/sql/timetable_schema.sql'
+        details: 'Apply timetable schema to PostgreSQL (e.g. psql or your migration tool) using backend/sql/timetable_schema.sql if applicable.'
       });
     }
     
