@@ -1,63 +1,126 @@
-const mysql = require('mysql2/promise');
+const { Pool } = require('pg');
 
-const IST_OFFSET = '+05:30';
+function buildSslOption() {
+  const v = process.env.DB_SSL;
+  if (v === 'true' || v === '1' || v === 'require') {
+    return {
+      rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false',
+    };
+  }
+  return undefined;
+}
 
-const rawPool = mysql.createPool({
+const rawPool = new Pool({
   host: process.env.DB_HOST || 'localhost',
-  port: process.env.DB_PORT || 3306,
-  user: process.env.DB_USER || 'root',
+  port: parseInt(process.env.DB_PORT || '5432', 10),
+  user: process.env.DB_USER || 'postgres',
   password: process.env.DB_PASSWORD || '',
   database: process.env.DB_NAME || 'allpulse',
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0
+  max: 10,
+  ssl: buildSslOption(),
 });
 
-// Wrap getConnection so every connection uses IST
-const pool = {
-  getConnection: async () => {
-    const conn = await rawPool.getConnection();
-    await conn.query(`SET time_zone = ?`, [IST_OFFSET]);
-    return conn;
-  },
-  query: (...args) => rawPool.query(...args),
-  execute: (...args) => rawPool.execute(...args)
-};
+/**
+ * Convert mysql2-style ? placeholders to PostgreSQL $1, $2, ...
+ */
+function translatePlaceholders(sql, params) {
+  const values = params == null ? [] : [...params];
+  let n = 0;
+  const text = sql.replace(/\?/g, () => `$${++n}`);
+  if (n !== values.length) {
+    throw new Error(`SQL placeholder mismatch: ${n} placeholders, ${values.length} parameters`);
+  }
+  return { text, values };
+}
 
-// Ensure first connection has IST set (rawPool.query uses internal getConnection, so we set on first use via getConnection wrapper - but query goes to rawPool. So we need to wrap query too.)
-// Actually rawPool.query() gets a connection from the pool without going through our wrapper. So we must wrap query and execute to use a connection that had SET time_zone run. The only way is to have getConnection set it and then have all code use getConnection. But the codebase uses pool.query() everywhere. So we need to override query to do: getConnection (our wrapper), then conn.query, then release. Let me do that.
-async function queryWithIST(...args) {
-  const conn = await rawPool.getConnection();
+function mapPgError(err) {
+  if (!err || !err.code) return err;
+  const c = err.code;
+  if (c === '23505') err.code = 'ER_DUP_ENTRY';
+  else if (c === '42P01') err.code = 'ER_NO_SUCH_TABLE';
+  else if (c === '23503') err.code = 'ER_NO_REFERENCED_ROW_2';
+  else if (c === '23514') err.code = 'ER_TRUNCATED_WRONG_VALUE';
+  else if (c === '22001') err.code = 'ER_TRUNCATED_WRONG_VALUE';
+  else if (c === '42703') err.code = 'ER_BAD_FIELD_ERROR';
+  else if (c === '28P01') err.code = 'ER_ACCESS_DENIED_ERROR';
+  else if (c === '3D000') err.code = 'ER_BAD_DB_ERROR';
+  return err;
+}
+
+function toMysql2Tuple(pgResult) {
+  const cmd = pgResult.command;
+  if (cmd === 'SELECT' || cmd === 'WITH' || cmd === 'SHOW' || cmd === 'COPY') {
+    return [pgResult.rows, pgResult.fields];
+  }
+  const header = {
+    affectedRows: pgResult.rowCount || 0,
+    insertId: 0,
+    warningStatus: 0,
+    changedRows: 0,
+  };
+  return [header, undefined];
+}
+
+async function runQuery(client, sql, params) {
+  const { text, values } = translatePlaceholders(sql, params);
   try {
-    await conn.query(`SET time_zone = ?`, [IST_OFFSET]);
-    return await conn.query(...args);
-  } finally {
-    conn.release();
+    const pgResult = await client.query(text, values);
+    return toMysql2Tuple(pgResult);
+  } catch (e) {
+    mapPgError(e);
+    throw e;
   }
 }
-async function executeWithIST(...args) {
-  const conn = await rawPool.getConnection();
+
+async function queryWithIST(sql, params) {
+  const client = await rawPool.connect();
   try {
-    await conn.query(`SET time_zone = ?`, [IST_OFFSET]);
-    return await conn.execute(...args);
+    await client.query(`SET TIME ZONE 'Asia/Kolkata'`);
+    return await runQuery(client, sql, params);
   } finally {
-    conn.release();
+    client.release();
   }
+}
+
+async function executeWithIST(sql, params) {
+  return queryWithIST(sql, params);
+}
+
+function wrapConnection(client) {
+  return {
+    query: async (sql, params) => {
+      return runQuery(client, sql, params);
+    },
+    beginTransaction: async () => {
+      await client.query('BEGIN');
+    },
+    commit: async () => {
+      await client.query('COMMIT');
+    },
+    rollback: async () => {
+      await client.query('ROLLBACK');
+    },
+    release: () => client.release(),
+  };
 }
 
 const poolExport = {
-  getConnection: pool.getConnection,
+  getConnection: async () => {
+    const client = await rawPool.connect();
+    await client.query(`SET TIME ZONE 'Asia/Kolkata'`);
+    return wrapConnection(client);
+  },
   query: queryWithIST,
-  execute: executeWithIST
+  execute: executeWithIST,
 };
 
-// Test connection on startup
-poolExport.getConnection()
-  .then(connection => {
-    console.log('✅ Database connected successfully (IST)');
+poolExport
+  .getConnection()
+  .then((connection) => {
+    console.log('✅ Database connected successfully (PostgreSQL, Asia/Kolkata)');
     connection.release();
   })
-  .catch(err => {
+  .catch((err) => {
     console.error('❌ Database connection failed:', err.message);
   });
 
