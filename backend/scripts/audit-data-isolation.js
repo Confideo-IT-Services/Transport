@@ -35,7 +35,7 @@ async function auditDataIsolation() {
           });
         }
       } catch (error) {
-        if (error.message.includes("doesn't exist")) {
+        if (error.message.includes("doesn't exist") || error.message.includes('does not exist')) {
           warnings.push({ table, warning: 'Table does not exist' });
         } else {
           console.error(`Error checking ${table}:`, error.message);
@@ -51,9 +51,9 @@ async function auditDataIsolation() {
           school_id,
           user_id,
           COUNT(*) as query_count,
-          GROUP_CONCAT(DISTINCT table_name) as tables_accessed
+          string_agg(DISTINCT table_name::text, ',') as tables_accessed
         FROM audit_logs
-        WHERE created_at > DATE_SUB(NOW(), INTERVAL 24 HOUR)
+        WHERE created_at > (NOW() - INTERVAL '24 hours')
         GROUP BY school_id, user_id
         HAVING query_count > 1000
         ORDER BY query_count DESC
@@ -120,7 +120,10 @@ async function auditDataIsolation() {
 
     for (const table of tablesToCheck) {
       try {
-        const [indexes] = await db.query(`SHOW INDEXES FROM ${table} WHERE Column_name = 'school_id'`);
+        const [indexes] = await db.query(
+          `SELECT indexname FROM pg_indexes WHERE schemaname = 'public' AND tablename = $1 AND indexdef LIKE '%school_id%'`,
+          [table]
+        );
         if (indexes.length === 0) {
           warnings.push({
             severity: 'LOW',
@@ -146,7 +149,7 @@ async function auditDataIsolation() {
         FROM audit_logs al
         LEFT JOIN users u ON al.user_id = u.id
         LEFT JOIN schools s ON al.school_id = s.id
-        WHERE al.created_at > DATE_SUB(NOW(), INTERVAL 7 DAY)
+        WHERE al.created_at > (NOW() - INTERVAL '7 days')
           AND al.action = 'SELECT'
           AND (
             u.school_id IS NULL OR 

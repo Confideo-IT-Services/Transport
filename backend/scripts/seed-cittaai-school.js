@@ -1,17 +1,8 @@
 // backend/scripts/seed-cittaai-school.js
 require('dotenv').config();
-const mysql = require('mysql2/promise');
+const db = require('../config/database');
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
-
-// Use same database config as backend
-const dbConfig = {
-  host: process.env.DB_HOST || 'localhost',
-  port: process.env.DB_PORT || 3306,
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'allpulse',
-};
 
 // Indian names for realistic data
 const firstNames = [
@@ -80,11 +71,11 @@ const genders = ['male', 'female'];
 
 async function seedCittaAISchool() {
   console.log('🔌 Connecting to database...');
-  console.log(`   Host: ${dbConfig.host}:${dbConfig.port}`);
-  console.log(`   Database: ${dbConfig.database}`);
-  console.log(`   User: ${dbConfig.user}\n`);
-  
-  const connection = await mysql.createConnection(dbConfig);
+  console.log(`   Host: ${process.env.DB_HOST || 'localhost'}:${process.env.DB_PORT || '5432'}`);
+  console.log(`   Database: ${process.env.DB_NAME || 'allpulse'}`);
+  console.log(`   User: ${process.env.DB_USER || 'postgres'}\n`);
+
+  const connection = await db.getConnection();
   
   try {
     await connection.beginTransaction();
@@ -495,10 +486,10 @@ async function seedCittaAISchool() {
       console.error('\n💡 Connection Error:');
       console.error('   - Check if MySQL server is running');
       console.error('   - Verify DB_HOST and DB_PORT in your .env file');
-    } else if (error.code === 'ER_ACCESS_DENIED_ERROR') {
+    } else if (error.code === 'ER_ACCESS_DENIED_ERROR' || error.code === '28P01') {
       console.error('\n💡 Authentication Error:');
       console.error('   - Check DB_USER and DB_PASSWORD in your .env file');
-    } else if (error.code === 'ER_BAD_DB_ERROR') {
+    } else if (error.code === 'ER_BAD_DB_ERROR' || error.code === '3D000') {
       console.error('\n💡 Database Error:');
       console.error('   - Check DB_NAME in your .env file');
       console.error('   - Make sure the database exists');
@@ -510,7 +501,7 @@ async function seedCittaAISchool() {
     
     throw error;
   } finally {
-    await connection.end();
+    connection.release();
   }
 }
 

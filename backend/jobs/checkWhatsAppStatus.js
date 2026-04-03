@@ -12,7 +12,7 @@ async function checkPendingMessages() {
       `SELECT id, queue_id, status, created_at 
        FROM whatsapp_messages 
        WHERE status IN ('queued', 'sent') 
-       AND created_at > DATE_SUB(NOW(), INTERVAL 24 HOUR)
+       AND created_at > (NOW() - INTERVAL '24 hours')
        ORDER BY created_at DESC
        LIMIT 100`
     );
