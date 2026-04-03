@@ -94,7 +94,8 @@ router.get('/children/:studentId/attendance', authenticateToken, async (req, res
     const studentSchoolId = student.school_id;
 
     let query = `
-      SELECT a.*, DATE_FORMAT(a.date, '%Y-%m-%d') as date
+      SELECT a.id, a.student_id, a.class_id, to_char(a.date::date, 'YYYY-MM-DD') as date,
+             a.status, a.marked_by, a.remarks, a.created_at
       FROM attendance a
       JOIN students s ON a.student_id = s.id
       WHERE a.student_id = ? AND s.school_id = ?
@@ -106,7 +107,7 @@ router.get('/children/:studentId/attendance', authenticateToken, async (req, res
       params.push(startDate, endDate);
     } else {
       // Default: last 30 days
-      query += ' AND a.date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)';
+      query += " AND a.date >= (CURRENT_DATE - INTERVAL '30 days')";
     }
 
     query += ' ORDER BY a.date DESC';

@@ -309,8 +309,8 @@ router.post('/:id/results', authenticateToken, requireTeacher, async (req, res) 
         await db.query(
           `INSERT INTO test_results (id, test_id, student_id, subject_id, marks_obtained, max_marks, created_at)
            VALUES (?, ?, ?, ?, ?, ?, NOW())
-           ON DUPLICATE KEY UPDATE 
-             marks_obtained = VALUES(marks_obtained),
+           ON CONFLICT (test_id, student_id, subject_id) DO UPDATE SET
+             marks_obtained = EXCLUDED.marks_obtained,
              updated_at = NOW()`,
           [uuidv4(), id, result.studentId, result.subjectId, marksObtained, maxMarks]
         );
@@ -355,7 +355,7 @@ router.get('/:id/results', authenticateToken, requireTeacher, async (req, res) =
        JOIN students s ON tr.student_id = s.id
        JOIN subjects sub ON tr.subject_id = sub.id
        WHERE tr.test_id = ?
-       ORDER BY CAST(s.roll_no AS UNSIGNED), sub.name`,
+       ORDER BY (NULLIF(regexp_replace(TRIM(COALESCE(s.roll_no::text, '')), '[^0-9]', '', 'g'), '')::bigint) NULLS LAST, sub.name`,
       [id]
     );
 
