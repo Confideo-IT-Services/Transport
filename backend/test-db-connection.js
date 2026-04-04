@@ -1,17 +1,34 @@
 require('dotenv').config();
-const mysql = require('mysql2/promise');
+const { Client } = require('pg');
+const { buildPgSslOptions } = require('./config/pgSsl');
+const {
+  validatedDbSchemaFromEnv,
+  pgSearchPathOptions,
+  getPgCatalogSchemaName,
+} = require('./config/pgSchema');
+
+let schemaOpts = {};
+try {
+  schemaOpts = pgSearchPathOptions(validatedDbSchemaFromEnv());
+} catch (e) {
+  console.error('❌', e.message);
+  process.exit(1);
+}
 
 async function testConnection() {
   console.log('🔍 Testing database connection...\n');
-  
+
+  const catalogSchema = getPgCatalogSchemaName();
+
   const config = {
     host: process.env.DB_HOST || 'localhost',
-    port: process.env.DB_PORT || 3306,
-    user: process.env.DB_USER || 'root',
+    port: parseInt(process.env.DB_PORT || '5432', 10),
+    user: process.env.DB_USER || 'postgres',
     password: process.env.DB_PASSWORD || '',
     database: process.env.DB_NAME || 'allpulse',
-    connectTimeout: 10000, // 10 seconds
-    connectionLimit: 1,
+    connectionTimeoutMillis: 10000,
+    ssl: buildPgSslOptions(),
+    ...schemaOpts,
   };
 
   console.log('📋 Connection Configuration:');
@@ -19,67 +36,73 @@ async function testConnection() {
   console.log(`   Port: ${config.port}`);
   console.log(`   User: ${config.user}`);
   console.log(`   Database: ${config.database}`);
+  console.log(`   DB_SCHEMA (catalog): ${catalogSchema}`);
   console.log(`   Password: ${config.password ? '***' + config.password.slice(-2) : '(empty)'}\n`);
+
+  const client = new Client(config);
 
   try {
     console.log('⏳ Attempting to connect...');
-    const connection = await mysql.createConnection(config);
-    
+    await client.connect();
+
     console.log('✅ SUCCESS! Database connection established!\n');
-    
-    // Test a simple query
+
     console.log('🧪 Testing query...');
-    const [rows] = await connection.execute('SELECT 1 as test, DATABASE() as current_db, NOW() as server_time');
+    const { rows } = await client.query(
+      'SELECT 1 AS test, current_database() AS current_db, NOW() AS server_time'
+    );
     console.log('✅ Query successful!');
     console.log('   Result:', rows[0]);
-    
-    // Check if database exists and show tables
+
     try {
-      const [tables] = await connection.execute('SHOW TABLES');
-      console.log(`\n📊 Found ${tables.length} table(s) in database '${config.database}':`);
-      tables.forEach((table, index) => {
-        const tableName = Object.values(table)[0];
-        console.log(`   ${index + 1}. ${tableName}`);
+      const sp = await client.query('SHOW search_path');
+      console.log('   search_path:', sp.rows[0]?.search_path);
+
+      const tablesRes = await client.query(
+        `SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = $1 ORDER BY tablename`,
+        [catalogSchema]
+      );
+      console.log(`\n📊 Found ${tablesRes.rows.length} table(s) in schema '${catalogSchema}':`);
+      tablesRes.rows.forEach((row, index) => {
+        console.log(`   ${index + 1}. ${row.tablename}`);
       });
     } catch (err) {
       console.log(`\n⚠️  Could not list tables: ${err.message}`);
-      console.log('   This might mean the database schema hasn\'t been created yet.');
     }
-    
-    await connection.end();
+
+    await client.end();
     console.log('\n✅ Connection closed successfully.');
     process.exit(0);
   } catch (error) {
     console.error('\n❌ FAILED! Database connection error:');
     console.error(`   Error Code: ${error.code || 'N/A'}`);
     console.error(`   Error Message: ${error.message}\n`);
-    
-    // Provide helpful suggestions
+
     console.log('💡 Troubleshooting suggestions:');
     if (error.code === 'ECONNREFUSED') {
-      console.log('   - MySQL server is not running on the specified host/port');
-      console.log('   - Check if MySQL service is started');
-      console.log('   - Verify the host and port in your .env file');
-    } else if (error.code === 'ER_ACCESS_DENIED_ERROR') {
+      console.log('   - PostgreSQL is not reachable on the specified host/port');
+      console.log('   - Verify DB_HOST and DB_PORT in your .env file');
+    } else if (error.code === '28P01') {
       console.log('   - Invalid username or password');
       console.log('   - Check DB_USER and DB_PASSWORD in your .env file');
-    } else if (error.code === 'ER_BAD_DB_ERROR') {
+    } else if (error.code === '3D000') {
       console.log('   - Database does not exist');
       console.log('   - Create the database or update DB_NAME in your .env file');
-      console.log('   - Run: CREATE DATABASE allpulse;');
     } else if (error.code === 'ENOTFOUND' || error.code === 'ETIMEDOUT') {
       console.log('   - Cannot reach the database host');
-      console.log('   - Check if DB_HOST is correct (for AWS RDS, use the endpoint URL)');
-      console.log('   - Verify network connectivity and security groups');
+      console.log('   - For AWS RDS, use the endpoint URL as DB_HOST and security groups allow access');
     } else {
       console.log('   - Check your .env file configuration');
-      console.log('   - Ensure MySQL server is running');
-      console.log('   - Verify database credentials');
+      console.log('   - Ensure PostgreSQL is running and credentials are correct');
     }
-    
+
+    try {
+      await client.end();
+    } catch (_) {
+      /* ignore */
+    }
     process.exit(1);
   }
 }
 
 testConnection();
-

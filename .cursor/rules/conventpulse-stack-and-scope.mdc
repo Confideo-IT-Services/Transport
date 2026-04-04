@@ -1,0 +1,32 @@
+---
+description: ConventPulse stack, repo map, and scoped-change discipline for agents
+alwaysApply: true
+---
+
+# ConventPulse — stack and scope
+
+## Stack (do not replace casually)
+
+- **Web:** Vite 5, React 18, TypeScript, Tailwind, Radix/shadcn-style UI, TanStack Query, React Router, `fetch` via `VITE_API_URL`.
+- **API:** Node.js, Express 4, **MySQL** (`mysql2`), JWT + `bcryptjs`, AWS S3 SDK, multer/sharp/pdfkit as needed.
+- **RAG (separate service):** Python 3.11, FastAPI, Uvicorn, LangChain/FAISS/etc. under `RAG_app/` — not the Express app.
+
+## Where changes belong
+
+| Area | Typical paths |
+|------|----------------|
+| UI / pages | `src/pages/**`, `src/components/**` |
+| API client | `src/lib/api.ts` (and env `VITE_API_URL`) |
+| Auth / session UI | `src/contexts/**` |
+| REST routes | `backend/routes/*.js` — register in `backend/server.js` |
+| DB access / helpers | `backend/config/database.js`, `backend/utils/**`, `backend/middleware/**` |
+| Background jobs | `backend/jobs/**` (wire from `server.js` if needed) |
+| RAG HTTP service | `RAG_app/app/**`, `RAG_app/requirements.txt` |
+
+## Discipline (required)
+
+1. **Implement only what the user asked for.** No drive-by refactors, no formatting sweeps, no unrelated feature edits.
+2. **Touch the smallest set of files** that satisfies the request. Prefer extending existing routes/components over new parallel systems.
+3. **Multi-tenant / auth:** New Express routes must use existing `authenticateToken` (and school isolation patterns already used in sibling routes). Do not weaken security to “make it work.”
+4. **If the request spans UI + API**, change the matching route(s) and the corresponding `api.ts` helpers — not unrelated modules.
+5. **Full detail and feature-to-file mapping:** read **`AGENTS.md`** at the repo root before large or ambiguous tasks.

@@ -2,25 +2,14 @@
 // Backfill script to assign academic_year_id to existing tests
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '../.env') });
-const mysql = require('mysql2/promise');
-
-// Use same database config as backend
-const dbConfig = {
-  host: process.env.DB_HOST || 'localhost',
-  port: process.env.DB_PORT || 3306,
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'schoolpulse',
-};
+const db = require('../config/database');
 
 async function backfillTestsAcademicYear() {
-  const connection = await mysql.createConnection(dbConfig);
-
   try {
     console.log('🔄 Starting backfill of academic_year_id for existing tests...\n');
 
     // Step 1: Get all tests without academic_year_id
-    const [testsWithoutYear] = await connection.query(
+    const [testsWithoutYear] = await db.query(
       `SELECT t.id, t.test_date, t.school_id, t.class_id
        FROM tests t
        WHERE t.academic_year_id IS NULL`
@@ -47,7 +36,7 @@ async function backfillTestsAcademicYear() {
         }
 
         // Find academic year where test_date falls between start_date and end_date
-        const [matchingYears] = await connection.query(
+        const [matchingYears] = await db.query(
           `SELECT id, name, start_date, end_date
            FROM academic_years
            WHERE school_id = ?
@@ -59,7 +48,7 @@ async function backfillTestsAcademicYear() {
 
         if (matchingYears.length > 0) {
           const academicYearId = matchingYears[0].id;
-          await connection.query(
+          await db.query(
             'UPDATE tests SET academic_year_id = ? WHERE id = ?',
             [academicYearId, test.id]
           );
@@ -67,7 +56,7 @@ async function backfillTestsAcademicYear() {
           console.log(`✅ Updated test ${test.id} → Academic Year: ${matchingYears[0].name}`);
         } else {
           // Fallback: Use currently active academic year for that school
-          const [activeYear] = await connection.query(
+          const [activeYear] = await db.query(
             `SELECT id, name FROM academic_years
              WHERE school_id = ? AND status = 'active'
              LIMIT 1`,
@@ -75,7 +64,7 @@ async function backfillTestsAcademicYear() {
           );
 
           if (activeYear.length > 0) {
-            await connection.query(
+            await db.query(
               'UPDATE tests SET academic_year_id = ? WHERE id = ?',
               [activeYear[0].id, test.id]
             );
@@ -110,7 +99,7 @@ async function backfillTestsAcademicYear() {
     }
 
     // Step 3: Verify all tests have academic_year_id
-    const [remaining] = await connection.query(
+    const [remaining] = await db.query(
       'SELECT COUNT(*) as count FROM tests WHERE academic_year_id IS NULL'
     );
 
@@ -120,14 +109,12 @@ async function backfillTestsAcademicYear() {
     } else {
       console.log('\n✅ All tests now have academic_year_id!');
       console.log('\n📝 Next step: Run the final migration to make the column NOT NULL:');
-      console.log('   ALTER TABLE tests MODIFY COLUMN academic_year_id VARCHAR(36) NOT NULL;');
+      console.log('   ALTER TABLE tests ALTER COLUMN academic_year_id SET NOT NULL;');
     }
 
   } catch (error) {
     console.error('❌ Backfill failed:', error);
     throw error;
-  } finally {
-    await connection.end();
   }
 }
 

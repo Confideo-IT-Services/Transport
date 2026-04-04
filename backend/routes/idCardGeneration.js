@@ -141,7 +141,7 @@ router.get('/students/:schoolId', authenticateToken, requireSuperAdmin, async (r
       LEFT JOIN classes c ON s.class_id = c.id
       LEFT JOIN schools sch ON s.school_id = sch.id
       WHERE s.school_id = ? AND s.status = 'approved'
-      ORDER BY c.name, c.section, CAST(s.roll_no AS UNSIGNED)`,
+      ORDER BY c.name, c.section, (NULLIF(regexp_replace(TRIM(COALESCE(s.roll_no::text, '')), '[^0-9]', '', 'g'), '')::bigint) NULLS LAST`,
       [schoolId]
     );
 

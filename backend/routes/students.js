@@ -131,7 +131,7 @@ router.get('/', authenticateToken, requireAdmin, async (req, res) => {
            JOIN students s ON s.id = e.student_id AND s.school_id = ?
            LEFT JOIN classes c ON c.id = e.class_id
            WHERE e.school_id = ? AND e.academic_year_id = ?
-           ORDER BY c.name, c.section, CAST(e.roll_no AS UNSIGNED), s.name`,
+           ORDER BY c.name, c.section, (NULLIF(regexp_replace(TRIM(COALESCE(e.roll_no::text, '')), '[^0-9]', '', 'g'), '')::bigint) NULLS LAST, s.name`,
           [schoolId, schoolId, academicYearId]
         );
         if (enrollments.length === 0) {
@@ -150,7 +150,9 @@ router.get('/', authenticateToken, requireAdmin, async (req, res) => {
                 await db.query(
                   `INSERT INTO student_enrollments (id, student_id, academic_year_id, class_id, roll_no, school_id)
                    VALUES (?, ?, ?, ?, ?, ?)
-                   ON DUPLICATE KEY UPDATE class_id = VALUES(class_id), roll_no = VALUES(roll_no)`,
+                   ON CONFLICT (student_id, academic_year_id) DO UPDATE SET
+                     class_id = EXCLUDED.class_id,
+                     roll_no = EXCLUDED.roll_no`,
                   [uuidv4(), st.id, academicYearId, st.class_id, st.roll_no, schoolId]
                 );
               } catch (e) { /* ignore duplicate */ }
@@ -282,7 +284,7 @@ router.post('/', async (req, res) => {
     // If registrationCode is provided, get schoolId and classId from registration link
     if (registrationCode) {
       const [links] = await db.query(
-        'SELECT school_id, class_id, link_type, field_config FROM registration_links WHERE link_code = ? AND is_active = TRUE AND (expires_at IS NULL OR expires_at > NOW())',
+        'SELECT school_id, class_id, link_type, field_config FROM registration_links WHERE link_code = ? AND is_active = 1 AND (expires_at IS NULL OR expires_at > NOW())',
         [registrationCode]
       );
       if (links.length > 0) {
@@ -660,7 +662,10 @@ router.post('/bulk', authenticateToken, requireAdmin, async (req, res) => {
           try {
             await db.query(
               `INSERT INTO student_enrollments (id, student_id, academic_year_id, class_id, roll_no, school_id)
-               VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE class_id = VALUES(class_id), roll_no = VALUES(roll_no)`,
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT (student_id, academic_year_id) DO UPDATE SET
+                 class_id = EXCLUDED.class_id,
+                 roll_no = EXCLUDED.roll_no`,
               [uuidv4(), studentId, activeYearId, classId, row.rollNo != null ? String(row.rollNo) : null, schoolId]
             );
           } catch (e) { /* ignore */ }
@@ -887,7 +892,9 @@ router.post('/:id/approve', authenticateToken, requireAdmin, async (req, res) =>
       await db.query(
         `INSERT INTO student_enrollments (id, student_id, academic_year_id, class_id, roll_no, school_id)
          VALUES (?, ?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE class_id = VALUES(class_id), roll_no = VALUES(roll_no)`,
+         ON CONFLICT (student_id, academic_year_id) DO UPDATE SET
+           class_id = EXCLUDED.class_id,
+           roll_no = EXCLUDED.roll_no`,
         [uuidv4(), id, activeYear[0].id, studentClassId, finalRollNo, schoolId]
       );
     } catch (enrollErr) {
@@ -1077,7 +1084,9 @@ router.post('/bulk-approve', authenticateToken, requireAdmin, async (req, res) =
           await db.query(
             `INSERT INTO student_enrollments (id, student_id, academic_year_id, class_id, roll_no, school_id)
              VALUES (?, ?, ?, ?, ?, ?)
-             ON DUPLICATE KEY UPDATE class_id = VALUES(class_id), roll_no = VALUES(roll_no)`,
+             ON CONFLICT (student_id, academic_year_id) DO UPDATE SET
+               class_id = EXCLUDED.class_id,
+               roll_no = EXCLUDED.roll_no`,
             [uuidv4(), studentId, academicYearId, classId, rollNo || null, schoolId]
           );
           

@@ -364,11 +364,11 @@ router.post('/:id/completions', authenticateToken, requireTeacher, async (req, r
       await db.query(
         `INSERT INTO homework_submissions (id, homework_id, student_id, is_completed, completed_at)
          VALUES (?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE 
-           is_completed = VALUES(is_completed),
-           completed_at = VALUES(completed_at),
+         ON CONFLICT (homework_id, student_id) DO UPDATE SET
+           is_completed = EXCLUDED.is_completed,
+           completed_at = EXCLUDED.completed_at,
            updated_at = NOW()`,
-        [uuidv4(), id, studentId, completed, completed ? new Date() : null]
+        [uuidv4(), id, studentId, completed ? 1 : 0, completed ? new Date() : null]
       );
 
       res.json({ success: true });
@@ -447,11 +447,11 @@ router.post('/:id/completions/bulk', authenticateToken, requireTeacher, async (r
           await db.query(
             `INSERT INTO homework_submissions (id, homework_id, student_id, is_completed, completed_at)
              VALUES (?, ?, ?, ?, ?)
-             ON DUPLICATE KEY UPDATE 
-               is_completed = VALUES(is_completed),
-               completed_at = VALUES(completed_at),
+             ON CONFLICT (homework_id, student_id) DO UPDATE SET
+               is_completed = EXCLUDED.is_completed,
+               completed_at = EXCLUDED.completed_at,
                updated_at = NOW()`,
-            [uuidv4(), id, comp.studentId, comp.completed, comp.completed ? new Date() : null]
+            [uuidv4(), id, comp.studentId, comp.completed ? 1 : 0, comp.completed ? new Date() : null]
           );
         } catch (dbError) {
           console.error('Database error for student:', comp.studentId, dbError);

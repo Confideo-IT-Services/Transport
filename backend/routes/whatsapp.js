@@ -257,13 +257,13 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
                 const [updated] = await db.query(
                   `UPDATE whatsapp_messages 
                    SET status = ?, 
-                       status_updated_at = FROM_UNIXTIME(?),
+                       status_updated_at = to_timestamp(?),
                        updated_at = NOW(),
                        error_message = ?,
                        message_id = COALESCE(message_id, ?)
                    WHERE queue_id = ? 
                       OR message_id = ? 
-                      OR (recipient_phone = ? AND created_at > DATE_SUB(NOW(), INTERVAL 1 HOUR))`,
+                      OR (recipient_phone = ? AND created_at > (NOW() - INTERVAL '1 hour'))`,
                   [
                     dbStatus, 
                     timestamp, 

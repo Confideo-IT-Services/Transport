@@ -99,7 +99,7 @@ router.get('/:id/students', authenticateToken, async (req, res) => {
            FROM student_enrollments e
            JOIN students s ON s.id = e.student_id
            WHERE e.class_id = ? AND e.academic_year_id = ?
-           ORDER BY CAST(e.roll_no AS UNSIGNED), s.name`,
+           ORDER BY (NULLIF(regexp_replace(TRIM(COALESCE(e.roll_no::text, '')), '[^0-9]', '', 'g'), '')::bigint) NULLS LAST, s.name`,
           [id, academicYearId]
         );
         students = rows.map(s => ({
@@ -112,13 +112,13 @@ router.get('/:id/students', authenticateToken, async (req, res) => {
     }
     if (students.length === 0 && !academicYearId) {
       const [all] = await db.query(
-        `SELECT * FROM students WHERE class_id = ? AND status = 'approved' ORDER BY CAST(roll_no AS UNSIGNED)`,
+        `SELECT * FROM students WHERE class_id = ? AND status = 'approved' ORDER BY (NULLIF(regexp_replace(TRIM(COALESCE(roll_no::text, '')), '[^0-9]', '', 'g'), '')::bigint) NULLS LAST`,
         [id]
       );
       students = all;
     } else if (students.length === 0 && academicYearId) {
       const [all] = await db.query(
-        `SELECT * FROM students WHERE class_id = ? AND status = 'approved' ORDER BY CAST(roll_no AS UNSIGNED)`,
+        `SELECT * FROM students WHERE class_id = ? AND status = 'approved' ORDER BY (NULLIF(regexp_replace(TRIM(COALESCE(roll_no::text, '')), '[^0-9]', '', 'g'), '')::bigint) NULLS LAST`,
         [id]
       );
       students = all;

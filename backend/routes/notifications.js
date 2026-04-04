@@ -467,7 +467,7 @@ router.post('/', authenticateToken, requireTeacher, async (req, res) => {
         }));
       } else if (targetType === 'all_classes' || targetType === 'all_parents') {
         // Get all students (for their parents)
-        let studentsQuery = 'SELECT id FROM students WHERE school_id = ? AND status = "approved"';
+        let studentsQuery = `SELECT id FROM students WHERE school_id = ? AND status = 'approved'`;
         const studentsParams = [schoolId];
 
         if (targetClasses && targetClasses.length > 0) {
@@ -486,7 +486,7 @@ router.post('/', authenticateToken, requireTeacher, async (req, res) => {
           throw new Error('Target classes required for selected_classes');
         }
         const [students] = await db.query(
-          'SELECT id FROM students WHERE class_id IN (?) AND status = "approved"',
+          `SELECT id FROM students WHERE class_id IN (?) AND status = 'approved'`,
           [targetClasses]
         );
         recipients = students.map(s => ({
@@ -563,7 +563,7 @@ router.post('/:id/read', authenticateToken, requireTeacher, async (req, res) => 
       // For teachers: update existing recipient record
       const [result] = await db.query(
         `UPDATE notification_recipients 
-         SET is_read = TRUE, read_at = NOW() 
+         SET is_read = 1, read_at = NOW() 
          WHERE notification_id = ? 
            AND recipient_type = ? 
            AND recipient_id = ?`,
@@ -599,7 +599,7 @@ router.post('/:id/read', authenticateToken, requireTeacher, async (req, res) => 
         // Update existing record
         await db.query(
           `UPDATE notification_recipients 
-           SET is_read = TRUE, read_at = NOW() 
+           SET is_read = 1, read_at = NOW() 
            WHERE notification_id = ? 
              AND recipient_id = ? 
              AND recipient_type = 'teacher'`,
@@ -612,8 +612,8 @@ router.post('/:id/read', authenticateToken, requireTeacher, async (req, res) => 
         await db.query(
           `INSERT INTO notification_recipients 
            (id, notification_id, recipient_type, recipient_id, student_id, is_read, read_at)
-           VALUES (?, ?, ?, ?, ?, TRUE, NOW())`,
-          [uuidv4(), id, 'teacher', req.user.id, null]
+           VALUES (?, ?, ?, ?, ?, ?, NOW())`,
+          [uuidv4(), id, 'teacher', req.user.id, null, 1]
         );
       }
     } else {

@@ -1,24 +1,15 @@
 // backend/scripts/add-cittaai-timetable.js
 require('dotenv').config();
-const mysql = require('mysql2/promise');
+const db = require('../config/database');
 const { v4: uuidv4 } = require('uuid');
-
-// Use same database config as backend
-const dbConfig = {
-  host: process.env.DB_HOST || 'localhost',
-  port: process.env.DB_PORT || 3306,
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'allpulse',
-};
 
 async function addCittaAITimetable() {
   console.log('🔌 Connecting to database...');
-  console.log(`   Host: ${dbConfig.host}:${dbConfig.port}`);
-  console.log(`   Database: ${dbConfig.database}`);
-  console.log(`   User: ${dbConfig.user}\n`);
-  
-  const connection = await mysql.createConnection(dbConfig);
+  console.log(`   Host: ${process.env.DB_HOST || 'localhost'}:${process.env.DB_PORT || '5432'}`);
+  console.log(`   Database: ${process.env.DB_NAME || 'allpulse'}`);
+  console.log(`   User: ${process.env.DB_USER || 'postgres'}\n`);
+
+  const connection = await db.getConnection();
   
   try {
     await connection.beginTransaction();
@@ -67,7 +58,7 @@ async function addCittaAITimetable() {
     
     // 3. Get all teachers for this school
     const [teachersRows] = await connection.query(
-      `SELECT id, name, class_id, subjects FROM teachers WHERE school_id = ? AND is_active = true`,
+      `SELECT id, name, class_id, subjects FROM teachers WHERE school_id = ? AND is_active = 1`,
       [schoolId]
     );
     
@@ -274,10 +265,10 @@ async function addCittaAITimetable() {
       console.error('\n💡 Connection Error:');
       console.error('   - Check if MySQL server is running');
       console.error('   - Verify DB_HOST and DB_PORT in your .env file');
-    } else if (error.code === 'ER_ACCESS_DENIED_ERROR') {
+    } else if (error.code === 'ER_ACCESS_DENIED_ERROR' || error.code === '28P01') {
       console.error('\n💡 Authentication Error:');
       console.error('   - Check DB_USER and DB_PASSWORD in your .env file');
-    } else if (error.code === 'ER_BAD_DB_ERROR') {
+    } else if (error.code === 'ER_BAD_DB_ERROR' || error.code === '3D000') {
       console.error('\n💡 Database Error:');
       console.error('   - Check DB_NAME in your .env file');
       console.error('   - Make sure the database exists');
@@ -285,7 +276,7 @@ async function addCittaAITimetable() {
     
     throw error;
   } finally {
-    await connection.end();
+    connection.release();
   }
 }
 

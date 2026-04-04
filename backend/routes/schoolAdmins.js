@@ -32,8 +32,8 @@ router.post('/', authenticateToken, requireSuperAdmin, async (req, res) => {
     
     const [result] = await db.query(
       `INSERT INTO users (id, email, password, name, role, school_id, is_active, created_at)
-       VALUES (?, ?, ?, ?, 'admin', ?, true, NOW())`,
-      [adminId, email, hashedPassword, name, schoolId]
+       VALUES (?, ?, ?, ?, 'admin', ?, ?, NOW())`,
+      [adminId, email, hashedPassword, name, schoolId, 1]
     );
 
     console.log('✅ School admin created:', { adminId, email, name, schoolId, schoolName: schools[0].name });

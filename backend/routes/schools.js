@@ -181,8 +181,8 @@ router.post('/', authenticateToken, requireSuperAdmin, async (req, res) => {
     const hashedPassword = await bcrypt.hash(adminPassword, 10);
     const [adminResult] = await connection.query(
       `INSERT INTO users (id, email, password, name, role, school_id, is_active, created_at)
-       VALUES (?, ?, ?, ?, 'admin', ?, true, NOW())`,
-      [adminId, adminEmail, hashedPassword, adminName || 'School Admin', schoolId]
+       VALUES (?, ?, ?, ?, 'admin', ?, ?, NOW())`,
+      [adminId, adminEmail, hashedPassword, adminName || 'School Admin', schoolId, 1]
     );
 
     console.log('✅ Admin created:', { adminId, email: adminEmail, schoolId });

@@ -40,7 +40,7 @@ router.get('/students/:classId', authenticateToken, async (req, res) => {
        FROM attendance a
        JOIN students s ON a.student_id = s.id
        WHERE a.class_id = ? AND a.date = ?
-       ORDER BY CAST(s.roll_no AS UNSIGNED)`,
+       ORDER BY (NULLIF(regexp_replace(TRIM(COALESCE(s.roll_no::text, '')), '[^0-9]', '', 'g'), '')::bigint) NULLS LAST`,
       [classId, date]
     );
 
@@ -48,7 +48,7 @@ router.get('/students/:classId', authenticateToken, async (req, res) => {
     const [students] = await db.query(
       `SELECT id, name, roll_no FROM students 
        WHERE class_id = ? AND status = 'approved' 
-       ORDER BY CAST(roll_no AS UNSIGNED)`,
+       ORDER BY (NULLIF(regexp_replace(TRIM(COALESCE(roll_no::text, '')), '[^0-9]', '', 'g'), '')::bigint) NULLS LAST`,
       [classId]
     );
 
@@ -184,14 +184,15 @@ router.post('/students', authenticateToken, async (req, res) => {
           await db.query(
             `INSERT INTO attendance (id, student_id, class_id, date, status, marked_by)
              VALUES (?, ?, ?, ?, ?, ?)
-             ON DUPLICATE KEY UPDATE status = ?, marked_by = ?`,
+             ON CONFLICT (student_id, date) DO UPDATE SET
+               status = EXCLUDED.status,
+               marked_by = EXCLUDED.marked_by,
+               class_id = EXCLUDED.class_id`,
             [
               uuidv4(),
               studentId,
               classId,
               date,
-              student.status,
-              markedByTeacherId,
               student.status,
               markedByTeacherId
             ]
@@ -593,13 +594,13 @@ router.get('/stats/monthly', authenticateToken, async (req, res) => {
 
     let query = `
       SELECT 
-        DATE_FORMAT(date, '%Y-%m') as month,
-        DATE_FORMAT(date, '%M %Y') as monthName,
+        to_char(date::date, 'YYYY-MM') as month,
+        to_char(date::date, 'FMMonth YYYY') as monthName,
         COUNT(CASE WHEN status = 'present' THEN 1 END) as present,
         COUNT(CASE WHEN status = 'absent' THEN 1 END) as absent,
         COUNT(CASE WHEN status = 'leave' THEN 1 END) as leave
       FROM attendance
-      WHERE YEAR(date) = ?
+      WHERE EXTRACT(YEAR FROM date::date) = ?
     `;
     const params = [targetYear];
 
@@ -609,7 +610,7 @@ router.get('/stats/monthly', authenticateToken, async (req, res) => {
     }
 
     if (month) {
-      query += ' AND MONTH(date) = ?';
+      query += ' AND EXTRACT(MONTH FROM date::date) = ?';
       params.push(month);
     }
 
@@ -635,7 +636,7 @@ router.get('/stats/monthly', authenticateToken, async (req, res) => {
       params.push(req.user.schoolId, req.user.id);
     }
 
-    query += ' GROUP BY DATE_FORMAT(date, "%Y-%m"), DATE_FORMAT(date, "%M %Y") ORDER BY month DESC';
+    query += ' GROUP BY to_char(date::date, \'YYYY-MM\'), to_char(date::date, \'FMMonth YYYY\') ORDER BY month DESC';
 
     const [stats] = await db.query(query, params);
 
@@ -699,8 +700,8 @@ router.post('/send-to-all', authenticateToken, requireTeacher, async (req, res) 
       FROM students s
       LEFT JOIN classes c ON s.class_id = c.id
       LEFT JOIN attendance a ON a.student_id = s.id 
-        AND YEAR(a.date) = ? 
-        AND MONTH(a.date) = ?
+        AND EXTRACT(YEAR FROM a.date::date) = ? 
+        AND EXTRACT(MONTH FROM a.date::date) = ?
       WHERE s.status = 'approved'
         AND s.parent_phone IS NOT NULL 
         AND s.parent_phone != ''

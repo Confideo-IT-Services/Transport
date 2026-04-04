@@ -107,7 +107,7 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
 
     // Set all other years to completed when creating a new active year
     await db.query(
-      'UPDATE academic_years SET status = "completed" WHERE school_id = ? AND status = "active"',
+      `UPDATE academic_years SET status = 'completed' WHERE school_id = ? AND status = 'active'`,
       [schoolId]
     );
 
@@ -219,7 +219,7 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
       // If setting to active, set all others to completed
       if (status === 'active') {
         await db.query(
-          'UPDATE academic_years SET status = "completed" WHERE school_id = ? AND id != ? AND status = "active"',
+          `UPDATE academic_years SET status = 'completed' WHERE school_id = ? AND id != ? AND status = 'active'`,
           [schoolId, id]
         );
       }
@@ -332,7 +332,7 @@ router.post('/:id/promote-students', authenticateToken, requireAdmin, async (req
        WHERE s.school_id = ? 
        AND s.status = 'approved'
        AND (s.tc_status IS NULL OR s.tc_status = 'none')
-       ORDER BY c.name, c.section, CAST(s.roll_no AS UNSIGNED)`,
+       ORDER BY c.name, c.section, (NULLIF(regexp_replace(TRIM(COALESCE(s.roll_no::text, '')), '[^0-9]', '', 'g'), '')::bigint) NULLS LAST`,
       [schoolId]
     );
 
@@ -442,7 +442,9 @@ router.post('/:id/promote-students', authenticateToken, requireAdmin, async (req
           await db.query(
             `INSERT INTO student_enrollments (id, student_id, academic_year_id, class_id, roll_no, school_id)
              VALUES (?, ?, ?, ?, ?, ?)
-             ON DUPLICATE KEY UPDATE class_id = VALUES(class_id), roll_no = VALUES(roll_no)`,
+             ON CONFLICT (student_id, academic_year_id) DO UPDATE SET
+               class_id = EXCLUDED.class_id,
+               roll_no = EXCLUDED.roll_no`,
             [uuidv4(), student.id, newAcademicYearId, nextClass.id, student.roll_no || null, schoolId]
           );
         } catch (enrollErr) {
@@ -541,7 +543,7 @@ router.get('/:id/class/:classId/yearly-summary', authenticateToken, requireAdmin
          AND se.school_id = ?
          AND s.status = 'approved'
        GROUP BY s.id, s.name, s.roll_no, s.tc_status, se.class_id
-       ORDER BY CAST(s.roll_no AS UNSIGNED), s.name`,
+       ORDER BY (NULLIF(regexp_replace(TRIM(COALESCE(s.roll_no::text, '')), '[^0-9]', '', 'g'), '')::bigint) NULLS LAST, s.name`,
       [academicYearId, academicYearId, classId, schoolId]
     );
 

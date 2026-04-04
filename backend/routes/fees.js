@@ -90,8 +90,8 @@ router.post('/categories', authenticateToken, requireAdmin, async (req, res) => 
     const categoryId = uuidv4();
     await db.query(
       `INSERT INTO fee_categories (id, school_id, name, amount, frequency, description, is_active, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, true, NOW())`,
-      [categoryId, schoolId, name, amount, frequency, description || null]
+       VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+      [categoryId, schoolId, name, amount, frequency, description || null, 1]
     );
 
     console.log('✅ Fee category created:', { categoryId, name, amount, frequency, schoolId });
@@ -149,7 +149,7 @@ router.put('/categories/:id', authenticateToken, requireAdmin, async (req, res) 
       `UPDATE fee_categories 
        SET name = ?, amount = ?, frequency = ?, description = ?, is_active = ?, updated_at = NOW()
        WHERE id = ? AND school_id = ?`,
-      [name, amount, frequency, description || null, isActive !== false, id, schoolId]
+      [name, amount, frequency, description || null, isActive !== false ? 1 : 0, id, schoolId]
     );
 
     res.json({ success: true });
@@ -646,7 +646,7 @@ router.get('/students', authenticateToken, async (req, res) => {
       params.push(searchPattern, searchPattern);
     }
 
-    query += ' ORDER BY CAST(s.roll_no AS UNSIGNED), s.name';
+    query += " ORDER BY (NULLIF(regexp_replace(TRIM(COALESCE(s.roll_no::text, '')), '[^0-9]', '', 'g'), '')::bigint) NULLS LAST, s.name";
 
     const [results] = await db.query(query, params);
 
@@ -1021,14 +1021,14 @@ router.post('/students', authenticateToken, requireAdmin, async (req, res) => {
     try {
       // Check if columns exist by querying information_schema
       const [columns] = await db.query(`
-        SELECT COLUMN_NAME 
-        FROM INFORMATION_SCHEMA.COLUMNS 
-        WHERE TABLE_SCHEMA = DATABASE() 
-        AND TABLE_NAME = 'student_fees' 
-        AND COLUMN_NAME IN ('tuition_fee', 'transport_fee', 'lab_fee', 'other_fees')
+        SELECT column_name AS column_name
+        FROM information_schema.columns 
+        WHERE table_schema = current_schema()
+        AND table_name = 'student_fees' 
+        AND column_name IN ('tuition_fee', 'transport_fee', 'lab_fee', 'other_fees')
       `);
       
-      const existingColumns = columns.map(col => col.COLUMN_NAME);
+      const existingColumns = columns.map(col => col.column_name);
       
       if (!existingColumns.includes('tuition_fee')) {
         await db.query('ALTER TABLE student_fees ADD COLUMN tuition_fee DECIMAL(10,2) NULL');
@@ -1176,14 +1176,14 @@ router.put('/students/:studentFeeId', authenticateToken, requireAdmin, async (re
     try {
       // Check if columns exist by querying information_schema
       const [columns] = await db.query(`
-        SELECT COLUMN_NAME 
-        FROM INFORMATION_SCHEMA.COLUMNS 
-        WHERE TABLE_SCHEMA = DATABASE() 
-        AND TABLE_NAME = 'student_fees' 
-        AND COLUMN_NAME IN ('tuition_fee', 'transport_fee', 'lab_fee', 'other_fees')
+        SELECT column_name AS column_name
+        FROM information_schema.columns 
+        WHERE table_schema = current_schema()
+        AND table_name = 'student_fees' 
+        AND column_name IN ('tuition_fee', 'transport_fee', 'lab_fee', 'other_fees')
       `);
       
-      const existingColumns = columns.map(col => col.COLUMN_NAME);
+      const existingColumns = columns.map(col => col.column_name);
       
       if (!existingColumns.includes('tuition_fee')) {
         await db.query('ALTER TABLE student_fees ADD COLUMN tuition_fee DECIMAL(10,2) NULL');
