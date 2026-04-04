@@ -1,9 +1,36 @@
+import os
 import re
 
 import psycopg2
 import psycopg2.extras
 
-from app.config import DB_HOST, DB_NAME, DB_PASSWORD, DB_PORT, DB_USER
+from app.config import (
+    DB_HOST,
+    DB_NAME,
+    DB_PASSWORD,
+    DB_PORT,
+    DB_SCHEMA,
+    DB_SSL,
+    DB_SSL_CA_PATH,
+    DB_SSL_MODE,
+    DB_USER,
+)
+
+_SCHEMA_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+
+
+def _validated_db_schema():
+    if not DB_SCHEMA:
+        return None
+    if not _SCHEMA_RE.match(DB_SCHEMA):
+        raise ValueError(
+            f"Invalid DB_SCHEMA {DB_SCHEMA!r}: use [a-zA-Z0-9_], start with letter or underscore."
+        )
+    return DB_SCHEMA
+
+
+def _pg_catalog_schema_name():
+    return _validated_db_schema() or "public"
 
 # Tables that are scoped by school_id (used for school_admin filtering).
 # Tables without school_id are either global (e.g. academic_years, subjects) or linked via FKs.
@@ -39,15 +66,35 @@ SCHOOL_SCOPED_TABLES = frozenset(
 )
 
 
+def _connect_kwargs():
+    kw = dict(
+        host=DB_HOST,
+        port=DB_PORT,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        dbname=DB_NAME,
+    )
+    if DB_SSL:
+        if DB_SSL_CA_PATH:
+            ca = DB_SSL_CA_PATH
+            if not os.path.isabs(ca):
+                ca = os.path.abspath(os.path.join(os.getcwd(), ca))
+            if not os.path.isfile(ca):
+                raise FileNotFoundError(
+                    f"DB_SSL_CA_PATH not found: {ca}. "
+                    "Download https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem"
+                )
+            mode = DB_SSL_MODE if DB_SSL_MODE in ("verify-full", "verify-ca") else "verify-full"
+            kw["sslmode"] = mode
+            kw["sslrootcert"] = ca
+        else:
+            kw["sslmode"] = "require"
+    return kw
+
+
 def get_connection():
     try:
-        return psycopg2.connect(
-            host=DB_HOST,
-            port=DB_PORT,
-            user=DB_USER,
-            password=DB_PASSWORD,
-            dbname=DB_NAME,
-        )
+        return psycopg2.connect(**_connect_kwargs())
     except psycopg2.OperationalError as e:
         raise Exception(f"Failed to connect to PostgreSQL database: {e}") from e
 
@@ -58,13 +105,15 @@ def get_schema() -> str:
     conn = get_connection()
     try:
         cursor = conn.cursor()
+        schema = _pg_catalog_schema_name()
         cursor.execute(
             """
             SELECT table_name, column_name, data_type, is_nullable, column_default
             FROM information_schema.columns
-            WHERE table_schema = 'public'
+            WHERE table_schema = %s
             ORDER BY table_name, ordinal_position
             """,
+            (schema,),
         )
         rows = cursor.fetchall()
         by_table = {}
@@ -201,12 +250,14 @@ def fetch_table_data():
     connection = get_connection()
     try:
         cursor = connection.cursor()
+        schema = _pg_catalog_schema_name()
         cursor.execute(
             """
             SELECT tablename FROM pg_catalog.pg_tables
-            WHERE schemaname = 'public'
+            WHERE schemaname = %s
             ORDER BY tablename
-            """
+            """,
+            (schema,),
         )
         tables = cursor.fetchall()
         documents = []

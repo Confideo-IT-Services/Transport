@@ -368,7 +368,7 @@ router.post('/:id/completions', authenticateToken, requireTeacher, async (req, r
            is_completed = EXCLUDED.is_completed,
            completed_at = EXCLUDED.completed_at,
            updated_at = NOW()`,
-        [uuidv4(), id, studentId, completed, completed ? new Date() : null]
+        [uuidv4(), id, studentId, completed ? 1 : 0, completed ? new Date() : null]
       );
 
       res.json({ success: true });
@@ -451,7 +451,7 @@ router.post('/:id/completions/bulk', authenticateToken, requireTeacher, async (r
                is_completed = EXCLUDED.is_completed,
                completed_at = EXCLUDED.completed_at,
                updated_at = NOW()`,
-            [uuidv4(), id, comp.studentId, comp.completed, comp.completed ? new Date() : null]
+            [uuidv4(), id, comp.studentId, comp.completed ? 1 : 0, comp.completed ? new Date() : null]
           );
         } catch (dbError) {
           console.error('Database error for student:', comp.studentId, dbError);

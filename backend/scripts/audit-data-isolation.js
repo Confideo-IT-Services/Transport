@@ -5,6 +5,9 @@
 
 require('dotenv').config();
 const db = require('../config/database');
+const { getPgCatalogSchemaName } = require('../config/pgSchema');
+
+const PG_CATALOG_SCHEMA = getPgCatalogSchemaName();
 
 async function auditDataIsolation() {
   console.log('🔍 Starting Security Audit for Data Isolation...\n');
@@ -121,8 +124,8 @@ async function auditDataIsolation() {
     for (const table of tablesToCheck) {
       try {
         const [indexes] = await db.query(
-          `SELECT indexname FROM pg_indexes WHERE schemaname = 'public' AND tablename = $1 AND indexdef LIKE '%school_id%'`,
-          [table]
+          `SELECT indexname FROM pg_indexes WHERE schemaname = $1 AND tablename = $2 AND indexdef LIKE '%school_id%'`,
+          [PG_CATALOG_SCHEMA, table]
         );
         if (indexes.length === 0) {
           warnings.push({

@@ -284,7 +284,7 @@ router.post('/', async (req, res) => {
     // If registrationCode is provided, get schoolId and classId from registration link
     if (registrationCode) {
       const [links] = await db.query(
-        'SELECT school_id, class_id, link_type, field_config FROM registration_links WHERE link_code = ? AND is_active = TRUE AND (expires_at IS NULL OR expires_at > NOW())',
+        'SELECT school_id, class_id, link_type, field_config FROM registration_links WHERE link_code = ? AND is_active = 1 AND (expires_at IS NULL OR expires_at > NOW())',
         [registrationCode]
       );
       if (links.length > 0) {

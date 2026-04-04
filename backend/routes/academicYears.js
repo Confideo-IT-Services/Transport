@@ -107,7 +107,7 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
 
     // Set all other years to completed when creating a new active year
     await db.query(
-      'UPDATE academic_years SET status = "completed" WHERE school_id = ? AND status = "active"',
+      `UPDATE academic_years SET status = 'completed' WHERE school_id = ? AND status = 'active'`,
       [schoolId]
     );
 
@@ -219,7 +219,7 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
       // If setting to active, set all others to completed
       if (status === 'active') {
         await db.query(
-          'UPDATE academic_years SET status = "completed" WHERE school_id = ? AND id != ? AND status = "active"',
+          `UPDATE academic_years SET status = 'completed' WHERE school_id = ? AND id != ? AND status = 'active'`,
           [schoolId, id]
         );
       }

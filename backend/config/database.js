@@ -1,13 +1,13 @@
 const { Pool } = require('pg');
+const { buildPgSslOptions } = require('./pgSsl');
+const { validatedDbSchemaFromEnv, pgSearchPathOptions } = require('./pgSchema');
 
-function buildSslOption() {
-  const v = process.env.DB_SSL;
-  if (v === 'true' || v === '1' || v === 'require') {
-    return {
-      rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false',
-    };
-  }
-  return undefined;
+let validatedSchema;
+try {
+  validatedSchema = validatedDbSchemaFromEnv();
+} catch (e) {
+  console.error('❌', e.message);
+  throw e;
 }
 
 const rawPool = new Pool({
@@ -17,7 +17,8 @@ const rawPool = new Pool({
   password: process.env.DB_PASSWORD || '',
   database: process.env.DB_NAME || 'allpulse',
   max: 10,
-  ssl: buildSslOption(),
+  ssl: buildPgSslOptions(),
+  ...pgSearchPathOptions(validatedSchema),
 });
 
 /**
@@ -117,7 +118,8 @@ const poolExport = {
 poolExport
   .getConnection()
   .then((connection) => {
-    console.log('✅ Database connected successfully (PostgreSQL, Asia/Kolkata)');
+    const schemaNote = validatedSchema ? `, schema: ${validatedSchema}` : '';
+    console.log(`✅ Database connected successfully (PostgreSQL, Asia/Kolkata${schemaNote})`);
     connection.release();
   })
   .catch((err) => {

@@ -5,17 +5,25 @@
  */
 require('dotenv').config();
 const { Client } = require('pg');
+const { buildPgSslOptions } = require('./config/pgSsl');
+const {
+  validatedDbSchemaFromEnv,
+  pgSearchPathOptions,
+  getPgCatalogSchemaName,
+} = require('./config/pgSchema');
 
-function buildSslOption() {
-  const v = process.env.DB_SSL;
-  if (v === 'true' || v === '1' || v === 'require') {
-    return { rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false' };
-  }
-  return undefined;
+let schemaOpts = {};
+try {
+  schemaOpts = pgSearchPathOptions(validatedDbSchemaFromEnv());
+} catch (e) {
+  console.error('❌', e.message);
+  process.exit(1);
 }
 
 async function setupCompleteSchema() {
   console.log('🚀 ConventPulse database verification (PostgreSQL)\n');
+
+  const catalogSchema = getPgCatalogSchemaName();
 
   const config = {
     host: process.env.DB_HOST || 'localhost',
@@ -23,14 +31,16 @@ async function setupCompleteSchema() {
     user: process.env.DB_USER || 'postgres',
     password: process.env.DB_PASSWORD || '',
     database: process.env.DB_NAME || 'allpulse',
-    ssl: buildSslOption(),
+    ssl: buildPgSslOptions(),
+    ...schemaOpts,
   };
 
   console.log('📋 Connection Configuration:');
   console.log(`   Host: ${config.host}`);
   console.log(`   Port: ${config.port}`);
   console.log(`   User: ${config.user}`);
-  console.log(`   Database: ${config.database}\n`);
+  console.log(`   Database: ${config.database}`);
+  console.log(`   DB_SCHEMA (catalog): ${catalogSchema}\n`);
 
   const expectedTables = [
     'schools',
@@ -68,11 +78,12 @@ async function setupCompleteSchema() {
     console.log('✅ Connected to PostgreSQL.\n');
 
     const { rows: tables } = await client.query(
-      `SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = 'public' ORDER BY tablename`
+      `SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = $1 ORDER BY tablename`,
+      [catalogSchema]
     );
     const tableNames = tables.map((t) => t.tablename);
 
-    console.log(`📊 Found ${tableNames.length} table(s) in schema public:\n`);
+    console.log(`📊 Found ${tableNames.length} table(s) in schema ${catalogSchema}:\n`);
     tableNames.forEach((tableName, index) => {
       const exists = expectedTables.includes(tableName);
       const status = exists ? '✅' : '⚠️ ';

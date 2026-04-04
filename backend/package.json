@@ -5,7 +5,9 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "create-superadmin": "node create-superadmin.js",
+    "fix-superadmin-password": "node fix-superadmin-password.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.967.0",

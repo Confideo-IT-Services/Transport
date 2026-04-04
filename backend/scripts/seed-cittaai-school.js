@@ -135,8 +135,8 @@ async function seedCittaAISchool() {
     const adminId = uuidv4();
     await connection.query(
       `INSERT INTO users (id, email, password, name, role, school_id, is_active, created_at)
-       VALUES (?, ?, ?, ?, 'admin', ?, true, NOW())`,
-      [adminId, 'admin@cittaai.edu', hashedPassword, 'CittaAI Admin', schoolId]
+       VALUES (?, ?, ?, ?, 'admin', ?, ?, NOW())`,
+      [adminId, 'admin@cittaai.edu', hashedPassword, 'CittaAI Admin', schoolId, 1]
     );
     console.log('✅ Admin created: admin@cittaai.edu / password');
     
@@ -217,7 +217,7 @@ async function seedCittaAISchool() {
       
       await connection.query(
         `INSERT INTO teachers (id, username, password, name, email, phone, school_id, class_id, is_active, subjects, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, true, ?, NOW())`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
         [
           teacherId,
           username,
@@ -227,6 +227,7 @@ async function seedCittaAISchool() {
           generatePhone(),
           schoolId,
           classInfo.id,
+          1,
           JSON.stringify(subjects)
         ]
       );
@@ -249,7 +250,7 @@ async function seedCittaAISchool() {
       
       await connection.query(
         `INSERT INTO teachers (id, username, password, name, email, phone, school_id, class_id, is_active, subjects, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, NULL, true, ?, NOW())`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NOW())`,
         [
           teacherId,
           username,
@@ -258,6 +259,7 @@ async function seedCittaAISchool() {
           generateEmail(teacherName),
           generatePhone(),
           schoolId,
+          1,
           JSON.stringify(subjects)
         ]
       );

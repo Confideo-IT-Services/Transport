@@ -58,7 +58,7 @@ async function addCittaAITimetable() {
     
     // 3. Get all teachers for this school
     const [teachersRows] = await connection.query(
-      `SELECT id, name, class_id, subjects FROM teachers WHERE school_id = ? AND is_active = true`,
+      `SELECT id, name, class_id, subjects FROM teachers WHERE school_id = ? AND is_active = 1`,
       [schoolId]
     );
     

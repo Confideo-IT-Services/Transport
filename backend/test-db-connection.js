@@ -1,16 +1,24 @@
 require('dotenv').config();
 const { Client } = require('pg');
+const { buildPgSslOptions } = require('./config/pgSsl');
+const {
+  validatedDbSchemaFromEnv,
+  pgSearchPathOptions,
+  getPgCatalogSchemaName,
+} = require('./config/pgSchema');
 
-function buildSslOption() {
-  const v = process.env.DB_SSL;
-  if (v === 'true' || v === '1' || v === 'require') {
-    return { rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false' };
-  }
-  return undefined;
+let schemaOpts = {};
+try {
+  schemaOpts = pgSearchPathOptions(validatedDbSchemaFromEnv());
+} catch (e) {
+  console.error('❌', e.message);
+  process.exit(1);
 }
 
 async function testConnection() {
   console.log('🔍 Testing database connection...\n');
+
+  const catalogSchema = getPgCatalogSchemaName();
 
   const config = {
     host: process.env.DB_HOST || 'localhost',
@@ -19,7 +27,8 @@ async function testConnection() {
     password: process.env.DB_PASSWORD || '',
     database: process.env.DB_NAME || 'allpulse',
     connectionTimeoutMillis: 10000,
-    ssl: buildSslOption(),
+    ssl: buildPgSslOptions(),
+    ...schemaOpts,
   };
 
   console.log('📋 Connection Configuration:');
@@ -27,6 +36,7 @@ async function testConnection() {
   console.log(`   Port: ${config.port}`);
   console.log(`   User: ${config.user}`);
   console.log(`   Database: ${config.database}`);
+  console.log(`   DB_SCHEMA (catalog): ${catalogSchema}`);
   console.log(`   Password: ${config.password ? '***' + config.password.slice(-2) : '(empty)'}\n`);
 
   const client = new Client(config);
@@ -45,10 +55,14 @@ async function testConnection() {
     console.log('   Result:', rows[0]);
 
     try {
+      const sp = await client.query('SHOW search_path');
+      console.log('   search_path:', sp.rows[0]?.search_path);
+
       const tablesRes = await client.query(
-        `SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = 'public' ORDER BY tablename`
+        `SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = $1 ORDER BY tablename`,
+        [catalogSchema]
       );
-      console.log(`\n📊 Found ${tablesRes.rows.length} table(s) in schema 'public':`);
+      console.log(`\n📊 Found ${tablesRes.rows.length} table(s) in schema '${catalogSchema}':`);
       tablesRes.rows.forEach((row, index) => {
         console.log(`   ${index + 1}. ${row.tablename}`);
       });

@@ -1,3 +1,8 @@
+/**
+ * Reset password for an existing superadmin. To create a new superadmin user, run:
+ *   node create-superadmin.js <email> <password> [display_name]
+ *   npm run create-superadmin -- <email> <password> [display_name]
+ */
 require('dotenv').config();
 const bcrypt = require('bcryptjs');
 const db = require('./config/database');

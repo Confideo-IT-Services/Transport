@@ -90,8 +90,8 @@ router.post('/categories', authenticateToken, requireAdmin, async (req, res) => 
     const categoryId = uuidv4();
     await db.query(
       `INSERT INTO fee_categories (id, school_id, name, amount, frequency, description, is_active, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, true, NOW())`,
-      [categoryId, schoolId, name, amount, frequency, description || null]
+       VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+      [categoryId, schoolId, name, amount, frequency, description || null, 1]
     );
 
     console.log('✅ Fee category created:', { categoryId, name, amount, frequency, schoolId });
@@ -149,7 +149,7 @@ router.put('/categories/:id', authenticateToken, requireAdmin, async (req, res) 
       `UPDATE fee_categories 
        SET name = ?, amount = ?, frequency = ?, description = ?, is_active = ?, updated_at = NOW()
        WHERE id = ? AND school_id = ?`,
-      [name, amount, frequency, description || null, isActive !== false, id, schoolId]
+      [name, amount, frequency, description || null, isActive !== false ? 1 : 0, id, schoolId]
     );
 
     res.json({ success: true });

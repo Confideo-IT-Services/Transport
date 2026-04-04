@@ -99,7 +99,7 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
     await connection.query(
       `INSERT INTO registration_links 
        (id, school_id, name, link_type, teacher_id, class_id, link_code, field_config, expires_at, is_active, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, NOW())`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
       [
         linkId,
         schoolId,
@@ -109,7 +109,8 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
         finalClassId,
         linkCode,
         JSON.stringify(fieldConfig || []),
-        expiresAtDate
+        expiresAtDate,
+        1
       ]
     );
 
@@ -272,7 +273,7 @@ router.get('/code/:code', async (req, res) => {
     // First get the registration link
     const [links] = await db.query(
       `SELECT * FROM registration_links 
-       WHERE link_code = ? AND is_active = TRUE
+       WHERE link_code = ? AND is_active = 1
        AND (expires_at IS NULL OR expires_at > NOW())`,
       [code]
     );
@@ -365,7 +366,7 @@ router.patch('/:id/deactivate', authenticateToken, requireAdmin, async (req, res
     const schoolId = req.user.schoolId;
 
     const [result] = await db.query(
-      'UPDATE registration_links SET is_active = FALSE WHERE id = ? AND school_id = ?',
+      'UPDATE registration_links SET is_active = 0 WHERE id = ? AND school_id = ?',
       [id, schoolId]
     );
 
