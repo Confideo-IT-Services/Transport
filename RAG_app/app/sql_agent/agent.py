@@ -84,7 +84,7 @@ Use the following format:
 Question: the input question you must answer
 Thought: you should always think about what to do
 Action: the action to take, should be one of [{tool_names}]
-Action Input: the input to the action (for execute_sql_tool pass a valid MySQL SELECT query as a single line or escaped string)
+Action Input: the input to the action (for execute_sql_tool pass a valid PostgreSQL SELECT query as a single line or escaped string; tables are unqualified — DB_SCHEMA sets search_path)
 Observation: the result of the action
 ... (this Thought/Action/Action Input/Observation can repeat N times)
 Thought: I now know the final answer
