@@ -260,9 +260,10 @@ router.post('/notifications/:id/read', authenticateToken, async (req, res) => {
     // Update read status for all notifications linked to parent's children across all schools
     await db.query(
       `UPDATE notification_recipients nr
-       JOIN students s ON nr.student_id = s.id
-       SET nr.is_read = 1, nr.read_at = NOW() 
-       WHERE nr.notification_id = ? 
+       SET nr.is_read = TRUE, nr.read_at = NOW()
+       FROM students s
+       WHERE nr.student_id = s.id
+         AND nr.notification_id = ? 
          AND nr.recipient_type = 'parent'
          AND s.parent_phone = ?`,
       [id, cleanedPhone]

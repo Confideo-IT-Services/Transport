@@ -30,9 +30,9 @@ router.get('/inbox', authenticateToken, requireTeacher, async (req, res) => {
       // For admin: show notifications sent to teachers in their school, exclude their own sent notifications
       // Check if admin has read status via LEFT JOIN
       query = `
-        SELECT n.*, u.name as sender_name, u.role as sender_role,
-               COALESCE(admin_nr.is_read, 0) as is_read,
-               admin_nr.read_at
+         SELECT n.*, u.name as sender_name, u.role as sender_role,
+           COALESCE(admin_nr.is_read, false) as is_read,
+           admin_nr.read_at
         FROM notifications n
         JOIN notification_recipients nr ON n.id = nr.notification_id
         JOIN users u ON n.sender_id = u.id
@@ -93,7 +93,7 @@ router.get('/sent', authenticateToken, requireTeacher, async (req, res) => {
 
       // Find admin for this school (same logic as in POST route)
       const [admins] = await db.query(
-        'SELECT id FROM users WHERE school_id = ? AND role = ? AND is_active = 1 LIMIT 1',
+        'SELECT id FROM users WHERE school_id = ? AND role = ? AND is_active = TRUE LIMIT 1',
         [schoolId, 'admin']
       );
 
@@ -245,13 +245,13 @@ router.post('/', authenticateToken, requireTeacher, async (req, res) => {
         
         // Now find admin for this school
         const [admins] = await db.query(
-          'SELECT id, email, name, school_id, role FROM users WHERE school_id = ? AND role = ? AND is_active = 1 LIMIT 1',
+          'SELECT id, email, name, school_id, role FROM users WHERE school_id = ? AND role = ? AND is_active = TRUE LIMIT 1',
           [schoolId, 'admin']
         );
 
         console.log('🔍 Admin lookup result:', {
           schoolId: schoolId,
-          queryUsed: 'SELECT id FROM users WHERE school_id = ? AND role = ? AND is_active = 1',
+          queryUsed: 'SELECT id FROM users WHERE school_id = ? AND role = ? AND is_active = TRUE',
           adminsFound: admins.length,
           adminId: admins.length > 0 ? admins[0].id : null,
           adminDetails: admins.length > 0 ? {
@@ -563,7 +563,7 @@ router.post('/:id/read', authenticateToken, requireTeacher, async (req, res) => 
       // For teachers: update existing recipient record
       const [result] = await db.query(
         `UPDATE notification_recipients 
-         SET is_read = 1, read_at = NOW() 
+         SET is_read = TRUE, read_at = NOW() 
          WHERE notification_id = ? 
            AND recipient_type = ? 
            AND recipient_id = ?`,
@@ -595,11 +595,11 @@ router.post('/:id/read', authenticateToken, requireTeacher, async (req, res) => 
         [id, req.user.id]
       );
 
-      if (existing.length > 0) {
+        if (existing.length > 0) {
         // Update existing record
         await db.query(
           `UPDATE notification_recipients 
-           SET is_read = 1, read_at = NOW() 
+           SET is_read = TRUE, read_at = NOW() 
            WHERE notification_id = ? 
              AND recipient_id = ? 
              AND recipient_type = 'teacher'`,
@@ -613,7 +613,7 @@ router.post('/:id/read', authenticateToken, requireTeacher, async (req, res) => 
           `INSERT INTO notification_recipients 
            (id, notification_id, recipient_type, recipient_id, student_id, is_read, read_at)
            VALUES (?, ?, ?, ?, ?, ?, NOW())`,
-          [uuidv4(), id, 'teacher', req.user.id, null, 1]
+          [uuidv4(), id, 'teacher', req.user.id, null, true]
         );
       }
     } else {
