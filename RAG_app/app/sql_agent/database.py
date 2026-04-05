@@ -19,6 +19,26 @@ from app.config import (
 _SCHEMA_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 
+def _rag_app_root() -> str:
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+
+def _repo_root() -> str:
+    return os.path.abspath(os.path.join(_rag_app_root(), ".."))
+
+
+def _resolve_ssl_ca_path(raw: str) -> str:
+    ca = raw.strip()
+    if os.path.isabs(ca):
+        return ca
+    rel = ca.replace("\\", "/")
+    for base in (os.getcwd(), _repo_root(), _rag_app_root()):
+        candidate = os.path.normpath(os.path.join(base, rel))
+        if os.path.isfile(candidate):
+            return candidate
+    return os.path.normpath(os.path.join(os.getcwd(), rel))
+
+
 def _validated_db_schema():
     if not DB_SCHEMA:
         return None
@@ -74,14 +94,19 @@ def _connect_kwargs():
         password=DB_PASSWORD,
         dbname=DB_NAME,
     )
+    # Unqualified table names in LLM-generated SQL (e.g. FROM schools) resolve via search_path.
+    # Must match backend DB_SCHEMA / pool options or queries hit empty "public" and fail.
+    schema = _validated_db_schema()
+    if schema:
+        kw["options"] = f"-c search_path={schema},public"
     if DB_SSL:
         if DB_SSL_CA_PATH:
-            ca = DB_SSL_CA_PATH
-            if not os.path.isabs(ca):
-                ca = os.path.abspath(os.path.join(os.getcwd(), ca))
+            ca = _resolve_ssl_ca_path(DB_SSL_CA_PATH)
             if not os.path.isfile(ca):
                 raise FileNotFoundError(
                     f"DB_SSL_CA_PATH not found: {ca}. "
+                    "Use an absolute path, or a path under RAG_app/, or place the bundle at "
+                    "backend/certs/rds-global-bundle.pem. "
                     "Download https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem"
                 )
             mode = DB_SSL_MODE if DB_SSL_MODE in ("verify-full", "verify-ca") else "verify-full"
