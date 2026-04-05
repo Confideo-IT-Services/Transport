@@ -440,11 +440,12 @@ router.post('/:id/promote-students', authenticateToken, requireAdmin, async (req
         );
         try {
           await db.query(
-            `INSERT INTO student_enrollments (id, student_id, academic_year_id, class_id, roll_no, school_id)
-             VALUES (?, ?, ?, ?, ?, ?)
+            `INSERT INTO student_enrollments (id, student_id, academic_year_id, class_id, roll_no, school_id, enrolled_at)
+             VALUES (?, ?, ?, ?, ?, ?, NOW())
              ON CONFLICT (student_id, academic_year_id) DO UPDATE SET
                class_id = EXCLUDED.class_id,
-               roll_no = EXCLUDED.roll_no`,
+               roll_no = EXCLUDED.roll_no,
+               enrolled_at = EXCLUDED.enrolled_at`,
             [uuidv4(), student.id, newAcademicYearId, nextClass.id, student.roll_no || null, schoolId]
           );
         } catch (enrollErr) {
@@ -762,8 +763,8 @@ router.post('/:fromYearId/promote', authenticateToken, requireAdmin, async (req,
         for (const studentId of newStudentIds) {
           const rollNo = rollMap.get(studentId) || null;
           await db.query(
-            `INSERT INTO student_enrollments (id, student_id, academic_year_id, class_id, roll_no, school_id)
-             VALUES (?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO student_enrollments (id, student_id, academic_year_id, class_id, roll_no, school_id, enrolled_at)
+             VALUES (?, ?, ?, ?, ?, ?, NOW())`,
             [uuidv4(), studentId, toAcademicYearId, toClassId, rollNo, schoolId]
           );
         }

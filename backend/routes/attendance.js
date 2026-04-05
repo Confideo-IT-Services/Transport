@@ -120,7 +120,7 @@ router.post('/students', authenticateToken, async (req, res) => {
       } else {
         // Fallback: get any active teacher from the school
         const [teachers] = await db.query(
-          `SELECT id FROM teachers WHERE school_id = ? AND is_active = 1 LIMIT 1`,
+          `SELECT id FROM teachers WHERE school_id = ? AND is_active = TRUE LIMIT 1`,
           [req.user.schoolId]
         );
         if (teachers.length > 0) {
@@ -129,8 +129,8 @@ router.post('/students', authenticateToken, async (req, res) => {
       }
     } else if (req.user.role === 'teacher') {
       // Verify the teacher exists in the teachers table
-      const [teacherCheck] = await db.query(
-        `SELECT id FROM teachers WHERE id = ? AND school_id = ? AND is_active = 1`,
+        const [teacherCheck] = await db.query(
+        `SELECT id FROM teachers WHERE id = ? AND school_id = ? AND is_active = TRUE`,
         [req.user.id, req.user.schoolId]
       );
       
@@ -148,7 +148,7 @@ router.post('/students', authenticateToken, async (req, res) => {
         } else {
           // Fallback: get any active teacher from the school
           const [teachers] = await db.query(
-            `SELECT id FROM teachers WHERE school_id = ? AND is_active = 1 LIMIT 1`,
+            `SELECT id FROM teachers WHERE school_id = ? AND is_active = TRUE LIMIT 1`,
             [req.user.schoolId]
           );
           if (teachers.length > 0) {
@@ -308,7 +308,7 @@ router.get('/teachers', authenticateToken, requireAdmin, async (req, res) => {
     const [teachers] = await db.query(
       `SELECT t.id, t.name, t.username, t.email
        FROM teachers t
-       WHERE t.school_id = ? AND t.is_active = 1
+       WHERE t.school_id = ? AND t.is_active = TRUE
        ORDER BY t.name`,
       [req.user.schoolId]
     );

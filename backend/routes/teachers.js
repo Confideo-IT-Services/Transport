@@ -153,7 +153,7 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
       `INSERT INTO teachers (id, username, password, name, email, phone, subjects, school_id, class_id, is_active, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
       [teacherId, username, hashedPassword, name, email || null, phone || null, 
-       subjects ? JSON.stringify(subjects) : null, schoolId, classId || null, 1]
+       subjects ? JSON.stringify(subjects) : null, schoolId, classId || null, true]
     );
 
     console.log('✅ Teacher created:', { teacherId, username, name, schoolId });
@@ -245,7 +245,7 @@ router.post('/:id/deactivate', authenticateToken, requireAdmin, async (req, res)
       }
     }
 
-    await db.query('UPDATE teachers SET is_active = 0 WHERE id = ?', [id]);
+    await db.query('UPDATE teachers SET is_active = FALSE WHERE id = ?', [id]);
 
     res.json({ success: true });
   } catch (error) {
