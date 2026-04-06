@@ -10,8 +10,21 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { User, Download, FileText, CheckCircle2, Calendar, Clock, BookOpen } from "lucide-react";
 import { format } from "date-fns";
-import { getTodayISTString, formatInIST } from "@/lib/date-ist";
+import { getTodayISTString, formatInIST, formatDateOnlyIST } from "@/lib/date-ist";
 import jsPDF from 'jspdf';
+
+/** YYYY-MM-DD for parent homework filter (assignment date); stable for DB timestamp strings. */
+function homeworkAssignedDayKey(hw: any): string | null {
+  const raw = hw.createdAt ?? hw.created_at;
+  if (raw == null || raw === "") return null;
+  if (typeof raw === "string") {
+    const m = /^(\d{4}-\d{2}-\d{2})/.exec(raw.trim());
+    if (m) return m[1];
+  }
+  const d = raw instanceof Date ? raw : new Date(raw);
+  if (isNaN(d.getTime())) return null;
+  return formatDateOnlyIST(d);
+}
 import html2canvas from 'html2canvas';
 import { useToast } from "@/hooks/use-toast";
 import { toast } from "sonner";
@@ -203,18 +216,17 @@ function ChildDetails({
         }),
       ]);
       
-      // Filter homework by date range (check both dueDate and createdAt)
+      // Filter homework by assignment date (createdAt), not due date — "today" shows work assigned today
       const filteredHomework = hwData.filter((hw: any) => {
         if (!homeworkStartDate && !homeworkEndDate) return true;
-        
-        const hwDate = hw.dueDate || hw.createdAt;
-        if (!hwDate) return true;
-        
-        const hwDateStr = new Date(hwDate).toISOString().split('T')[0];
-        const start = homeworkStartDate || '1900-01-01';
-        const end = homeworkEndDate || '9999-12-31';
-        
-        return hwDateStr >= start && hwDateStr <= end;
+
+        const assignedDayStr = homeworkAssignedDayKey(hw);
+        if (!assignedDayStr) return true;
+
+        const start = homeworkStartDate || "1900-01-01";
+        const end = homeworkEndDate || "9999-12-31";
+
+        return assignedDayStr >= start && assignedDayStr <= end;
       });
       
       console.log('Data loaded:', {

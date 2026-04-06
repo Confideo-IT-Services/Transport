@@ -4,6 +4,7 @@ const router = express.Router();
 const db = require('../config/database');
 const { authenticateToken, requireAdmin, requireTeacher } = require('../middleware/auth');
 const { sendWhatsAppMessage, formatPhoneNumber } = require('../services/whatsappService');
+const { toPgAttendanceStatus, attendanceStatusForApi } = require('../utils/attendanceStatus');
 
 // ============ STUDENT ATTENDANCE ============
 
@@ -39,7 +40,7 @@ router.get('/students/:classId', authenticateToken, async (req, res) => {
       `SELECT a.*, s.name as student_name, s.roll_no 
        FROM attendance a
        JOIN students s ON a.student_id = s.id
-       WHERE a.class_id = ? AND a.date = ?
+       WHERE a.class_id = ? AND a."date" = ?
        ORDER BY (NULLIF(regexp_replace(TRIM(COALESCE(s.roll_no::text, '')), '[^0-9]', '', 'g'), '')::bigint) NULLS LAST`,
       [classId, date]
     );
@@ -65,7 +66,7 @@ router.get('/students/:classId', authenticateToken, async (req, res) => {
         id: s.id,
         name: s.name,
         rollNo: s.roll_no,
-        status: attendanceMap[s.id] || null
+        status: attendanceStatusForApi(attendanceMap[s.id])
       }))
     });
   } catch (error) {
@@ -165,47 +166,48 @@ router.post('/students', authenticateToken, async (req, res) => {
       });
     }
 
-    // Start transaction
-    await db.query('START TRANSACTION');
-
+    // Single connection for BEGIN → DELETE → INSERTs → COMMIT (db.query uses a new client each call)
+    const conn = await db.getConnection();
     try {
-      // Delete existing attendance for this date and class
-      await db.query(
-        `DELETE FROM attendance WHERE class_id = ? AND date = ?`,
+      await conn.beginTransaction();
+      await conn.query(
+        `DELETE FROM attendance WHERE class_id = ? AND "date" = ?`,
         [classId, date]
       );
 
-      // Insert new attendance records
       for (const student of students) {
-        if (student.status && ['present', 'absent', 'late', 'leave'].includes(student.status)) {
-          // Ensure student.id is a string (UUID)
+        const apiStatus = student.status && String(student.status).trim().toLowerCase();
+        if (apiStatus && ['present', 'absent', 'late', 'leave'].includes(apiStatus)) {
+          const pgStatus = toPgAttendanceStatus(apiStatus);
+          if (!pgStatus) continue;
           const studentId = String(student.id);
-          
-          await db.query(
-            `INSERT INTO attendance (id, student_id, class_id, date, status, marked_by)
-             VALUES (?, ?, ?, ?, ?, ?)
-             ON CONFLICT (student_id, date) DO UPDATE SET
-               status = EXCLUDED.status,
-               marked_by = EXCLUDED.marked_by,
-               class_id = EXCLUDED.class_id`,
+          await conn.query(
+            `INSERT INTO attendance (id, student_id, class_id, "date", status, marked_by)
+             VALUES (?, ?, ?, ?, ?, ?)`,
             [
               uuidv4(),
               studentId,
               classId,
               date,
-              student.status,
+              pgStatus,
               markedByTeacherId
             ]
           );
         }
       }
 
-      await db.query('COMMIT');
+      await conn.commit();
       res.json({ success: true });
     } catch (error) {
-      await db.query('ROLLBACK');
+      try {
+        await conn.rollback();
+      } catch (rbErr) {
+        console.error('Attendance save rollback error:', rbErr.message);
+      }
       console.error('Transaction error:', error);
       throw error;
+    } finally {
+      conn.release();
     }
   } catch (error) {
     console.error('Save student attendance error:', error);
@@ -237,17 +239,21 @@ router.get('/students/:classId/history', authenticateToken, async (req, res) => 
       return res.status(404).json({ error: 'Class not found or access denied' });
     }
 
+    // PostgreSQL: json_agg/json_build_object (MySQL used JSON_ARRAYAGG/JSON_OBJECT)
     let query = `
-      SELECT a.date, a.class_id, 
-             JSON_ARRAYAGG(
-               JSON_OBJECT(
-                 'id', s.id,
-                 'name', s.name,
-                 'rollNo', s.roll_no,
-                 'status', a.status
-               )
-             ) as students,
-             MAX(a.created_at) as markedAt
+      SELECT a."date" AS date, a.class_id,
+             COALESCE(
+               json_agg(
+                 json_build_object(
+                   'id', s.id,
+                   'name', s.name,
+                   'rollNo', s.roll_no,
+                   'status', a.status
+                 ) ORDER BY s.name
+               ) FILTER (WHERE s.id IS NOT NULL),
+               '[]'::json
+             ) AS students,
+             MAX(a.created_at) AS "markedAt"
       FROM attendance a
       JOIN students s ON a.student_id = s.id
       WHERE a.class_id = ?
@@ -255,27 +261,28 @@ router.get('/students/:classId/history', authenticateToken, async (req, res) => 
     const params = [classId];
 
     if (startDate) {
-      query += ' AND a.date >= ?';
+      query += ' AND a."date" >= ?';
       params.push(startDate);
     }
     if (endDate) {
-      query += ' AND a.date <= ?';
+      query += ' AND a."date" <= ?';
       params.push(endDate);
     }
 
-    query += ' GROUP BY a.date, a.class_id ORDER BY a.date DESC';
+    query += ' GROUP BY a."date", a.class_id ORDER BY a."date" DESC';
 
     const [records] = await db.query(query, params);
 
     res.json(records.map(r => {
-      // Safely parse students JSON
+      // pg may return json_agg as array/object; keys may be lowercased unless quoted in SQL
       let students = [];
-      if (r.students) {
+      const rawStudents = r.students;
+      if (rawStudents != null) {
         try {
-          if (typeof r.students === 'string') {
-            students = JSON.parse(r.students);
-          } else if (Array.isArray(r.students)) {
-            students = r.students;
+          if (typeof rawStudents === 'string') {
+            students = JSON.parse(rawStudents);
+          } else if (Array.isArray(rawStudents)) {
+            students = rawStudents;
           }
         } catch (e) {
           console.error('Error parsing students JSON:', e);
@@ -283,11 +290,19 @@ router.get('/students/:classId/history', authenticateToken, async (req, res) => 
         }
       }
 
+      const studentsNorm = students.map((st) => ({
+        ...st,
+        status:
+          st && st.status != null && st.status !== ''
+            ? attendanceStatusForApi(st.status)
+            : null,
+      }));
+
       return {
         date: r.date,
-        classId: r.class_id,
-        students: students,
-        markedAt: r.markedAt
+        classId: r.class_id ?? r.classId,
+        students: studentsNorm,
+        markedAt: r.markedAt ?? r.markedat
       };
     }));
   } catch (error) {
@@ -316,7 +331,7 @@ router.get('/teachers', authenticateToken, requireAdmin, async (req, res) => {
     // Get attendance records for the date
     const [attendance] = await db.query(
       `SELECT * FROM teacher_attendance 
-       WHERE school_id = ? AND date = ?`,
+       WHERE school_id = ? AND attendance_date = ?`,
       [req.user.schoolId, targetDate]
     );
 
@@ -332,7 +347,10 @@ router.get('/teachers', authenticateToken, requireAdmin, async (req, res) => {
         id: t.id,
         name: t.name,
         teacherName: t.name,
-        status: att?.status || 'not-marked',
+        status:
+          att != null && att.status != null && att.status !== ''
+            ? attendanceStatusForApi(att.status)
+            : 'not-marked',
         checkIn: att?.check_in_time ? att.check_in_time.substring(0, 5) : null,
         checkOut: att?.check_out_time ? att.check_out_time.substring(0, 5) : null,
         checkInTime: att?.check_in_time || null,
@@ -383,18 +401,19 @@ router.post('/teachers/checkin', authenticateToken, requireTeacher, async (req, 
 
     // Check if attendance record exists
     const [existing] = await db.query(
-      'SELECT * FROM teacher_attendance WHERE teacher_id = ? AND date = ?',
+      'SELECT * FROM teacher_attendance WHERE teacher_id = ? AND attendance_date = ?',
       [teacherId, today]
     );
 
+    const presentPg = toPgAttendanceStatus('present');
     if (existing.length > 0) {
       // Update existing record
       console.log('Updating existing attendance record');
       await db.query(
         `UPDATE teacher_attendance 
-         SET check_in_time = ?, status = 'present', updated_at = NOW()
-         WHERE teacher_id = ? AND date = ?`,
-        [timeStr, teacherId, today]
+         SET check_in_time = ?, status = ?, updated_at = NOW()
+         WHERE teacher_id = ? AND attendance_date = ?`,
+        [timeStr, presentPg, teacherId, today]
       );
     } else {
       // Create new record
@@ -402,9 +421,9 @@ router.post('/teachers/checkin', authenticateToken, requireTeacher, async (req, 
       const attendanceId = uuidv4();
       await db.query(
         `INSERT INTO teacher_attendance 
-         (id, teacher_id, school_id, date, check_in_time, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, 'present', NOW(), NOW())`,
-        [attendanceId, teacherId, schoolId, today, timeStr]
+         (id, teacher_id, school_id, attendance_date, check_in_time, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+        [attendanceId, teacherId, schoolId, today, timeStr, presentPg]
       );
     }
 
@@ -438,7 +457,7 @@ router.post('/teachers/checkout', authenticateToken, requireTeacher, async (req,
     const [result] = await db.query(
       `UPDATE teacher_attendance 
        SET check_out_time = ?, updated_at = NOW()
-       WHERE teacher_id = ? AND date = ?`,
+       WHERE teacher_id = ? AND attendance_date = ?`,
       [timeStr, teacherId, today]
     );
 
@@ -455,9 +474,9 @@ router.post('/teachers/checkout', authenticateToken, requireTeacher, async (req,
 
       await db.query(
         `INSERT INTO teacher_attendance 
-         (id, teacher_id, school_id, date, check_out_time, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, 'present', NOW(), NOW())`,
-        [uuidv4(), teacherId, teachers[0].school_id, today, timeStr]
+         (id, teacher_id, school_id, attendance_date, check_out_time, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+        [uuidv4(), teacherId, teachers[0].school_id, today, timeStr, toPgAttendanceStatus('present')]
       );
     }
 
@@ -485,6 +504,11 @@ router.post('/teachers/mark', authenticateToken, requireAdmin, async (req, res) 
       return res.status(400).json({ error: 'Invalid status' });
     }
 
+    const pgStatus = toPgAttendanceStatus(status);
+    if (!pgStatus) {
+      return res.status(400).json({ error: 'Invalid status' });
+    }
+
     // Verify teacher belongs to admin's school
     const [teachers] = await db.query(
       'SELECT id, school_id FROM teachers WHERE id = ? AND school_id = ?',
@@ -497,7 +521,7 @@ router.post('/teachers/mark', authenticateToken, requireAdmin, async (req, res) 
 
     // Check if record exists
     const [existing] = await db.query(
-      'SELECT * FROM teacher_attendance WHERE teacher_id = ? AND date = ?',
+      'SELECT * FROM teacher_attendance WHERE teacher_id = ? AND attendance_date = ?',
       [teacherId, date]
     );
 
@@ -506,16 +530,16 @@ router.post('/teachers/mark', authenticateToken, requireAdmin, async (req, res) 
       await db.query(
         `UPDATE teacher_attendance 
          SET status = ?, remarks = ?, marked_by = ?, updated_at = NOW()
-         WHERE teacher_id = ? AND date = ?`,
-        [status, remarks || null, req.user.id, teacherId, date]
+         WHERE teacher_id = ? AND attendance_date = ?`,
+        [pgStatus, remarks || null, req.user.id, teacherId, date]
       );
     } else {
       // Create new record
       await db.query(
         `INSERT INTO teacher_attendance 
-         (id, teacher_id, school_id, date, status, remarks, marked_by, created_at, updated_at)
+         (id, teacher_id, school_id, attendance_date, status, remarks, marked_by, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
-        [uuidv4(), teacherId, req.user.schoolId, date, status, remarks || null, req.user.id]
+        [uuidv4(), teacherId, req.user.schoolId, date, pgStatus, remarks || null, req.user.id]
       );
     }
 
@@ -553,16 +577,16 @@ router.get('/teachers/history', authenticateToken, async (req, res) => {
     }
 
     if (startDate) {
-      query += ' AND ta.date >= ?';
+      query += ' AND ta.attendance_date >= ?';
       params.push(startDate);
     }
 
     if (endDate) {
-      query += ' AND ta.date <= ?';
+      query += ' AND ta.attendance_date <= ?';
       params.push(endDate);
     }
 
-    query += ' ORDER BY ta.date DESC, t.name';
+    query += ' ORDER BY ta.attendance_date DESC, t.name';
 
     const [records] = await db.query(query, params);
 
@@ -570,8 +594,8 @@ router.get('/teachers/history', authenticateToken, async (req, res) => {
       id: r.id,
       teacherId: r.teacher_id,
       teacherName: r.teacher_name,
-      date: r.date,
-      status: r.status,
+      date: r.attendance_date ?? r.date,
+      status: attendanceStatusForApi(r.status),
       checkIn: r.check_in_time,
       checkOut: r.check_out_time,
       remarks: r.remarks,
@@ -592,15 +616,16 @@ router.get('/stats/monthly', authenticateToken, async (req, res) => {
     const { classId, month, year } = req.query;
     const targetYear = year || new Date().getFullYear().toString();
 
+    // PostgreSQL: "date" is reserved — quote column; status may be enum with non-lowercase labels
     let query = `
       SELECT 
-        to_char(date::date, 'YYYY-MM') as month,
-        to_char(date::date, 'FMMonth YYYY') as monthName,
-        COUNT(CASE WHEN status = 'present' THEN 1 END) as present,
-        COUNT(CASE WHEN status = 'absent' THEN 1 END) as absent,
-        COUNT(CASE WHEN status = 'leave' THEN 1 END) as leave
+        to_char("date"::date, 'YYYY-MM') as month,
+        to_char("date"::date, 'FMMonth YYYY') as monthName,
+        COUNT(CASE WHEN LOWER(status::text) = 'present' THEN 1 END) as present,
+        COUNT(CASE WHEN LOWER(status::text) = 'absent' THEN 1 END) as absent,
+        COUNT(CASE WHEN LOWER(status::text) = 'leave' THEN 1 END) as leave
       FROM attendance
-      WHERE EXTRACT(YEAR FROM date::date) = ?
+      WHERE EXTRACT(YEAR FROM "date"::date) = ?
     `;
     const params = [targetYear];
 
@@ -610,7 +635,7 @@ router.get('/stats/monthly', authenticateToken, async (req, res) => {
     }
 
     if (month) {
-      query += ' AND EXTRACT(MONTH FROM date::date) = ?';
+      query += ' AND EXTRACT(MONTH FROM "date"::date) = ?';
       params.push(month);
     }
 
@@ -636,7 +661,7 @@ router.get('/stats/monthly', authenticateToken, async (req, res) => {
       params.push(req.user.schoolId, req.user.id);
     }
 
-    query += ' GROUP BY to_char(date::date, \'YYYY-MM\'), to_char(date::date, \'FMMonth YYYY\') ORDER BY month DESC';
+    query += ' GROUP BY to_char("date"::date, \'YYYY-MM\'), to_char("date"::date, \'FMMonth YYYY\') ORDER BY month DESC';
 
     const [stats] = await db.query(query, params);
 
@@ -686,13 +711,13 @@ router.post('/send-to-all', authenticateToken, requireTeacher, async (req, res) 
         s.parent_phone,
         s.parent_name,
         c.name as class_name,
-        COUNT(CASE WHEN a.status = 'present' THEN 1 END) as present_days,
-        COUNT(CASE WHEN a.status IN ('present', 'absent', 'leave') THEN 1 END) as total_days,
+        COUNT(CASE WHEN LOWER(a.status::text) = 'present' THEN 1 END) as present_days,
+        COUNT(CASE WHEN LOWER(a.status::text) IN ('present', 'absent', 'leave') THEN 1 END) as total_days,
         CASE 
-          WHEN COUNT(CASE WHEN a.status IN ('present', 'absent', 'leave') THEN 1 END) > 0
+          WHEN COUNT(CASE WHEN LOWER(a.status::text) IN ('present', 'absent', 'leave') THEN 1 END) > 0
           THEN ROUND(
-            (COUNT(CASE WHEN a.status = 'present' THEN 1 END) * 100.0) / 
-            COUNT(CASE WHEN a.status IN ('present', 'absent', 'leave') THEN 1 END),
+            (COUNT(CASE WHEN LOWER(a.status::text) = 'present' THEN 1 END) * 100.0) / 
+            COUNT(CASE WHEN LOWER(a.status::text) IN ('present', 'absent', 'leave') THEN 1 END),
             1
           )
           ELSE 0
@@ -700,8 +725,8 @@ router.post('/send-to-all', authenticateToken, requireTeacher, async (req, res) 
       FROM students s
       LEFT JOIN classes c ON s.class_id = c.id
       LEFT JOIN attendance a ON a.student_id = s.id 
-        AND EXTRACT(YEAR FROM a.date::date) = ? 
-        AND EXTRACT(MONTH FROM a.date::date) = ?
+        AND EXTRACT(YEAR FROM a."date"::date) = ? 
+        AND EXTRACT(MONTH FROM a."date"::date) = ?
       WHERE s.status = 'approved'
         AND s.parent_phone IS NOT NULL 
         AND s.parent_phone != ''

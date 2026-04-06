@@ -3,6 +3,7 @@ const { v4: uuidv4 } = require('uuid');
 const router = express.Router();
 const db = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
+const { parentDisplayNameFatherFirst } = require('../utils/parentDisplayName');
 
 // Parent: Create visitor request
 router.post('/', authenticateToken, async (req, res) => {
@@ -97,7 +98,7 @@ router.get('/teacher', authenticateToken, async (req, res) => {
     }
 
     const [requests] = await db.query(
-      `SELECT vr.*, s.name as student_name, s.parent_name, s.parent_phone,
+      `SELECT vr.*, s.name as student_name, s.parent_name, s.parent_phone, s.submitted_data,
               c.name as class_name, c.section as class_section
        FROM visitor_requests vr
        JOIN students s ON s.id = vr.student_id
@@ -107,7 +108,16 @@ router.get('/teacher', authenticateToken, async (req, res) => {
       [req.user.id, req.user.schoolId]
     );
 
-    res.json(requests);
+    res.json(
+      requests.map((r) => {
+        const { submitted_data, ...rest } = r;
+        const resolved =
+          parentDisplayNameFatherFirst({ submitted_data, parent_name: r.parent_name }) ||
+          r.parent_name ||
+          null;
+        return { ...rest, parent_name: resolved };
+      })
+    );
   } catch (error) {
     console.error('Get teacher visitor requests error:', error);
     res.status(500).json({ error: 'Failed to fetch visitor requests' });
@@ -164,7 +174,7 @@ router.get('/admin', authenticateToken, async (req, res) => {
     }
 
     const [requests] = await db.query(
-      `SELECT vr.*, s.name as student_name, s.parent_name, s.parent_phone,
+      `SELECT vr.*, s.name as student_name, s.parent_name, s.parent_phone, s.submitted_data,
               c.name as class_name, c.section as class_section,
               t.name as teacher_name, t.phone as teacher_phone
        FROM visitor_requests vr
@@ -176,7 +186,16 @@ router.get('/admin', authenticateToken, async (req, res) => {
       [req.user.schoolId]
     );
 
-    res.json(requests);
+    res.json(
+      requests.map((r) => {
+        const { submitted_data, ...rest } = r;
+        const resolved =
+          parentDisplayNameFatherFirst({ submitted_data, parent_name: r.parent_name }) ||
+          r.parent_name ||
+          null;
+        return { ...rest, parent_name: resolved };
+      })
+    );
   } catch (error) {
     console.error('Get admin visitor requests error:', error);
     res.status(500).json({ error: 'Failed to fetch visitor requests' });

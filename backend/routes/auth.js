@@ -4,6 +4,34 @@ const router = express.Router();
 const db = require('../config/database');
 const { generateToken, authenticateToken } = require('../middleware/auth');
 
+function parseSubmittedData(raw) {
+  if (raw == null || raw === '') return {};
+  if (typeof raw === 'object' && !Array.isArray(raw)) return raw;
+  if (typeof raw === 'string') {
+    try {
+      const p = JSON.parse(raw);
+      return p && typeof p === 'object' ? p : {};
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+/** Prefer mother/father from registration JSON, then parent_name column. */
+function parentDisplayNameFromStudentRow(row) {
+  if (!row) return 'Parent';
+  const sd = parseSubmittedData(row.submitted_data);
+  const mother = sd.motherName || sd.mother_name;
+  const father = sd.fatherName || sd.father_name;
+  const fromReg = [mother, father]
+    .map((x) => (x != null ? String(x).trim() : ''))
+    .find((s) => s.length > 0);
+  if (fromReg) return fromReg;
+  if (row.parent_name && String(row.parent_name).trim()) return String(row.parent_name).trim();
+  return 'Parent';
+}
+
 // Super Admin Login
 router.post('/superadmin/login', async (req, res) => {
   try {
@@ -217,11 +245,12 @@ router.get('/verify', authenticateToken, async (req, res) => {
       const cleanedPhone = parentPhone.replace(/\D/g, '');
       
       const [students] = await db.query(
-        `SELECT DISTINCT s.school_id, s.parent_phone, s.parent_email, s.parent_name,
+        `SELECT s.school_id, s.parent_phone, s.parent_email, s.parent_name, s.submitted_data,
                 sch.name as school_name
          FROM students s
          JOIN schools sch ON s.school_id = sch.id
          WHERE s.parent_phone = ? AND s.status = 'approved'
+         ORDER BY s.name ASC
          LIMIT 1`,
         [cleanedPhone]
       );
@@ -233,7 +262,7 @@ router.get('/verify', authenticateToken, async (req, res) => {
       const studentData = students[0];
       res.json({
         id: `parent-${cleanedPhone}`,
-        name: studentData.parent_name || 'Parent',
+        name: parentDisplayNameFromStudentRow(studentData),
         phone: cleanedPhone,
         email: studentData.parent_email || null,
         role: 'parent',
@@ -554,11 +583,12 @@ router.post('/parent/login', async (req, res) => {
 
     // Find student(s) with this parent phone
     const [students] = await db.query(
-      `SELECT DISTINCT s.school_id, s.parent_phone, s.parent_email, s.parent_name,
+      `SELECT s.school_id, s.parent_phone, s.parent_email, s.parent_name, s.submitted_data,
               sch.name as school_name
        FROM students s
        JOIN schools sch ON s.school_id = sch.id
        WHERE s.parent_phone = ? AND s.status = 'approved'
+       ORDER BY s.name ASC
        LIMIT 1`,
       [cleanedPhone]
     );
@@ -586,7 +616,7 @@ router.post('/parent/login', async (req, res) => {
       token,
       user: {
         id: `parent-${cleanedPhone}`,
-        name: studentData.parent_name || 'Parent',
+        name: parentDisplayNameFromStudentRow(studentData),
         phone: cleanedPhone,
         email: studentData.parent_email || null,
         role: 'parent',

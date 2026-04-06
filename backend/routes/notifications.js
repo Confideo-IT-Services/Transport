@@ -5,6 +5,12 @@ const router = express.Router();
 const db = require('../config/database');
 const { authenticateToken, requireTeacher } = require('../middleware/auth');
 
+/** PostgreSQL: mysql2-style IN (?) with an array does not expand — use ANY(?::text[]) with a string array. */
+function classIdsForPg(classIds) {
+  if (!Array.isArray(classIds)) return [];
+  return classIds.map((id) => (id == null ? '' : String(id))).filter(Boolean);
+}
+
 // Get inbox notifications
 router.get('/inbox', authenticateToken, requireTeacher, async (req, res) => {
   try {
@@ -12,38 +18,43 @@ router.get('/inbox', authenticateToken, requireTeacher, async (req, res) => {
     const params = [];
 
     if (req.user.role === 'teacher') {
-      // For teachers: show notifications where they are recipients, exclude their own sent notifications
+      // PostgreSQL: GROUP BY n.id alone is invalid with u.name / nr.* — use DISTINCT ON + outer sort
       query = `
-        SELECT n.*, u.name as sender_name, u.role as sender_role,
-               nr.is_read, nr.read_at
-        FROM notifications n
-        JOIN notification_recipients nr ON n.id = nr.notification_id
-        JOIN users u ON n.sender_id = u.id
-        WHERE n.sender_id != ?
-          AND nr.recipient_type = ? 
-          AND nr.recipient_id = ?
-        GROUP BY n.id
-        ORDER BY n.created_at DESC
+        SELECT * FROM (
+          SELECT DISTINCT ON (n.id)
+                 n.*, u.name AS sender_name, u.role AS sender_role,
+                 nr.is_read, nr.read_at
+          FROM notifications n
+          JOIN notification_recipients nr ON n.id = nr.notification_id
+          JOIN users u ON n.sender_id = u.id
+          WHERE n.sender_id != ?
+            AND nr.recipient_type = ?
+            AND nr.recipient_id = ?
+          ORDER BY n.id, n.created_at DESC
+        ) sub
+        ORDER BY sub.created_at DESC
       `;
       params.push(req.user.id, 'teacher', req.user.id);
     } else if (req.user.role === 'admin') {
       // For admin: show notifications sent to teachers in their school, exclude their own sent notifications
-      // Check if admin has read status via LEFT JOIN
       query = `
-         SELECT n.*, u.name as sender_name, u.role as sender_role,
-           COALESCE(admin_nr.is_read, false) as is_read,
-           admin_nr.read_at
-        FROM notifications n
-        JOIN notification_recipients nr ON n.id = nr.notification_id
-        JOIN users u ON n.sender_id = u.id
-        LEFT JOIN notification_recipients admin_nr ON n.id = admin_nr.notification_id 
-          AND admin_nr.recipient_id = ?
-          AND admin_nr.recipient_type = 'teacher'
-        WHERE n.sender_id != ?
-          AND n.school_id = ?
-          AND nr.recipient_type = 'teacher'
-        GROUP BY n.id
-        ORDER BY n.created_at DESC
+        SELECT * FROM (
+          SELECT DISTINCT ON (n.id)
+                 n.*, u.name AS sender_name, u.role AS sender_role,
+                 COALESCE(admin_nr.is_read, false) AS is_read,
+                 admin_nr.read_at
+          FROM notifications n
+          JOIN notification_recipients nr ON n.id = nr.notification_id
+          JOIN users u ON n.sender_id = u.id
+          LEFT JOIN notification_recipients admin_nr ON n.id = admin_nr.notification_id
+            AND admin_nr.recipient_id = ?
+            AND admin_nr.recipient_type = 'teacher'
+          WHERE n.sender_id != ?
+            AND n.school_id = ?
+            AND nr.recipient_type = 'teacher'
+          ORDER BY n.id, n.created_at DESC
+        ) sub
+        ORDER BY sub.created_at DESC
       `;
       params.push(req.user.id, req.user.id, req.user.schoolId);
     } else {
@@ -471,8 +482,8 @@ router.post('/', authenticateToken, requireTeacher, async (req, res) => {
         const studentsParams = [schoolId];
 
         if (targetClasses && targetClasses.length > 0) {
-          studentsQuery += ' AND class_id IN (?)';
-          studentsParams.push(targetClasses);
+          studentsQuery += ' AND class_id = ANY(?::text[])';
+          studentsParams.push(classIdsForPg(targetClasses));
         }
 
         const [students] = await db.query(studentsQuery, studentsParams);
@@ -486,8 +497,8 @@ router.post('/', authenticateToken, requireTeacher, async (req, res) => {
           throw new Error('Target classes required for selected_classes');
         }
         const [students] = await db.query(
-          `SELECT id FROM students WHERE class_id IN (?) AND status = 'approved'`,
-          [targetClasses]
+          `SELECT id FROM students WHERE class_id = ANY(?::text[]) AND status = 'approved'`,
+          [classIdsForPg(targetClasses)]
         );
         recipients = students.map(s => ({
           recipientType: 'parent',

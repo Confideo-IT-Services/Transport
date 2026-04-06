@@ -1450,7 +1450,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
     if (dateOfBirth !== undefined) { updates.push('date_of_birth = ?'); values.push(dateOfBirth || null); }
     if (gender !== undefined) { updates.push('gender = ?'); values.push(gender || null); }
     if (bloodGroup !== undefined) { updates.push('blood_group = ?'); values.push(bloodGroup || null); }
-    if (parentPhone !== undefined) { updates.push('parent_phone = ?'); values.push(parentPhone || null); }
+    // if (parentPhone !== undefined) { updates.push('parent_phone = ?'); values.push(parentPhone || null); }
     if (parentEmail !== undefined) { updates.push('parent_email = ?'); values.push(parentEmail || null); }
     if (parentName !== undefined) { updates.push('parent_name = ?'); values.push(parentName || null); }
     if (photoUrl !== undefined) { updates.push('photo_url = ?'); values.push(photoUrl || null); }
@@ -1486,7 +1486,16 @@ router.put('/:id', authenticateToken, async (req, res) => {
     if (emergencyContact !== undefined) submittedData.emergencyContact = emergencyContact || null;
     if (previousSchool !== undefined) submittedData.previousSchool = previousSchool || null;
     if (medicalConditions !== undefined) submittedData.medicalConditions = medicalConditions || null;
-
+        // Match registration create: parent_phone = fatherPhone || parentPhone || emergencyContact
+        if (fatherPhone !== undefined || parentPhone !== undefined || emergencyContact !== undefined) {
+          const str = (v) => (v != null && String(v).trim() !== '' ? String(v).trim() : '');
+          const fromFather = str(submittedData.fatherPhone);
+          const fromParentField = parentPhone !== undefined ? str(parentPhone) : str(student.parent_phone);
+          const fromEmergency = str(submittedData.emergencyContact);
+          const derivedParentPhone = fromFather || fromParentField || fromEmergency || null;
+          updates.push('parent_phone = ?');
+          values.push(derivedParentPhone);
+        }
     if (Object.keys(submittedData).length > 0) {
       updates.push('submitted_data = ?');
       values.push(JSON.stringify(submittedData));
