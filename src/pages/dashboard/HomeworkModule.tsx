@@ -26,7 +26,7 @@ import {
 import { toast } from "sonner";
 import { Progress } from "@/components/ui/progress";
 import { getTodayISTString } from "@/lib/date-ist";
-import { homeworkApi, classesApi, studentsApi } from "@/lib/api";
+import { homeworkApi, classesApi, studentsApi, timetableApi } from "@/lib/api";
 import { format } from "date-fns";
 import {
   AlertDialog,
@@ -73,56 +73,10 @@ interface StudentFrequency {
   percentage: number;
 }
 
-const defaultStudents: Student[] = [
-  { id: 1, uuid: "1", name: "Aarav Sharma", rollNo: "01", completed: false },
-  { id: 2, uuid: "2", name: "Priya Patel", rollNo: "02", completed: false },
-  { id: 3, uuid: "3", name: "Rahul Kumar", rollNo: "03", completed: false },
-  { id: 4, uuid: "4", name: "Ananya Singh", rollNo: "04", completed: false },
-  { id: 5, uuid: "5", name: "Vikram Reddy", rollNo: "05", completed: false },
-  { id: 6, uuid: "6", name: "Sneha Gupta", rollNo: "06", completed: false },
-  { id: 7, uuid: "7", name: "Arjun Nair", rollNo: "07", completed: false },
-  { id: 8, uuid: "8", name: "Kavya Iyer", rollNo: "08", completed: false },
-];
-
-const defaultSubjects = [
-  { id: "mathematics", name: "Mathematics" },
-  { id: "english", name: "English" },
-  { id: "science", name: "Science" },
-  { id: "hindi", name: "Hindi" },
-  { id: "social-studies", name: "Social Studies" },
-  { id: "computer", name: "Computer Science" },
-];
-
-const initialHomework: HomeworkItem[] = [
-  {
-    id: "1",
-    subjects: [
-      { subjectId: "mathematics", subjectName: "Mathematics", description: "Complete exercises 1-20 from Chapter 5" },
-      { subjectId: "english", subjectName: "English", description: "Write an essay on 'My Favorite Festival'" },
-    ],
-    dueDate: "2024-01-20",
-    status: "active",
-    createdAt: "2024-01-15",
-    sentToParents: true,
-    students: defaultStudents.map((s, i) => ({ ...s, completed: i < 5 })),
-  },
-  {
-    id: "2",
-    subjects: [
-      { subjectId: "science", subjectName: "Science", description: "Draw and label the human digestive system" },
-    ],
-    dueDate: "2024-01-18",
-    status: "completed",
-    createdAt: "2024-01-12",
-    sentToParents: true,
-    students: defaultStudents.map(s => ({ ...s, completed: true })),
-  },
-];
-
 export default function HomeworkModule() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
-  const [subjects, setSubjects] = useState(defaultSubjects);
+  const [subjects, setSubjects] = useState<{ id: string; name: string }[]>([]);
   const [selectedSubjects, setSelectedSubjects] = useState<string[]>([]);
   const [subjectDescriptions, setSubjectDescriptions] = useState<Record<string, string>>({});
   const [dueDate, setDueDate] = useState("");
@@ -167,6 +121,20 @@ export default function HomeworkModule() {
         // Load classes
         const classesData = await classesApi.getAll();
         setClasses(classesData || []);
+
+        try {
+          const subjectsData = await timetableApi.getSubjects();
+          setSubjects(
+            (subjectsData || []).map((s: { id: string; name?: string; code?: string }) => ({
+              id: String(s.id),
+              name: s.name || s.code || "Subject",
+            }))
+          );
+        } catch (subErr) {
+          console.error("Error loading subjects:", subErr);
+          setSubjects([]);
+          toast.error("Failed to load subjects");
+        }
         
         // Auto-select first class for teachers
         if (!isAdmin && classesData && classesData.length > 0) {
@@ -313,20 +281,33 @@ export default function HomeworkModule() {
     setSubjectDescriptions(prev => ({ ...prev, [subjectId]: description }));
   };
 
-  const handleAddSubject = () => {
-    if (!newSubjectName.trim()) {
+  const handleAddSubject = async () => {
+    const trimmed = newSubjectName.trim();
+    if (!trimmed) {
       toast.error("Please enter a subject name");
       return;
     }
-    const subjectId = newSubjectName.toLowerCase().replace(/\s+/g, "-");
-    if (subjects.some(s => s.id === subjectId)) {
+    if (subjects.some((s) => s.name.toLowerCase() === trimmed.toLowerCase())) {
       toast.error("Subject already exists");
       return;
     }
-    setSubjects([...subjects, { id: subjectId, name: newSubjectName.trim() }]);
-    setNewSubjectName("");
-    setIsAddSubjectOpen(false);
-    toast.success(`"${newSubjectName.trim()}" added to subjects`);
+    try {
+      const code = trimmed.toUpperCase().replace(/\s+/g, "").substring(0, 4);
+      await timetableApi.createSubject({ code, name: trimmed });
+      const subjectsData = await timetableApi.getSubjects();
+      setSubjects(
+        (subjectsData || []).map((s: { id: string; name?: string; code?: string }) => ({
+          id: String(s.id),
+          name: s.name || s.code || "Subject",
+        }))
+      );
+      setNewSubjectName("");
+      setIsAddSubjectOpen(false);
+      toast.success(`"${trimmed}" added`);
+    } catch (e: unknown) {
+      console.error("Error creating subject:", e);
+      toast.error(e instanceof Error ? e.message : "Failed to create subject");
+    }
   };
 
   const createHomework = async (isDraft: boolean) => {
@@ -926,41 +907,45 @@ export default function HomeworkModule() {
                   <Send className="w-5 h-5 text-primary" />
                   New Homework
                 </h3>
-                <Dialog open={isAddSubjectOpen} onOpenChange={setIsAddSubjectOpen}>
-                  <DialogTrigger asChild>
-                    <Button variant="outline" size="sm">
-                      <Plus className="w-4 h-4 mr-1" />
-                      Add Subject
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent>
-                    <DialogHeader>
-                      <DialogTitle>Add New Subject</DialogTitle>
-                      <DialogDescription>Add a new subject to assign homework for.</DialogDescription>
-                    </DialogHeader>
-                    <div className="space-y-4 pt-4">
-                      <div className="space-y-2">
-                        <Label>Subject Name</Label>
-                        <Input
-                          placeholder="e.g., Physical Education"
-                          value={newSubjectName}
-                          onChange={(e) => setNewSubjectName(e.target.value)}
-                        />
+                {isAdmin && (
+                  <Dialog open={isAddSubjectOpen} onOpenChange={setIsAddSubjectOpen}>
+                    <DialogTrigger asChild>
+                      <Button variant="outline" size="sm">
+                        <Plus className="w-4 h-4 mr-1" />
+                        Add Subject
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>Add New Subject</DialogTitle>
+                        <DialogDescription>
+                          Creates a school-wide subject (same as Academic Setup). Teachers only see subjects defined here.
+                        </DialogDescription>
+                      </DialogHeader>
+                      <div className="space-y-4 pt-4">
+                        <div className="space-y-2">
+                          <Label>Subject Name</Label>
+                          <Input
+                            placeholder="e.g., Physical Education"
+                            value={newSubjectName}
+                            onChange={(e) => setNewSubjectName(e.target.value)}
+                          />
+                        </div>
+                        <div className="flex justify-end gap-2">
+                          <Button variant="outline" onClick={() => setIsAddSubjectOpen(false)}>Cancel</Button>
+                          <Button onClick={() => void handleAddSubject()}>Add Subject</Button>
+                        </div>
                       </div>
-                      <div className="flex justify-end gap-2">
-                        <Button variant="outline" onClick={() => setIsAddSubjectOpen(false)}>Cancel</Button>
-                        <Button onClick={handleAddSubject}>Add Subject</Button>
-                      </div>
-                    </div>
-                  </DialogContent>
-                </Dialog>
+                    </DialogContent>
+                  </Dialog>
+                )}
               </div>
 
               {/* Subject Selection */}
               <div className="space-y-4 mb-6">
                 <Label>Select Subjects *</Label>
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                  {subjects.map(subject => (
+                  {subjects.map((subject) => (
                     <div
                       key={subject.id}
                       className={`p-3 rounded-lg border cursor-pointer transition-all ${
@@ -977,6 +962,13 @@ export default function HomeworkModule() {
                     </div>
                   ))}
                 </div>
+                {subjects.length === 0 && (
+                  <p className="text-sm text-muted-foreground">
+                    {isAdmin
+                      ? "No subjects yet. Add them under Academic Setup or use Add Subject above."
+                      : "No subjects available yet. Ask your school admin to add subjects under Academic Setup."}
+                  </p>
+                )}
               </div>
 
               {/* Subject Descriptions */}

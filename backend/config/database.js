@@ -21,6 +21,13 @@ const rawPool = new Pool({
   ...pgSearchPathOptions(validatedSchema),
 });
 
+// Required by node-pg: idle clients that lose the server connection emit 'error'.
+// Without a listener, Node throws and the process can exit (e.g. ECONNRESET to RDS).
+rawPool.on('error', (err) => {
+  const msg = err && err.message ? err.message : String(err);
+  console.error('PostgreSQL pool error (idle client):', msg);
+});
+
 /**
  * Convert mysql2-style ? placeholders to PostgreSQL $1, $2, ...
  */
@@ -77,9 +84,19 @@ async function queryWithIST(sql, params) {
   const client = await rawPool.connect();
   try {
     await client.query(`SET TIME ZONE 'Asia/Kolkata'`);
-    return await runQuery(client, sql, params);
-  } finally {
+    const result = await runQuery(client, sql, params);
     client.release();
+    return result;
+  } catch (e) {
+    // Failed statement leaves PostgreSQL in "aborted transaction" until ROLLBACK.
+    // release(err) evicts this client so the pool does not hand out a poisoned session (25P02).
+    try {
+      await client.query('ROLLBACK');
+    } catch (_) {
+      /* ignore — e.g. no transaction */
+    }
+    client.release(e);
+    throw e;
   }
 }
 
@@ -101,7 +118,7 @@ function wrapConnection(client) {
     rollback: async () => {
       await client.query('ROLLBACK');
     },
-    release: () => client.release(),
+    release: (err) => client.release(err),
   };
 }
 

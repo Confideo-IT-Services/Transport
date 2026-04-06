@@ -69,6 +69,7 @@ export default function NotificationsModule() {
   const [eventDate, setEventDate] = useState("");
   const [scheduledAt, setScheduledAt] = useState("");
   const [whatsappEnabled, setWhatsappEnabled] = useState(false);
+  const [notificationsTab, setNotificationsTab] = useState<"inbox" | "sent">("inbox");
 
   // Fetch data on mount
   useEffect(() => {
@@ -479,9 +480,24 @@ export default function NotificationsModule() {
             </CardContent>
           </Card>
 
-          {/* Quick Stats */}
+          {/* Quick Stats — opens Inbox / Sent below */}
           <div className="space-y-4">
-            <Card>
+            <Card
+              role="button"
+              tabIndex={0}
+              className="cursor-pointer transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              onClick={() => {
+                setNotificationsTab("inbox");
+                document.getElementById("notifications-tabs")?.scrollIntoView({ behavior: "smooth", block: "start" });
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setNotificationsTab("inbox");
+                  document.getElementById("notifications-tabs")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                }
+              }}
+            >
               <CardContent className="pt-6">
                 <div className="flex items-center gap-3">
                   <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center">
@@ -494,7 +510,22 @@ export default function NotificationsModule() {
                 </div>
               </CardContent>
             </Card>
-            <Card>
+            <Card
+              role="button"
+              tabIndex={0}
+              className="cursor-pointer transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              onClick={() => {
+                setNotificationsTab("sent");
+                document.getElementById("notifications-tabs")?.scrollIntoView({ behavior: "smooth", block: "start" });
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setNotificationsTab("sent");
+                  document.getElementById("notifications-tabs")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                }
+              }}
+            >
               <CardContent className="pt-6">
                 <div className="flex items-center gap-3">
                   <div className="w-12 h-12 rounded-lg bg-secondary/10 flex items-center justify-center">
@@ -511,7 +542,12 @@ export default function NotificationsModule() {
         </div>
 
         {/* Notifications List */}
-        <Tabs defaultValue="inbox" className="space-y-4">
+        <Tabs
+          id="notifications-tabs"
+          value={notificationsTab}
+          onValueChange={(v) => setNotificationsTab(v as "inbox" | "sent")}
+          className="space-y-4"
+        >
           <TabsList>
             <TabsTrigger value="inbox">
               Inbox

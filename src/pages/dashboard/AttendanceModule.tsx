@@ -781,15 +781,33 @@ export default function AttendanceModule() {
         const attendanceData = await attendanceApi.getStudentAttendance(selectedClassId, dateStr);
         
         if (attendanceData && attendanceData.students && attendanceData.students.length > 0) {
-          // Parse date properly
           const dateParts = dateStr.split('-');
-          const recordDate = new Date(parseInt(dateParts[0]), parseInt(dateParts[1]) - 1, parseInt(dateParts[2]));
-          
+          const recordDate = new Date(
+            parseInt(dateParts[0], 10),
+            parseInt(dateParts[1], 10) - 1,
+            parseInt(dateParts[2], 10)
+          );
+
+          const cached = attendanceRecords.find(
+            (r) =>
+              r.classId === selectedClassId &&
+              historyDate &&
+              isSameDay(r.date, historyDate)
+          );
+          let resolvedMarkedAt: Date | null = null;
+          if (cached?.markedAt != null) {
+            const d =
+              cached.markedAt instanceof Date
+                ? cached.markedAt
+                : new Date(cached.markedAt as string | number);
+            if (!isNaN(d.getTime())) resolvedMarkedAt = d;
+          }
+
           setSelectedHistoryRecord({
             date: recordDate,
             classId: attendanceData.classId || selectedClassId,
             students: attendanceData.students || [],
-            markedAt: new Date()
+            markedAt: resolvedMarkedAt ?? new Date(),
           });
           setHistoryStatusFilter("all"); // Reset filter when new date is loaded
         } else {
@@ -814,7 +832,7 @@ export default function AttendanceModule() {
     };
 
     loadAttendanceForDate();
-  }, [historyDate, selectedClassId]);
+  }, [historyDate, selectedClassId, attendanceRecords]);
 
   // Restore history date from URL params on mount
   useEffect(() => {
@@ -928,10 +946,18 @@ export default function AttendanceModule() {
     return attendanceRecords.find(r => isSameDay(r.date, d) && r.classId === selectedClassId);
   };
 
-  // Dates with attendance records (for calendar highlighting)
+  // Dates with at least one present/absent/leave (avoid green days with only empty/orphan data)
   const attendanceDates = attendanceRecords
-    .filter(r => r.classId === selectedClassId)
-    .map(r => r.date);
+    .filter((r) => r.classId === selectedClassId)
+    .filter(
+      (r) =>
+        Array.isArray(r.students) &&
+        r.students.some((s: any) => {
+          const st = s?.status != null ? String(s.status).toLowerCase().trim() : "";
+          return st === "present" || st === "absent" || st === "leave";
+        })
+    )
+    .map((r) => r.date);
 
   const presentCount = studentAttendance.filter(s => s.status === "present").length;
   const absentCount = studentAttendance.filter(s => s.status === "absent").length;

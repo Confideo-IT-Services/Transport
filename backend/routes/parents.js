@@ -3,6 +3,16 @@ const { v4: uuidv4 } = require('uuid');
 const router = express.Router();
 const db = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
+const { attendanceStatusForApi } = require('../utils/attendanceStatus');
+
+/** Aligns with fees.js list logic — ignore stale student_fees.status for parent API. */
+function deriveStudentFeeStatus(totalFee, paidAmount) {
+  const total = Number(totalFee) || 0;
+  const paid = Number(paidAmount) || 0;
+  if (total > 0 && paid >= total) return 'paid';
+  if (paid > 0) return 'partial';
+  return 'unpaid';
+}
 
 // Helper: Verify parent owns student
 async function verifyParentStudent(req, studentId) {
@@ -119,7 +129,7 @@ router.get('/children/:studentId/attendance', authenticateToken, async (req, res
     res.json(attendance.map(a => ({
       id: a.id,
       date: a.date,
-      status: a.status,
+      status: attendanceStatusForApi(a.status),
       remarks: a.remarks,
       createdAt: a.created_at
     })));
@@ -128,6 +138,34 @@ router.get('/children/:studentId/attendance', authenticateToken, async (req, res
     res.status(500).json({ error: 'Failed to fetch attendance' });
   }
 });
+
+/** Class IDs for homework: students.class_id plus active student_enrollments (when table exists). */
+async function getClassIdsForStudentHomework(studentId) {
+  const ids = new Set();
+  const [stuRows] = await db.query(
+    'SELECT class_id, school_id FROM students WHERE id = ?',
+    [studentId]
+  );
+  if (stuRows.length === 0) return { classIds: [], schoolId: null };
+  if (stuRows[0].class_id) ids.add(stuRows[0].class_id);
+  const schoolId = stuRows[0].school_id;
+  try {
+    const [enRows] = await db.query(
+      `SELECT DISTINCT class_id FROM student_enrollments
+       WHERE student_id = ? AND left_at IS NULL`,
+      [studentId]
+    );
+    for (const r of enRows) {
+      if (r.class_id) ids.add(r.class_id);
+    }
+  } catch (e) {
+    const msg = String(e.message || '');
+    if (e.code !== '42P01' && e.code !== 'ER_NO_SUCH_TABLE' && !msg.includes('student_enrollments')) {
+      throw e;
+    }
+  }
+  return { classIds: [...ids], schoolId };
+}
 
 // Get child's homework
 router.get('/children/:studentId/homework', authenticateToken, async (req, res) => {
@@ -138,46 +176,40 @@ router.get('/children/:studentId/homework', authenticateToken, async (req, res) 
 
     const { studentId } = req.params;
 
-    // Verify parent owns student and get student's class_id
     const student = await verifyParentStudent(req, studentId);
     if (!student) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
-    // Get student's class_id
-    const [students] = await db.query(
-      'SELECT class_id, school_id FROM students WHERE id = ?',
-      [studentId]
-    );
-
-    if (students.length === 0) {
-      return res.status(404).json({ error: 'Student not found' });
+    const { classIds, schoolId: studentSchoolId } = await getClassIdsForStudentHomework(studentId);
+    if (classIds.length === 0) {
+      console.log('📚 No class_id for student — no homework scope', { studentId, studentSchoolId });
+      return res.json([]);
     }
-
-    const classId = students[0].class_id;
-    const studentSchoolId = students[0].school_id;
 
     console.log('🔍 Fetching homework:', {
       studentId,
-      classId,
+      classIds,
       schoolId: studentSchoolId
     });
 
-    // Query homework by class_id only (not school_id)
-    // This ensures homework for the student's class shows up regardless of teacher's school_id
+    const placeholders = classIds.map(() => '?').join(', ');
     const [homework] = await db.query(
-      `SELECT h.*, 
-              (SELECT COUNT(*) FROM homework_submissions hs 
-               WHERE hs.homework_id = h.id 
-                 AND hs.student_id = ? 
-                 AND hs.is_completed = 1) > 0 as is_completed
+      `SELECT h.*,
+              EXISTS (
+                SELECT 1 FROM homework_submissions hs
+                WHERE hs.homework_id = h.id
+                  AND hs.student_id = ?
+                  AND hs.is_completed IS TRUE
+              ) AS is_completed
        FROM homework h
-       WHERE h.class_id = ?
-       ORDER BY h.due_date DESC, h.created_at DESC`,
-      [studentId, classId]
+       WHERE h.class_id IN (${placeholders})
+         AND (h.status IS NULL OR LOWER(h.status::text) = 'active')
+       ORDER BY h.due_date DESC NULLS LAST, h.created_at DESC`,
+      [studentId, ...classIds]
     );
 
-    console.log('📚 Homework found:', homework.length, 'assignments for class', classId);
+    console.log('📚 Homework found:', homework.length, 'for classes', classIds);
 
     res.json(homework.map(h => ({
       id: h.id,
@@ -186,7 +218,7 @@ router.get('/children/:studentId/homework', authenticateToken, async (req, res) 
       subject: h.subject,
       dueDate: h.due_date,
       attachmentUrl: h.attachment_url,
-      isCompleted: h.is_completed === 1,
+      isCompleted: h.is_completed === true || h.is_completed === 1,
       createdAt: h.created_at
     })));
   } catch (error) {
@@ -213,7 +245,7 @@ router.get('/children/:studentId/notifications', authenticateToken, async (req, 
     const [notifications] = await db.query(
       `SELECT n.*, nr.is_read, nr.read_at, 
               COALESCE(u.name, t.name) as sender_name,
-              COALESCE(u.role, n.sender_role) as sender_role
+              COALESCE(u.role::text, n.sender_role::text) as sender_role
        FROM notifications n
        JOIN notification_recipients nr ON n.id = nr.notification_id
        LEFT JOIN users u ON n.sender_id = u.id AND n.sender_role = 'admin'
@@ -257,12 +289,13 @@ router.post('/notifications/:id/read', authenticateToken, async (req, res) => {
     const parentPhone = req.user.phone || req.user.id.replace('parent-', '');
     const cleanedPhone = parentPhone.replace(/\D/g, '');
 
-    // Update read status for all notifications linked to parent's children across all schools
+    // PostgreSQL: UPDATE ... FROM (not MySQL UPDATE ... JOIN)
     await db.query(
       `UPDATE notification_recipients nr
-       JOIN students s ON nr.student_id = s.id
-       SET nr.is_read = 1, nr.read_at = NOW() 
-       WHERE nr.notification_id = ? 
+       SET is_read = TRUE, read_at = NOW()
+       FROM students s
+       WHERE nr.student_id = s.id
+         AND nr.notification_id = ?
          AND nr.recipient_type = 'parent'
          AND s.parent_phone = ?`,
       [id, cleanedPhone]
@@ -293,8 +326,7 @@ router.get('/children/:studentId/fees', authenticateToken, async (req, res) => {
     const studentSchoolId = student.school_id;
 
     const [fees] = await db.query(
-      `SELECT sf.*, 
-              COALESCE((SELECT SUM(amount) FROM fee_payments WHERE student_fee_id = sf.id), 0) as paid_amount_calculated
+      `SELECT sf.*
        FROM student_fees sf
        WHERE sf.student_id = ? AND sf.school_id = ?
        ORDER BY sf.created_at DESC`,
@@ -303,18 +335,27 @@ router.get('/children/:studentId/fees', authenticateToken, async (req, res) => {
 
     console.log('💰 Fees found:', fees.length, 'records for student', studentId, 'in school', studentSchoolId);
 
-    res.json(fees.map(f => ({
-      id: f.id,
-      totalFee: parseFloat(f.total_fee) || 0,
-      paidAmount: parseFloat(f.paid_amount) || 0,
-      pendingAmount: parseFloat(f.pending_amount) || 0,
-      status: f.status,
-      dueDate: f.due_date,
-      componentBreakdown: f.component_breakdown ? 
-        (typeof f.component_breakdown === 'string' ? JSON.parse(f.component_breakdown) : f.component_breakdown) 
-        : null,
-      createdAt: f.created_at
-    })));
+    res.json(
+      fees.map((f) => {
+        const totalFee = parseFloat(f.total_fee) || 0;
+        const paidAmount = parseFloat(f.paid_amount) || 0;
+        const pendingAmount = parseFloat(f.pending_amount) || 0;
+        return {
+          id: f.id,
+          totalFee,
+          paidAmount,
+          pendingAmount,
+          status: deriveStudentFeeStatus(totalFee, paidAmount),
+          dueDate: f.due_date,
+          componentBreakdown: f.component_breakdown
+            ? typeof f.component_breakdown === 'string'
+              ? JSON.parse(f.component_breakdown)
+              : f.component_breakdown
+            : null,
+          createdAt: f.created_at,
+        };
+      })
+    );
   } catch (error) {
     console.error('Get fees error:', error);
     res.status(500).json({ error: 'Failed to fetch fees' });
