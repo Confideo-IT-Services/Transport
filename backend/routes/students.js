@@ -64,6 +64,16 @@ async function generateAdmissionNumber(schoolCode, year, schoolId, startNumber =
   return admissionNumber;
 }
 
+// Helper: get next numeric roll number for a class (uses digits in roll_no)
+async function getNextRollNumberForClass(classId) {
+  const [rows] = await db.query(
+    `SELECT COALESCE(MAX((NULLIF(regexp_replace(TRIM(COALESCE(roll_no, '')), '[^0-9]', '', 'g'), ''))::bigint), 0) as max_roll FROM students WHERE class_id = ?`,
+    [classId]
+  );
+  const maxRoll = (rows && rows[0] && rows[0].max_roll) ? parseInt(rows[0].max_roll, 10) : 0;
+  return String(maxRoll + 1);
+}
+
 // Helper: map DB student row (with class_name, class_section) to API response
 function mapStudentToResponse(s) {
   const submittedData = s.submitted_data != null && typeof s.submitted_data === 'string'
@@ -148,11 +158,12 @@ router.get('/', authenticateToken, requireAdmin, async (req, res) => {
             for (const st of allStudents) {
               try {
                 await db.query(
-                  `INSERT INTO student_enrollments (id, student_id, academic_year_id, class_id, roll_no, school_id)
-                   VALUES (?, ?, ?, ?, ?, ?)
+                  `INSERT INTO student_enrollments (id, student_id, academic_year_id, class_id, roll_no, school_id, enrolled_at)
+                   VALUES (?, ?, ?, ?, ?, ?, NOW())
                    ON CONFLICT (student_id, academic_year_id) DO UPDATE SET
                      class_id = EXCLUDED.class_id,
-                     roll_no = EXCLUDED.roll_no`,
+                     roll_no = EXCLUDED.roll_no,
+                     enrolled_at = EXCLUDED.enrolled_at`,
                   [uuidv4(), st.id, academicYearId, st.class_id, st.roll_no, schoolId]
                 );
               } catch (e) { /* ignore duplicate */ }
@@ -284,7 +295,7 @@ router.post('/', async (req, res) => {
     // If registrationCode is provided, get schoolId and classId from registration link
     if (registrationCode) {
       const [links] = await db.query(
-        'SELECT school_id, class_id, link_type, field_config FROM registration_links WHERE link_code = ? AND is_active = 1 AND (expires_at IS NULL OR expires_at > NOW())',
+        'SELECT school_id, class_id, link_type, field_config FROM registration_links WHERE link_code = ? AND is_active = TRUE AND (expires_at IS NULL OR expires_at > NOW())',
         [registrationCode]
       );
       if (links.length > 0) {
@@ -452,6 +463,17 @@ router.post('/', async (req, res) => {
       }
     }
 
+    // If roll number provided during registration, ensure it's not already used in the same class/school
+    if (rollNo && String(rollNo).trim() !== '') {
+      const [existingRoll] = await db.query(
+        'SELECT id FROM students WHERE roll_no = ? AND class_id = ? AND school_id = ? LIMIT 1',
+        [String(rollNo).trim(), finalClassId, finalSchoolId]
+      );
+      if (existingRoll.length > 0) {
+        return res.status(400).json({ success: false, message: 'Roll number already exists for this class', error: 'Roll number already exists for this class' });
+      }
+    }
+
     // Map form fields to database columns
     // Use father/mother fields as primary, fallback to parent fields
     const finalParentName = fatherName || parentName || null;
@@ -566,6 +588,17 @@ router.post('/bulk', authenticateToken, requireAdmin, async (req, res) => {
       if (!classMap[key]) classMap[key] = c.id;
     });
 
+    // Initialize roll counters per class for import (next available numeric roll)
+    const classRollCounters = {};
+    for (const c of classesList) {
+      try {
+        const next = await getNextRollNumberForClass(c.id);
+        classRollCounters[c.id] = parseInt(next, 10);
+      } catch (e) {
+        classRollCounters[c.id] = 1;
+      }
+    }
+
     const normalizeClass = (v) => (v != null ? String(v).trim() : '');
     // Build list of possible class name variants so "1" and "Class 1" (and "Grade 1") all match
     const classNamesToTry = (name) => {
@@ -637,9 +670,28 @@ router.post('/bulk', authenticateToken, requireAdmin, async (req, res) => {
       const finalParentName = row.fatherName || row.parentName || null;
       const finalParentPhone = row.fatherPhone || row.parentPhone || null;
       const finalParentEmail = row.fatherEmail || row.parentEmail || null;
+      // Assign roll number if not provided: per-class incrementing
+      let assignedRollNo = null;
+      if (row.rollNo != null && String(row.rollNo).trim() !== '') {
+        assignedRollNo = String(row.rollNo).trim();
+        // Validate provided roll number isn't already used in this class
+        const [existingRoll] = await db.query(
+          'SELECT id FROM students WHERE roll_no = ? AND class_id = ? AND school_id = ? LIMIT 1',
+          [assignedRollNo, classId, schoolId]
+        );
+        if (existingRoll.length > 0) {
+          errors.push({ row: rowNum, message: `Roll number ${assignedRollNo} already exists in this class` });
+          continue;
+        }
+      } else {
+        const next = classRollCounters[classId] || 1;
+        assignedRollNo = String(next);
+        classRollCounters[classId] = Number(next) + 1;
+      }
+
       const submittedData = {
         name,
-        rollNo: row.rollNo != null ? String(row.rollNo) : null,
+        rollNo: assignedRollNo,
         dateOfBirth: row.dateOfBirth != null ? String(row.dateOfBirth) : null,
         gender: row.gender != null ? String(row.gender) : null,
         bloodGroup: row.bloodGroup != null ? String(row.bloodGroup) : null,
@@ -654,7 +706,7 @@ router.post('/bulk', authenticateToken, requireAdmin, async (req, res) => {
         await db.query(
           `INSERT INTO students (id, name, roll_no, class_id, school_id, parent_phone, parent_email, parent_name, address, date_of_birth, gender, blood_group, registration_code, submitted_data, admission_number, status, created_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'BULK', ?, ?, 'approved', NOW())`,
-          [studentId, name, row.rollNo != null ? String(row.rollNo) : null, classId, schoolId, finalParentPhone, finalParentEmail, finalParentName,
+          [studentId, name, assignedRollNo, classId, schoolId, finalParentPhone, finalParentEmail, finalParentName,
             row.address != null ? String(row.address) : null, row.dateOfBirth != null ? String(row.dateOfBirth) : null, row.gender != null ? String(row.gender) : null, row.bloodGroup != null ? String(row.bloodGroup) : null,
             JSON.stringify(submittedData), admissionNumber]
         );
@@ -666,7 +718,7 @@ router.post('/bulk', authenticateToken, requireAdmin, async (req, res) => {
                ON CONFLICT (student_id, academic_year_id) DO UPDATE SET
                  class_id = EXCLUDED.class_id,
                  roll_no = EXCLUDED.roll_no`,
-              [uuidv4(), studentId, activeYearId, classId, row.rollNo != null ? String(row.rollNo) : null, schoolId]
+              [uuidv4(), studentId, activeYearId, classId, assignedRollNo, schoolId]
             );
           } catch (e) { /* ignore */ }
         }
@@ -860,6 +912,23 @@ router.post('/:id/approve', authenticateToken, requireAdmin, async (req, res) =>
       return res.status(400).json({ error: 'Invalid class' });
     }
 
+    // Determine roll number: if provided use it, otherwise auto-assign per class
+    let finalRoll = rollNo;
+    if (!finalRoll) {
+      finalRoll = await getNextRollNumberForClass(studentClassId);
+    }
+
+    // If roll provided by admin during approval, validate uniqueness (exclude current student)
+    if (rollNo && String(rollNo).trim() !== '') {
+      const [existingRoll] = await db.query(
+        'SELECT id FROM students WHERE roll_no = ? AND class_id = ? AND school_id = ? AND id <> ? LIMIT 1',
+        [String(rollNo).trim(), studentClassId, schoolId, id]
+      );
+      if (existingRoll.length > 0) {
+        return res.status(400).json({ error: 'Roll number already exists for this class' });
+      }
+    }
+
     // Now update with admission number, class, and roll number
     const [result] = await db.query(
       `UPDATE students 
@@ -868,7 +937,7 @@ router.post('/:id/approve', authenticateToken, requireAdmin, async (req, res) =>
            class_id = ?,
            roll_no = ?
        WHERE id = ?`, 
-      [admissionNumber, studentClassId, rollNo || null, id]
+      [admissionNumber, studentClassId, finalRoll || null, id]
     );
 
     if (result.affectedRows === 0) {
@@ -888,13 +957,14 @@ router.post('/:id/approve', authenticateToken, requireAdmin, async (req, res) =>
     }
     
     try {
-      const finalRollNo = rollNo || null;
+      const finalRollNo = finalRoll || null;
       await db.query(
-        `INSERT INTO student_enrollments (id, student_id, academic_year_id, class_id, roll_no, school_id)
-         VALUES (?, ?, ?, ?, ?, ?)
+        `INSERT INTO student_enrollments (id, student_id, academic_year_id, class_id, roll_no, school_id, enrolled_at)
+         VALUES (?, ?, ?, ?, ?, ?, NOW())
          ON CONFLICT (student_id, academic_year_id) DO UPDATE SET
            class_id = EXCLUDED.class_id,
-           roll_no = EXCLUDED.roll_no`,
+           roll_no = EXCLUDED.roll_no,
+           enrolled_at = EXCLUDED.enrolled_at`,
         [uuidv4(), id, activeYear[0].id, studentClassId, finalRollNo, schoolId]
       );
     } catch (enrollErr) {
@@ -1028,6 +1098,21 @@ router.post('/bulk-approve', authenticateToken, requireAdmin, async (req, res) =
     const results = [];
     const errors = [];
     
+    // Initialize roll counters per class for bulk approval (to avoid collisions within batch)
+    const classRollCounters = {};
+    try {
+      const classIds = new Set(approvals.map(a => a.classId).filter(Boolean));
+      for (const cid of classIds) {
+        try {
+          classRollCounters[cid] = parseInt(await getNextRollNumberForClass(cid), 10);
+        } catch (e) {
+          classRollCounters[cid] = 1;
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+
     // Start transaction for bulk operations
     await db.query('START TRANSACTION');
     
@@ -1069,6 +1154,25 @@ router.post('/bulk-approve', authenticateToken, requireAdmin, async (req, res) =
             admissionNumber = await generateAdmissionNumber(schoolCode, currentYear, schoolId);
           }
           
+          // Determine roll number: if provided use it, otherwise assign from per-class counter
+          let assignedRoll = rollNo;
+          if (!assignedRoll) {
+            assignedRoll = String(classRollCounters[classId] || 1);
+            classRollCounters[classId] = (classRollCounters[classId] || 1) + 1;
+          }
+
+          // If roll provided, validate uniqueness (exclude current student)
+          if (rollNo && String(rollNo).trim() !== '') {
+            const [existingRoll] = await db.query(
+              'SELECT id FROM students WHERE roll_no = ? AND class_id = ? AND school_id = ? AND id <> ? LIMIT 1',
+              [String(rollNo).trim(), classId, schoolId, studentId]
+            );
+            if (existingRoll.length > 0) {
+              errors.push({ studentId, error: `Roll number ${rollNo} already exists in class ${classId}` });
+              continue;
+            }
+          }
+
           // Update student
           await db.query(
             `UPDATE students 
@@ -1077,17 +1181,18 @@ router.post('/bulk-approve', authenticateToken, requireAdmin, async (req, res) =
                  class_id = ?,
                  roll_no = ?
              WHERE id = ?`,
-            [admissionNumber, classId, rollNo || null, studentId]
+            [admissionNumber, classId, assignedRoll || null, studentId]
           );
           
           // Create enrollment
           await db.query(
-            `INSERT INTO student_enrollments (id, student_id, academic_year_id, class_id, roll_no, school_id)
-             VALUES (?, ?, ?, ?, ?, ?)
+            `INSERT INTO student_enrollments (id, student_id, academic_year_id, class_id, roll_no, school_id, enrolled_at)
+             VALUES (?, ?, ?, ?, ?, ?, NOW())
              ON CONFLICT (student_id, academic_year_id) DO UPDATE SET
                class_id = EXCLUDED.class_id,
-               roll_no = EXCLUDED.roll_no`,
-            [uuidv4(), studentId, academicYearId, classId, rollNo || null, schoolId]
+               roll_no = EXCLUDED.roll_no,
+               enrolled_at = EXCLUDED.enrolled_at`,
+            [uuidv4(), studentId, academicYearId, classId, assignedRoll || null, schoolId]
           );
           
           // Create fee record if fee structure exists
@@ -1400,6 +1505,18 @@ router.put('/:id', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'No fields to update' });
     }
 
+    // If rollNo provided, ensure uniqueness within the (possibly updated) class
+    const targetClassId = (classId !== undefined && classId !== null) ? classId : student.class_id;
+    if (rollNo !== undefined && rollNo !== null && String(rollNo).trim() !== '') {
+      const [existingRoll] = await db.query(
+        'SELECT id FROM students WHERE roll_no = ? AND class_id = ? AND school_id = ? AND id <> ? LIMIT 1',
+        [String(rollNo).trim(), targetClassId, schoolId, id]
+      );
+      if (existingRoll.length > 0) {
+        return res.status(400).json({ error: 'Roll number already exists for this class' });
+      }
+    }
+
     values.push(id);
 
     const [result] = await db.query(
@@ -1437,9 +1554,11 @@ router.put('/:id', authenticateToken, async (req, res) => {
       // If there are enrollment updates, apply them
       if (enrollmentUpdates.length > 0) {
         enrollmentValues.push(id, activeYear[0].id);
+        // Ensure enrolled_at is set when updating enrollment
+        const setClause = `${enrollmentUpdates.join(', ')}, enrolled_at = COALESCE(enrolled_at, NOW())`;
         await db.query(
           `UPDATE student_enrollments 
-           SET ${enrollmentUpdates.join(', ')} 
+           SET ${setClause} 
            WHERE student_id = ? AND academic_year_id = ?`,
           enrollmentValues
         );

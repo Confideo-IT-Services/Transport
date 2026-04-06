@@ -11,6 +11,7 @@ DB_PASSWORD = os.getenv("DB_PASSWORD")
 DB_NAME = os.getenv("DB_NAME")
 
 # PostgreSQL schema for app tables (optional; default public). Same as backend DB_SCHEMA.
+# Required if tables are not in public — otherwise text-to-SQL hits "relation does not exist".
 DB_SCHEMA = (os.getenv("DB_SCHEMA") or "").strip() or None
 
 # TLS (e.g. AWS RDS) — use same bundle as Node: global-bundle.pem

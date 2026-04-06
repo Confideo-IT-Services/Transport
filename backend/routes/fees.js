@@ -232,9 +232,9 @@ router.get('/structure', authenticateToken, async (req, res) => {
         academicYearId: s.academic_year_id,
         academicYearName: s.academic_year_name,
         totalFee: parseFloat(s.total_fee),
-        tuitionFee: parseFloat(s.tuition_fee),
-        transportFee: parseFloat(s.transport_fee),
-        labFee: parseFloat(s.lab_fee),
+        tuitionFee: null,
+        transportFee: null,
+        labFee: null,
         otherFees: parsedOtherFees,
         frequency: frequency,
         createdAt: s.created_at
@@ -249,7 +249,7 @@ router.get('/structure', authenticateToken, async (req, res) => {
 // Create/Update fee structure (Admin only) - applies to all sections of the class
 router.post('/structure', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const { classId, className, academicYearId, totalFee, tuitionFee, transportFee, labFee, otherFees, frequency } = req.body;
+    const { classId, className, academicYearId, totalFee, otherFees, frequency } = req.body;
 
     const schoolId = req.user.schoolId;
     if (!schoolId) {
@@ -281,10 +281,8 @@ router.post('/structure', authenticateToken, requireAdmin, async (req, res) => {
         otherFeesSum = otherFees.components.reduce((sum, item) => sum + (item.amount || 0), 0);
       }
     }
-    const calculatedTotal = (tuitionFee || 0) + (transportFee || 0) + (labFee || 0) + otherFeesSum;
-    const finalTotalFee = totalFee && Math.abs(parseFloat(totalFee) - calculatedTotal) < 0.01 
-      ? parseFloat(totalFee) 
-      : calculatedTotal;
+    // Use provided totalFee if supplied and positive, otherwise derive from otherFees components
+    const finalTotalFee = (totalFee && parseFloat(totalFee) > 0) ? parseFloat(totalFee) : otherFeesSum;
     if (finalTotalFee <= 0) {
       return res.status(400).json({ error: 'Total fee must be greater than 0. Please enter at least one fee component.' });
     }
@@ -305,16 +303,16 @@ router.post('/structure', authenticateToken, requireAdmin, async (req, res) => {
 
       if (existing.length > 0) {
         await db.query(
-          `UPDATE fee_structure SET total_fee = ?, tuition_fee = ?, transport_fee = ?, lab_fee = ?, other_fees = ?, updated_at = NOW() WHERE id = ?`,
-          [finalTotalFee, tuitionFee || 0, transportFee || 0, labFee || 0, otherFees ? JSON.stringify(otherFees) : null, existing[0].id]
+          `UPDATE fee_structure SET total_fee = ?, other_fees = ?, updated_at = NOW() WHERE id = ?`,
+          [finalTotalFee, otherFees ? JSON.stringify(otherFees) : null, existing[0].id]
         );
         if (!firstStructureId) firstStructureId = existing[0].id;
       } else {
         const structureId = uuidv4();
         await db.query(
-          `INSERT INTO fee_structure (id, school_id, class_id, academic_year_id, total_fee, tuition_fee, transport_fee, lab_fee, other_fees, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
-          [structureId, schoolId, singleClassId, academicYearId || null, finalTotalFee, tuitionFee || 0, transportFee || 0, labFee || 0, otherFees ? JSON.stringify(otherFees) : null]
+          `INSERT INTO fee_structure (id, school_id, class_id, academic_year_id, total_fee, other_fees, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, NOW())`,
+          [structureId, schoolId, singleClassId, academicYearId || null, finalTotalFee, otherFees ? JSON.stringify(otherFees) : null]
         );
         if (!firstStructureId) firstStructureId = structureId;
       }
@@ -344,14 +342,8 @@ router.post('/structure', authenticateToken, requireAdmin, async (req, res) => {
       let updated = 0;
       let skipped = 0;
 
-      // Build component breakdown
-      const componentBreakdown = {
-        tuition_fee: { total: tuitionFee || 0, paid: 0, pending: tuitionFee || 0 },
-        transport_fee: { total: transportFee || 0, paid: 0, pending: transportFee || 0 },
-        lab_fee: { total: labFee || 0, paid: 0, pending: labFee || 0 }
-      };
-
-      // Add other components if they exist
+      // Build component breakdown only from custom other_fees components
+      const componentBreakdown = {};
       if (otherFees && otherFees.components && Array.isArray(otherFees.components)) {
         otherFees.components.forEach(comp => {
           const compKey = comp.name.toLowerCase().replace(/\s+/g, '_');
@@ -783,9 +775,9 @@ router.get('/students/:studentId', authenticateToken, async (req, res) => {
       className: sf.class_name,
       classSection: sf.class_section,
       totalFee: parseFloat(sf.total_fee),
-      tuitionFee: sf.tuition_fee ? parseFloat(sf.tuition_fee) : null,
-      transportFee: sf.transport_fee ? parseFloat(sf.transport_fee) : null,
-      labFee: sf.lab_fee ? parseFloat(sf.lab_fee) : null,
+      tuitionFee: null,
+      transportFee: null,
+      labFee: null,
       otherFees: otherFees,
       paidAmount: parseFloat(sf.paid_amount),
       pendingAmount: parseFloat(sf.pending_amount),
@@ -850,7 +842,7 @@ router.get('/students/:studentId/breakdown', authenticateToken, async (req, res)
       }
     }
 
-    // If breakdown is empty, build it from fee structure
+    // If breakdown is empty, build it from fee structure other_fees components
     if (!breakdown || Object.keys(breakdown).length === 0) {
       // Fetch fee structure for this class
       const [feeStructures] = await db.query(
@@ -860,33 +852,14 @@ router.get('/students/:studentId/breakdown', authenticateToken, async (req, res)
 
       if (feeStructures.length > 0) {
         const structure = feeStructures[0];
-        
-        // Build breakdown from fee structure
-        breakdown = {
-          tuition_fee: { 
-            total: parseFloat(structure.tuition_fee) || 0, 
-            paid: 0, 
-            pending: parseFloat(structure.tuition_fee) || 0 
-          },
-          transport_fee: { 
-            total: parseFloat(structure.transport_fee) || 0, 
-            paid: 0, 
-            pending: parseFloat(structure.transport_fee) || 0 
-          },
-          lab_fee: { 
-            total: parseFloat(structure.lab_fee) || 0, 
-            paid: 0, 
-            pending: parseFloat(structure.lab_fee) || 0 
-          }
-        };
+        breakdown = {};
 
-        // Add other components from fee structure
+        // Build breakdown from other_fees components only
         if (structure.other_fees) {
           try {
             const otherFees = typeof structure.other_fees === 'string' 
               ? JSON.parse(structure.other_fees) 
               : structure.other_fees;
-            
             if (otherFees && otherFees.components && Array.isArray(otherFees.components)) {
               otherFees.components.forEach((comp) => {
                 const compKey = comp.name.toLowerCase().replace(/\s+/g, '_');
@@ -901,6 +874,17 @@ router.get('/students/:studentId/breakdown', authenticateToken, async (req, res)
             console.error('Error parsing other_fees:', parseError);
           }
         }
+
+        // If still no components, fall back to a single 'general' component equal to total fee
+        if (!breakdown || Object.keys(breakdown).length === 0) {
+          breakdown = {
+            general: {
+              total: parseFloat(studentFee.total_fee) || 0,
+              paid: 0,
+              pending: parseFloat(studentFee.pending_amount) || parseFloat(studentFee.total_fee) || 0
+            }
+          };
+        }
       }
     }
 
@@ -908,7 +892,7 @@ router.get('/students/:studentId/breakdown', authenticateToken, async (req, res)
     // Calculate paid amounts per component from payment records
     const paidByComponent = {};
     payments.forEach((payment) => {
-      const comp = payment.component || 'tuition_fee';
+      const comp = payment.component || 'general';
       if (!paidByComponent[comp]) {
         paidByComponent[comp] = 0;
       }
@@ -928,7 +912,7 @@ router.get('/students/:studentId/breakdown', authenticateToken, async (req, res)
       pendingAmount: parseFloat(studentFee.pending_amount) || 0,
       breakdown,
       payments: payments.map(p => ({
-        component: p.component || 'tuition_fee',
+        component: p.component || 'general',
         amount: parseFloat(p.amount) || 0,
         paymentDate: p.payment_date,
         paymentMethod: p.payment_method
@@ -943,7 +927,7 @@ router.get('/students/:studentId/breakdown', authenticateToken, async (req, res)
 // Create student fee (Admin only)
 router.post('/students', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const { studentId, classId, academicYearId, totalFee, tuitionFee, transportFee, labFee, otherFees, frequency, dueDate } = req.body;
+    const { studentId, classId, academicYearId, totalFee, otherFees, frequency, dueDate } = req.body;
 
     if (!studentId || !classId || !totalFee) {
       return res.status(400).json({ error: 'Student ID, class ID, and total fee are required' });
@@ -964,12 +948,8 @@ router.post('/students', authenticateToken, requireAdmin, async (req, res) => {
       // Update existing fee instead of creating new one
       const existingFeeId = existing[0].id;
       
-      // Build component breakdown
+      // Build component breakdown only from custom other_fees components
       let componentBreakdown = {};
-      if (tuitionFee !== undefined) componentBreakdown.tuition_fee = { total: parseFloat(tuitionFee) || 0, paid: 0, pending: parseFloat(tuitionFee) || 0 };
-      if (transportFee !== undefined) componentBreakdown.transport_fee = { total: parseFloat(transportFee) || 0, paid: 0, pending: parseFloat(transportFee) || 0 };
-      if (labFee !== undefined) componentBreakdown.lab_fee = { total: parseFloat(labFee) || 0, paid: 0, pending: parseFloat(labFee) || 0 };
-      
       if (otherFees && otherFees.components) {
         otherFees.components.forEach((comp) => {
           const compName = comp.name.toLowerCase().replace(/\s+/g, '_');
@@ -989,9 +969,6 @@ router.post('/students', authenticateToken, requireAdmin, async (req, res) => {
       await db.query(
         `UPDATE student_fees SET
           total_fee = ?,
-          tuition_fee = ?,
-          transport_fee = ?,
-          lab_fee = ?,
           other_fees = ?,
           pending_amount = ?,
           status = ?,
@@ -1001,9 +978,6 @@ router.post('/students', authenticateToken, requireAdmin, async (req, res) => {
         WHERE id = ?`,
         [
           totalFee,
-          tuitionFee || null,
-          transportFee || null,
-          labFee || null,
           otherFees ? JSON.stringify(otherFees) : null,
           newPendingAmount,
           newStatus,
@@ -1017,42 +991,28 @@ router.post('/students', authenticateToken, requireAdmin, async (req, res) => {
       return res.json({ success: true, studentFeeId: existingFeeId, updated: true });
     }
 
-    // Auto-create columns if they don't exist (MySQL doesn't support IF NOT EXISTS for ALTER TABLE)
+    // Ensure component_breakdown / other_fees columns exist. Do NOT add preset component columns (tuition/transport/lab)
     try {
-      // Check if columns exist by querying information_schema
       const [columns] = await db.query(`
         SELECT column_name AS column_name
         FROM information_schema.columns 
         WHERE table_schema = current_schema()
         AND table_name = 'student_fees' 
-        AND column_name IN ('tuition_fee', 'transport_fee', 'lab_fee', 'other_fees')
+        AND column_name IN ('component_breakdown', 'other_fees')
       `);
-      
       const existingColumns = columns.map(col => col.column_name);
-      
-      if (!existingColumns.includes('tuition_fee')) {
-        await db.query('ALTER TABLE student_fees ADD COLUMN tuition_fee DECIMAL(10,2) NULL');
-      }
-      if (!existingColumns.includes('transport_fee')) {
-        await db.query('ALTER TABLE student_fees ADD COLUMN transport_fee DECIMAL(10,2) NULL');
-      }
-      if (!existingColumns.includes('lab_fee')) {
-        await db.query('ALTER TABLE student_fees ADD COLUMN lab_fee DECIMAL(10,2) NULL');
+      if (!existingColumns.includes('component_breakdown')) {
+        await db.query('ALTER TABLE student_fees ADD COLUMN component_breakdown JSON NULL');
       }
       if (!existingColumns.includes('other_fees')) {
         await db.query('ALTER TABLE student_fees ADD COLUMN other_fees JSON NULL');
       }
     } catch (alterError) {
-      // Columns might already exist, ignore error
-      console.log('Note: Error checking/creating columns:', alterError.message);
+      console.log('Note: Error checking/creating student_fees columns:', alterError.message);
     }
 
-    // Build component breakdown
+    // Build component breakdown only from custom other_fees components
     let componentBreakdown = {};
-    if (tuitionFee !== undefined) componentBreakdown.tuition_fee = { total: parseFloat(tuitionFee) || 0, paid: 0, pending: parseFloat(tuitionFee) || 0 };
-    if (transportFee !== undefined) componentBreakdown.transport_fee = { total: parseFloat(transportFee) || 0, paid: 0, pending: parseFloat(transportFee) || 0 };
-    if (labFee !== undefined) componentBreakdown.lab_fee = { total: parseFloat(labFee) || 0, paid: 0, pending: parseFloat(labFee) || 0 };
-    
     if (otherFees && otherFees.components) {
       otherFees.components.forEach((comp) => {
         const compName = comp.name.toLowerCase().replace(/\s+/g, '_');
@@ -1064,24 +1024,19 @@ router.post('/students', authenticateToken, requireAdmin, async (req, res) => {
     await db.query(
       `INSERT INTO student_fees (
         id, student_id, class_id, school_id, academic_year_id, 
-        total_fee, tuition_fee, transport_fee, lab_fee, other_fees,
-        paid_amount, pending_amount, status, due_date, component_breakdown, created_at
+        total_fee, paid_amount, pending_amount, status, due_date, component_breakdown, created_at
       )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'unpaid', ?, ?, NOW())`,
+       VALUES (?, ?, ?, ?, ?, ?, 0, ?, 'unpaid', ?, ?, NOW())`,
       [
         studentFeeId, studentId, classId, schoolId, academicYearId || null,
-        totalFee, 
-        tuitionFee || null, 
-        transportFee || null, 
-        labFee || null,
-        otherFees ? JSON.stringify(otherFees) : null,
-        totalFee, 
+        totalFee,
+        totalFee,
         dueDate || null,
         Object.keys(componentBreakdown).length > 0 ? JSON.stringify(componentBreakdown) : null
       ]
     );
 
-    console.log('✅ Student fee created:', { studentFeeId, studentId, classId, totalFee, hasComponents: !!tuitionFee });
+    console.log('✅ Student fee created:', { studentFeeId, studentId, classId, totalFee, hasComponents: !!otherFees });
     res.status(201).json({ success: true, studentFeeId });
   } catch (error) {
     console.error('Create student fee error:', error);
@@ -1161,7 +1116,7 @@ router.post('/students/bulk', authenticateToken, requireAdmin, async (req, res) 
 router.put('/students/:studentFeeId', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { studentFeeId } = req.params;
-    const { totalFee, tuitionFee, transportFee, labFee, otherFees, frequency, dueDate } = req.body;
+    const { totalFee, otherFees, frequency, dueDate } = req.body;
 
     if (!totalFee) {
       return res.status(400).json({ error: 'Total fee is required' });
@@ -1172,34 +1127,24 @@ router.put('/students/:studentFeeId', authenticateToken, requireAdmin, async (re
       return res.status(400).json({ error: 'School ID not found' });
     }
 
-    // Auto-create columns if they don't exist (MySQL doesn't support IF NOT EXISTS for ALTER TABLE)
+    // Ensure component_breakdown / other_fees columns exist. Do NOT add preset component columns
     try {
-      // Check if columns exist by querying information_schema
       const [columns] = await db.query(`
         SELECT column_name AS column_name
         FROM information_schema.columns 
         WHERE table_schema = current_schema()
         AND table_name = 'student_fees' 
-        AND column_name IN ('tuition_fee', 'transport_fee', 'lab_fee', 'other_fees')
+        AND column_name IN ('component_breakdown', 'other_fees')
       `);
-      
       const existingColumns = columns.map(col => col.column_name);
-      
-      if (!existingColumns.includes('tuition_fee')) {
-        await db.query('ALTER TABLE student_fees ADD COLUMN tuition_fee DECIMAL(10,2) NULL');
-      }
-      if (!existingColumns.includes('transport_fee')) {
-        await db.query('ALTER TABLE student_fees ADD COLUMN transport_fee DECIMAL(10,2) NULL');
-      }
-      if (!existingColumns.includes('lab_fee')) {
-        await db.query('ALTER TABLE student_fees ADD COLUMN lab_fee DECIMAL(10,2) NULL');
+      if (!existingColumns.includes('component_breakdown')) {
+        await db.query('ALTER TABLE student_fees ADD COLUMN component_breakdown JSON NULL');
       }
       if (!existingColumns.includes('other_fees')) {
         await db.query('ALTER TABLE student_fees ADD COLUMN other_fees JSON NULL');
       }
     } catch (alterError) {
-      // Columns might already exist, ignore error
-      console.log('Note: Error checking/creating columns:', alterError.message);
+      console.log('Note: Error checking/creating student_fees columns:', alterError.message);
     }
 
     // Check if student fee exists and belongs to this school
@@ -1212,12 +1157,8 @@ router.put('/students/:studentFeeId', authenticateToken, requireAdmin, async (re
       return res.status(404).json({ error: 'Student fee not found' });
     }
 
-    // Build component breakdown
+    // Build component breakdown only from custom other_fees components
     let componentBreakdown = {};
-    if (tuitionFee !== undefined) componentBreakdown.tuition_fee = { total: parseFloat(tuitionFee) || 0, paid: 0, pending: parseFloat(tuitionFee) || 0 };
-    if (transportFee !== undefined) componentBreakdown.transport_fee = { total: parseFloat(transportFee) || 0, paid: 0, pending: parseFloat(transportFee) || 0 };
-    if (labFee !== undefined) componentBreakdown.lab_fee = { total: parseFloat(labFee) || 0, paid: 0, pending: parseFloat(labFee) || 0 };
-    
     if (otherFees && otherFees.components) {
       otherFees.components.forEach((comp) => {
         const compName = comp.name.toLowerCase().replace(/\s+/g, '_');
@@ -1233,9 +1174,6 @@ router.put('/students/:studentFeeId', authenticateToken, requireAdmin, async (re
     await db.query(
       `UPDATE student_fees SET
         total_fee = ?,
-        tuition_fee = ?,
-        transport_fee = ?,
-        lab_fee = ?,
         other_fees = ?,
         pending_amount = ?,
         status = ?,
@@ -1245,9 +1183,6 @@ router.put('/students/:studentFeeId', authenticateToken, requireAdmin, async (re
       WHERE id = ?`,
       [
         totalFee,
-        tuitionFee || null,
-        transportFee || null,
-        labFee || null,
         otherFees ? JSON.stringify(otherFees) : null,
         newPendingAmount,
         newStatus,

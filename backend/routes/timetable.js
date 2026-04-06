@@ -56,11 +56,20 @@ router.post('/time-slots', authenticateToken, requireAdmin, async (req, res) => 
     }
 
     const slotId = uuidv4();
-    await db.query(
-      `INSERT INTO time_slots (id, school_id, start_time, end_time, type, display_order, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, NOW())`,
-      [slotId, schoolId, startTime, endTime, type, displayOrder || 0]
-    );
+      // Prevent exact duplicate time slots for the same school
+      const [existing] = await db.query(
+        `SELECT id FROM time_slots WHERE school_id = ? AND start_time = ? AND end_time = ? AND type = ? LIMIT 1`,
+        [schoolId, startTime, endTime, type]
+      );
+      if (existing.length > 0) {
+        return res.status(409).json({ error: 'Time slot already exists for this school' });
+      }
+
+      await db.query(
+        `INSERT INTO time_slots (id, school_id, start_time, end_time, type, display_order, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, NOW())`,
+        [slotId, schoolId, startTime, endTime, type, displayOrder || 0]
+      );
 
     console.log('✅ Time slot created:', { slotId, startTime, endTime, type, schoolId });
 
@@ -75,6 +84,11 @@ router.post('/time-slots', authenticateToken, requireAdmin, async (req, res) => 
       message: error.message
     });
     
+    // Handle DB-level duplicate constraint (Postgres 23505 -> mapped to ER_DUP_ENTRY)
+    if (error.code === 'ER_DUP_ENTRY' || error.code === '23505') {
+      return res.status(409).json({ error: 'Time slot already exists for this school' });
+    }
+
     // Check if table doesn't exist
     if (error.code === 'ER_NO_SUCH_TABLE' || error.message.includes("doesn't exist") || error.message.includes('does not exist')) {
       return res.status(500).json({ 
@@ -119,6 +133,30 @@ router.put('/time-slots/:id', authenticateToken, requireAdmin, async (req, res) 
       return res.status(400).json({ error: 'No fields to update' });
     }
 
+    // If updating start/end/type, ensure we don't create a duplicate
+    const willUpdateStart = startTime !== undefined && startTime !== null;
+    const willUpdateEnd = endTime !== undefined && endTime !== null;
+    const willUpdateType = type !== undefined && type !== null;
+    if (willUpdateStart || willUpdateEnd || willUpdateType) {
+      const checkStart = willUpdateStart ? startTime : undefined;
+      const checkEnd = willUpdateEnd ? endTime : undefined;
+      const checkType = willUpdateType ? type : undefined;
+
+      // Build query pieces dynamically
+      const params = [schoolId];
+      let q = `SELECT id FROM time_slots WHERE school_id = ?`;
+      if (checkStart !== undefined) { q += ' AND start_time = ?'; params.push(checkStart); }
+      if (checkEnd !== undefined) { q += ' AND end_time = ?'; params.push(checkEnd); }
+      if (checkType !== undefined) { q += ' AND type = ?'; params.push(checkType); }
+      q += ' AND id != ? LIMIT 1';
+      params.push(id);
+
+      const [conflict] = await db.query(q, params);
+      if (conflict.length > 0) {
+        return res.status(409).json({ error: 'Another time slot with the same start/end/type already exists' });
+      }
+    }
+
     values.push(id);
     await db.query(
       `UPDATE time_slots SET ${updates.join(', ')} WHERE id = ?`,
@@ -128,6 +166,10 @@ router.put('/time-slots/:id', authenticateToken, requireAdmin, async (req, res) 
     res.json({ success: true });
   } catch (error) {
     console.error('Update time slot error:', error);
+    // Handle DB unique-constraint conflicts
+    if (error.code === 'ER_DUP_ENTRY' || error.code === '23505') {
+      return res.status(409).json({ error: 'Another time slot with the same start/end/type already exists' });
+    }
     res.status(500).json({ error: 'Failed to update time slot' });
   }
 });

@@ -9,6 +9,24 @@ function generateLinkCode() {
   return `REG-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
 }
 
+// Determine frontend base URL depending on environment or request
+function getFrontendBaseUrl(req) {
+  // If the request provides a host and it's local, prefer it (keeps port)
+  if (req && req.get) {
+    const host = (req.get('host') || '').toLowerCase();
+    if (host.includes('localhost') || host.startsWith('127.') || host.startsWith('[::1]')) {
+      return 'http://localhost:8080';
+    }
+  }
+
+  // If running in development without a request, prefer localhost default
+  if (process.env.NODE_ENV === 'development') return 'http://localhost:8080';
+
+  // In production, use explicit FRONTEND_URL if provided, otherwise default to app.conventpulse.in
+  if (process.env.FRONTEND_URL) return process.env.FRONTEND_URL;
+  return 'https://app.conventpulse.in';
+}
+
 // Create registration link
 // Body: name (optional), linkType: 'class'|'all_classes'|'teacher'|'others', classId (optional), teacherId (optional), section (optional), fieldConfig, expiresAt
 router.post('/', authenticateToken, requireAdmin, async (req, res) => {
@@ -110,14 +128,14 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
         linkCode,
         JSON.stringify(fieldConfig || []),
         expiresAtDate,
-        1
+        true
       ]
     );
 
     await connection.commit();
     connection.release();
 
-    const baseUrl = process.env.FRONTEND_URL || 'http://localhost:8080';
+    const baseUrl = getFrontendBaseUrl(req);
     const registrationUrl = `${baseUrl}/register?code=${linkCode}`;
 
     console.log('✅ Registration link created:', { linkId, linkCode, linkType: type, classId: finalClassId, teacherId: type === 'teacher' ? teacherId : null, schoolId });
@@ -171,6 +189,8 @@ router.get('/', authenticateToken, requireAdmin, async (req, res) => {
 
     console.log('✅ Found registration links:', links.length);
 
+    const baseUrl = getFrontendBaseUrl(req);
+
     const formattedLinks = links.map(link => {
       let fieldConfig = [];
       try {
@@ -195,7 +215,7 @@ router.get('/', authenticateToken, requireAdmin, async (req, res) => {
         expiresAt: link.expires_at,
         isActive: link.is_active,
         createdAt: link.created_at,
-        link: `${process.env.FRONTEND_URL || 'http://localhost:8080'}/register?code=${link.link_code}`
+        link: `${baseUrl}/register?code=${link.link_code}`
       };
     });
 
@@ -241,6 +261,8 @@ router.get('/:id', authenticateToken, requireAdmin, async (req, res) => {
     try {
       if (link.field_config) fieldConfig = typeof link.field_config === 'string' ? JSON.parse(link.field_config) : link.field_config;
     } catch (_) {}
+    const baseUrl = getFrontendBaseUrl(req);
+
     res.json({
       id: link.id,
       linkCode: link.link_code,
@@ -255,7 +277,7 @@ router.get('/:id', authenticateToken, requireAdmin, async (req, res) => {
       expiresAt: link.expires_at,
       isActive: link.is_active,
       createdAt: link.created_at,
-      link: `${process.env.FRONTEND_URL || 'http://localhost:8080'}/register?code=${link.link_code}`
+      link: `${baseUrl}/register?code=${link.link_code}`
     });
   } catch (error) {
     console.error('Get registration link error:', error);
@@ -273,7 +295,7 @@ router.get('/code/:code', async (req, res) => {
     // First get the registration link
     const [links] = await db.query(
       `SELECT * FROM registration_links 
-       WHERE link_code = ? AND is_active = 1
+       WHERE link_code = ? AND is_active = TRUE
        AND (expires_at IS NULL OR expires_at > NOW())`,
       [code]
     );
@@ -366,7 +388,7 @@ router.patch('/:id/deactivate', authenticateToken, requireAdmin, async (req, res
     const schoolId = req.user.schoolId;
 
     const [result] = await db.query(
-      'UPDATE registration_links SET is_active = 0 WHERE id = ? AND school_id = ?',
+      'UPDATE registration_links SET is_active = FALSE WHERE id = ? AND school_id = ?',
       [id, schoolId]
     );
 
