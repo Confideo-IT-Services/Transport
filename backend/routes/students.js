@@ -283,6 +283,9 @@ router.post('/', async (req, res) => {
       studentName, // Some forms might use studentName instead of name
       otp_verified, // OTP verification status
       verified_mobile_number, // Verified mobile number
+      // Transport add-ons (optional)
+      rfidTagId,
+      pickupPointId,
       ...otherFields // Any other custom fields
     } = req.body;
 
@@ -536,6 +539,138 @@ router.post('/', async (req, res) => {
        finalParentEmail, finalParentName, address || null, dateOfBirth || null,
        gender || null, bloodGroup || null, photoUrl || null, registrationCode || null, JSON.stringify(submittedData), admissionNumberToStore]
     );
+
+    // Transport assignment (optional): store pickup point + RFID, ensure RFID is unique/unassigned.
+    try {
+      const hasTransport = pickupPointId || rfidTagId;
+      if (hasTransport) {
+        // Assign RFID (must exist, belong to school, and be unassigned)
+        let rfidRow = null;
+        if (rfidTagId) {
+          const [rfidRows] = await db.query(
+            `SELECT id, assigned_student_id FROM transport_rfid_tags WHERE id = ? AND school_id = ? LIMIT 1`,
+            [String(rfidTagId), String(finalSchoolId)],
+          );
+          if (!rfidRows.length) {
+            return res.status(400).json({ error: 'Invalid RFID tag' });
+          }
+          if (rfidRows[0].assigned_student_id) {
+            return res.status(409).json({ error: 'RFID already assigned' });
+          }
+          rfidRow = rfidRows[0];
+        }
+
+        // Validate pickup point belongs to school
+        let pickupRow = null;
+        if (pickupPointId) {
+          const [ppRows] = await db.query(
+            `SELECT id, name, lat, lng FROM transport_pickup_points WHERE id = ? AND school_id = ? LIMIT 1`,
+            [String(pickupPointId), String(finalSchoolId)],
+          );
+          if (!ppRows.length) {
+            return res.status(400).json({ error: 'Invalid pickup point' });
+          }
+          pickupRow = ppRows[0];
+        }
+
+        // Find nearest route (simple heuristic): route with closest existing stop to pickup point
+        let chosenRouteId = null;
+        if (pickupRow) {
+          const [nearest] = await db.query(
+            `
+            SELECT rs.route_id, MIN( (rs.lat - ?) * (rs.lat - ?) + (rs.lng - ?) * (rs.lng - ?) ) AS d2
+            FROM transport_route_stops rs
+            GROUP BY rs.route_id
+            ORDER BY d2 ASC
+            LIMIT 1
+            `,
+            [Number(pickupRow.lat), Number(pickupRow.lat), Number(pickupRow.lng), Number(pickupRow.lng)],
+          );
+          if (nearest && nearest.length && nearest[0].route_id) {
+            chosenRouteId = String(nearest[0].route_id);
+          }
+        }
+
+        // Resolve bus from driver assignment (route -> driver -> bus)
+        let chosenBusId = null;
+        if (chosenRouteId) {
+          const [drv] = await db.query(
+            `SELECT bus_id FROM transport_drivers WHERE morning_route_id = ? OR evening_route_id = ? LIMIT 1`,
+            [chosenRouteId, chosenRouteId],
+          );
+          if (drv && drv.length && drv[0].bus_id) {
+            chosenBusId = String(drv[0].bus_id);
+          }
+        }
+
+        // Upsert assignment row
+        await db.query(
+          `
+          INSERT INTO transport_student_assignments (student_id, school_id, pickup_point_id, rfid_tag_id, bus_id, route_id, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())
+          ON CONFLICT (student_id)
+          DO UPDATE SET
+            pickup_point_id = EXCLUDED.pickup_point_id,
+            rfid_tag_id = EXCLUDED.rfid_tag_id,
+            bus_id = EXCLUDED.bus_id,
+            route_id = EXCLUDED.route_id,
+            updated_at = NOW()
+          `,
+          [
+            String(studentId),
+            String(finalSchoolId),
+            pickupRow ? String(pickupRow.id) : null,
+            rfidRow ? String(rfidRow.id) : null,
+            chosenBusId,
+            chosenRouteId,
+          ],
+        );
+
+        if (rfidRow) {
+          await db.query(`UPDATE transport_rfid_tags SET assigned_student_id = ? WHERE id = ?`, [String(studentId), String(rfidRow.id)]);
+        }
+
+        // Insert pickup point into route stops in the middle (best segment by midpoint distance).
+        if (pickupRow && chosenRouteId) {
+          const [stopRows] = await db.query(
+            `SELECT sequence_order, name, lat, lng FROM transport_route_stops WHERE route_id = ? ORDER BY sequence_order ASC`,
+            [chosenRouteId],
+          );
+          if (stopRows && stopRows.length >= 2) {
+            let bestIdx = stopRows.length; // default append
+            let bestD2 = Infinity;
+            for (let i = 0; i < stopRows.length - 1; i++) {
+              const a = stopRows[i];
+              const b = stopRows[i + 1];
+              const midLat = (Number(a.lat) + Number(b.lat)) / 2;
+              const midLng = (Number(a.lng) + Number(b.lng)) / 2;
+              const d2 = (midLat - Number(pickupRow.lat)) ** 2 + (midLng - Number(pickupRow.lng)) ** 2;
+              if (d2 < bestD2) {
+                bestD2 = d2;
+                bestIdx = i + 1;
+              }
+            }
+            const newSeq = Number(stopRows[0].sequence_order) + bestIdx;
+            // Shift sequence orders >= newSeq
+            await db.query(
+              `UPDATE transport_route_stops SET sequence_order = sequence_order + 1 WHERE route_id = ? AND sequence_order >= ?`,
+              [chosenRouteId, newSeq],
+            );
+            await db.query(
+              `INSERT INTO transport_route_stops (route_id, sequence_order, name, lat, lng) VALUES (?, ?, ?, ?, ?)`,
+              [chosenRouteId, newSeq, String(pickupRow.name), Number(pickupRow.lat), Number(pickupRow.lng)],
+            );
+          }
+        }
+      }
+    } catch (e) {
+      // If transport tables aren't installed yet, ignore for now.
+      if (e && (e.code === 'ER_NO_SUCH_TABLE' || e.code === '42P01')) {
+        console.log('Transport tables missing; skipping transport assignment on registration');
+      } else {
+        throw e;
+      }
+    }
 
     console.log('✅ Student created:', { 
       studentId, 

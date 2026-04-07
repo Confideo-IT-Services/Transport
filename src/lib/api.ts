@@ -642,6 +642,22 @@ export const studentsApi = {
   },
 };
 
+// ============ TRANSPORT (PUBLIC REGISTRATION HELPERS) ============
+
+export const transportRegistrationApi = {
+  getAvailableRfidTags: async (registrationCode: string): Promise<{ schoolId: string; tags: Array<{ id: string; tagUid: string }> }> => {
+    return apiRequest(`/transport/registration/${encodeURIComponent(registrationCode)}/rfid/available`);
+  },
+  getNearestPickupPoints: async (
+    registrationCode: string,
+    q: string
+  ): Promise<{ pickupPoints: Array<{ id: string; name: string; lat: number; lng: number }> }> => {
+    const params = new URLSearchParams();
+    params.set('q', q);
+    return apiRequest(`/transport/registration/${encodeURIComponent(registrationCode)}/pickup-points?${params.toString()}`);
+  },
+};
+
 // ============ REGISTRATION LINKS API ============
 
 export const registrationLinksApi = {

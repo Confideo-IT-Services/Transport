@@ -22,6 +22,7 @@ alwaysApply: true
 | DB access / helpers | `backend/config/database.js`, `backend/utils/**`, `backend/middleware/**` |
 | Background jobs | `backend/jobs/**` (wire from `server.js` if needed) |
 | RAG HTTP service | `RAG_app/app/**`, `RAG_app/requirements.txt` |
+| **Transport module** | `Transport/**`, `backend/routes/transport.js` — read **`Transport/TRANSPORT_CURSOR_HANDOFF.md`** for status and backlog |
 
 ## Discipline (required)
 

@@ -60,6 +60,14 @@ function toMysql2Tuple(pgResult) {
   if (cmd === 'SELECT' || cmd === 'WITH' || cmd === 'SHOW' || cmd === 'COPY') {
     return [pgResult.rows, pgResult.fields];
   }
+  // INSERT/UPDATE/DELETE with RETURNING returns rows in node-pg
+  if (
+    pgResult.rows &&
+    pgResult.rows.length > 0 &&
+    (cmd === 'INSERT' || cmd === 'UPDATE' || cmd === 'DELETE')
+  ) {
+    return [pgResult.rows, pgResult.fields];
+  }
   const header = {
     affectedRows: pgResult.rowCount || 0,
     insertId: 0,

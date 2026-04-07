@@ -49,6 +49,24 @@ import SuperAdminChatbot from "./pages/superadmin/Chatbot";
 import TutorPDFIngestionPage from "./pages/superadmin/TutorPDFIngestion";
 import ParentTutorPage from "./pages/parent/Tutor";
 
+import TransportLogin from "@transport/TransportLogin";
+import TransportLayout from "@transport/TransportLayout";
+import TransportDashboard from "@transport/TransportDashboard";
+import TransportParentsPage from "@transport/pages/TransportParentsPage";
+import TransportDriversPage from "@transport/pages/TransportDriversPage";
+import TransportBusesPage from "@transport/pages/TransportBusesPage";
+import TransportRoutesPage from "@transport/pages/TransportRoutesPage";
+import TransportRouteDetailPage from "@transport/pages/TransportRouteDetailPage";
+import TransportBusDetailPage from "@transport/pages/TransportBusDetailPage";
+import TransportAttendancePage from "@transport/pages/TransportAttendancePage";
+import TransportBusAttendancePage from "@transport/pages/TransportBusAttendancePage";
+import TransportRfidTagsPage from "@transport/pages/TransportRfidTagsPage";
+import DriverLogin from "@transport/driver/DriverLogin";
+import DriverLayout from "@transport/driver/DriverLayout";
+import DriverHomePage from "@transport/driver/DriverHomePage";
+import DriverRoutePage from "@transport/driver/DriverRoutePage";
+import DriverAttendancePage from "@transport/driver/DriverAttendancePage";
+
 const queryClient = new QueryClient();
 
 const AppContent = () => {
@@ -104,6 +122,29 @@ const AppContent = () => {
       <Route path="/superadmin/tutor-ingestion" element={<TutorPDFIngestionPage />} />
       <Route path="/superadmin/id-templates" element={<IDCardTemplate />} />
       <Route path="/superadmin/id-cards" element={<IDCardGeneration />} />
+
+      {/* Transport admin (local demo session — see Transport/TRANSPORT_MODULE_STEPS.md) */}
+      <Route path="/transport/login" element={<TransportLogin />} />
+      <Route path="/transport" element={<TransportLayout />}>
+        <Route index element={<TransportDashboard />} />
+        <Route path="parents" element={<TransportParentsPage />} />
+        <Route path="drivers" element={<TransportDriversPage />} />
+        <Route path="buses" element={<TransportBusesPage />} />
+        <Route path="routes" element={<TransportRoutesPage />} />
+        <Route path="routes/:routeId" element={<TransportRouteDetailPage />} />
+        <Route path="buses/:busId" element={<TransportBusDetailPage />} />
+        <Route path="attendance" element={<TransportAttendancePage />} />
+        <Route path="attendance/:busId" element={<TransportBusAttendancePage />} />
+        <Route path="rfid" element={<TransportRfidTagsPage />} />
+      </Route>
+
+      {/* Transport driver (demo session — credentials issued by transport admin later) */}
+      <Route path="/transport/driver/login" element={<DriverLogin />} />
+      <Route path="/transport/driver" element={<DriverLayout />}>
+        <Route index element={<DriverHomePage />} />
+        <Route path="my-route" element={<DriverRoutePage />} />
+        <Route path="attendance" element={<DriverAttendancePage />} />
+      </Route>
       
       {/* Legacy redirects */}
       <Route path="/admin" element={<Navigate to="/dashboard" replace />} />

@@ -1,20 +1,46 @@
 process.env.TZ = 'Asia/Kolkata';
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 const express = require('express');
 const cors = require('cors');
 
 const app = express();
 
+/** Origins allowed for browser CORS (Vite, Expo, deployed app). */
+const corsStaticOrigins = [
+  'http://localhost:5173',
+  'http://localhost:8080',
+  'http://localhost:8081', // Expo web
+  'http://127.0.0.1:5173',
+  'http://127.0.0.1:8080',
+  'http://127.0.0.1:8081',
+  process.env.FRONTEND_URL,
+].filter(Boolean);
+
+function corsOrigin(origin, callback) {
+  // Non-browser clients (curl, server-to-server) send no Origin
+  if (!origin) {
+    return callback(null, true);
+  }
+  if (corsStaticOrigins.includes(origin)) {
+    return callback(null, true);
+  }
+  if (/^exp:\/\//.test(origin)) {
+    return callback(null, true);
+  }
+  // Dev: any localhost / 127.0.0.1 with a port (e.g. Vite on a different port)
+  if (process.env.NODE_ENV !== 'production') {
+    if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+      return callback(null, true);
+    }
+  }
+  return callback(null, false);
+}
+
 // Middleware
 app.use(cors({
-  origin: [
-    'http://localhost:5173',
-    'http://localhost:8080',
-    'http://localhost:8081', // Expo web
-    /^exp:\/\/.*/, // Allow all Expo URLs (mobile app)
-    process.env.FRONTEND_URL
-  ].filter(Boolean),
-  credentials: true
+  origin: corsOrigin,
+  credentials: true,
 }));
 app.use(express.json());
 
@@ -49,6 +75,7 @@ const parentRoutes = require('./routes/parents');
 const visitorRequestsRoutes = require('./routes/visitorRequests');
 const tutorRoutes = require('./routes/tutor');
 const ragRoutes = require('./routes/rag');
+const transportRoutes = require('./routes/transport');
 
 // Use routes
 app.use('/api/auth', authRoutes);
@@ -74,6 +101,7 @@ app.use('/api/parents', parentRoutes);
 app.use('/api/visitor-requests', visitorRequestsRoutes);
 app.use('/api/tutor', tutorRoutes);
 app.use('/api/rag', ragRoutes);
+app.use('/api/transport', transportRoutes);
 
 // Import background jobs (optional)
 if (process.env.ENABLE_WHATSAPP_STATUS_CHECK === 'true') {

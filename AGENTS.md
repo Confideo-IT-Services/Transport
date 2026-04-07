@@ -18,6 +18,12 @@ ConventPulse is a **school / operations management** web app (dashboards, studen
 
 Do **not** introduce a new framework or database for routine features unless the user explicitly asks.
 
+## Subsystem: Transport (school buses / drivers / routes)
+
+The **Transport** admin UI and driver app live under **`Transport/`** (Vite alias `@transport`). Backend routes are in **`backend/routes/transport.js`** (`/api/transport`). Transport data uses **PostgreSQL** (see `backend/config/database.js` and `backend/.env.example`), not the legacy MySQL notes below for the main app.
+
+**Before changing Transport features, read:** `Transport/TRANSPORT_CURSOR_HANDOFF.md` — completed work, env/migrations, file map, and **remaining work** (e.g. live GPS/trackers deferred).
+
 ## Repository map
 
 ```
@@ -73,6 +79,7 @@ Use this to find the right file for a domain; **do not edit every file** when on
 | Visitor requests | `backend/routes/visitorRequests.js` |
 | Tutor / ingest | `backend/routes/tutor.js` |
 | RAG proxy | `backend/routes/rag.js` |
+| **Transport** (buses, drivers, routes, Places, maps-proxy) | `backend/routes/transport.js` |
 
 ## Security reminders
 

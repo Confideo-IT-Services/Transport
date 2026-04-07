@@ -16,7 +16,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Upload, CheckCircle, GraduationCap, Camera, X, CheckCircle2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { registrationLinksApi, studentsApi, uploadApi, otpApi } from "@/lib/api";
+import { registrationLinksApi, studentsApi, uploadApi, otpApi, transportRegistrationApi } from "@/lib/api";
 
 interface FormField {
   id: string;
@@ -52,6 +52,11 @@ export default function StudentRegistration() {
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
   const [showCamera, setShowCamera] = useState(false);
   const [formData, setFormData] = useState<Record<string, string | boolean>>({});
+  const [rfidTags, setRfidTags] = useState<Array<{ id: string; tagUid: string }>>([]);
+  const [pickupPoints, setPickupPoints] = useState<Array<{ id: string; name: string; lat: number; lng: number }>>([]);
+  const [selectedRfidTagId, setSelectedRfidTagId] = useState<string>("");
+  const [selectedPickupPointId, setSelectedPickupPointId] = useState<string>("");
+  const pickupSearchTimerRef = useRef<number | null>(null);
   const [otpState, setOtpState] = useState<{
     fieldName: string | null;
     mobile: string;
@@ -109,6 +114,54 @@ export default function StudentRegistration() {
 
     fetchLinkData();
   }, [code]);
+
+  // Fetch available RFID tags (unassigned) for this registration link
+  useEffect(() => {
+    const run = async () => {
+      if (!code) return;
+      try {
+        const data = await transportRegistrationApi.getAvailableRfidTags(code);
+        setRfidTags(data.tags || []);
+      } catch {
+        // ignore: transport module may not be enabled for this school
+      }
+    };
+    run();
+  }, [code]);
+
+  // Fetch nearest pickup points based on entered address (debounced)
+  useEffect(() => {
+    if (!code) return;
+    const addr = typeof formData.address === "string" ? formData.address.trim() : "";
+    if (!addr || addr.length < 3) {
+      setPickupPoints([]);
+      setSelectedPickupPointId("");
+      return;
+    }
+    if (pickupSearchTimerRef.current) {
+      window.clearTimeout(pickupSearchTimerRef.current);
+    }
+    pickupSearchTimerRef.current = window.setTimeout(async () => {
+      try {
+        const data = await transportRegistrationApi.getNearestPickupPoints(code, addr);
+        setPickupPoints(data.pickupPoints || []);
+        if (data.pickupPoints?.length) {
+          // Keep existing selection if still present; otherwise auto-select first.
+          const stillValid = data.pickupPoints.some((p) => p.id === selectedPickupPointId);
+          if (!stillValid) setSelectedPickupPointId(data.pickupPoints[0].id);
+        } else {
+          setSelectedPickupPointId("");
+        }
+      } catch {
+        setPickupPoints([]);
+        setSelectedPickupPointId("");
+      }
+    }, 450);
+    return () => {
+      if (pickupSearchTimerRef.current) window.clearTimeout(pickupSearchTimerRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [code, formData.address]);
 
   useEffect(() => {
     return () => {
@@ -434,6 +487,9 @@ export default function StudentRegistration() {
         emergencyContact: formData.emergencyContact || null,
         previousSchool: formData.previousSchool || null,
         medicalConditions: formData.medicalConditions || null,
+        // Transport add-ons (optional)
+        rfidTagId: selectedRfidTagId || undefined,
+        pickupPointId: selectedPickupPointId || undefined,
       };
 
       // Add any custom fields that were added through "Add Field"
@@ -771,6 +827,7 @@ export default function StudentRegistration() {
   const showPhoto = !!photoField;
   const photoMandatory = photoField?.mandatory || false;
   const otherFields = linkData.fieldConfig.filter(f => f.fieldName !== 'photo' || f.fieldType !== 'file');
+  const showTransportExtras = otherFields.some((f) => f.fieldName === "address") || typeof formData.address === "string";
 
   return (
     <div className="min-h-screen bg-background py-8 px-4">
@@ -909,6 +966,71 @@ export default function StudentRegistration() {
               <CardContent>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {otherFields.map(renderField)}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Transport: Pickup point + RFID (optional) */}
+          {showTransportExtras && (
+            <Card className="mb-6">
+              <CardHeader>
+                <CardTitle className="text-lg">Transport (Optional)</CardTitle>
+                <CardDescription>
+                  Select a nearest pickup point and assign RFID if available.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Nearest pickup point</Label>
+                    <Select
+                      value={selectedPickupPointId}
+                      onValueChange={setSelectedPickupPointId}
+                      disabled={pickupPoints.length === 0}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder={pickupPoints.length ? "Select pickup point" : "No pickup points found"} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {pickupPoints.map((p) => (
+                          <SelectItem key={p.id} value={p.id}>
+                            {p.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {typeof formData.address === "string" && formData.address.trim().length >= 3 && pickupPoints.length === 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        No pickup points near this address yet. Transport admin can create one and it will appear here.
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>RFID tag</Label>
+                    <Select
+                      value={selectedRfidTagId}
+                      onValueChange={setSelectedRfidTagId}
+                      disabled={rfidTags.length === 0}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder={rfidTags.length ? "Select RFID" : "No unassigned RFID available"} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {rfidTags.map((t) => (
+                          <SelectItem key={t.id} value={t.id}>
+                            {t.tagUid}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {rfidTags.length === 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        Transport admin needs to add RFID tags first. Assigned RFIDs won’t be shown here.
+                      </p>
+                    )}
+                  </div>
                 </div>
               </CardContent>
             </Card>

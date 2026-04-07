@@ -1,0 +1,1716 @@
+/**
+ * Transport module API — drivers, buses, routes (PostgreSQL / RDS).
+ * Create/list: transport admin secret OR JWT (school admin / superadmin).
+ * Driver login: public; returns JWT with role transport_driver.
+ */
+const express = require('express');
+const bcrypt = require('bcryptjs');
+const db = require('../config/database');
+const { generateToken, authenticateToken } = require('../middleware/auth');
+const awsPolyline = require('@aws/polyline');
+const { LocationClient, BatchUpdateDevicePositionCommand, GetDevicePositionCommand } = require('@aws-sdk/client-location');
+
+const router = express.Router();
+
+function normalizeRole(role) {
+  if (!role) return '';
+  return String(role).trim().toLowerCase().replace(/[\s_-]+/g, '');
+}
+
+/** Transport admin UI (secret) or school admin / superadmin JWT */
+function requireTransportAdmin(req, res, next) {
+  const secret = req.headers['x-transport-admin-secret'];
+  if (process.env.TRANSPORT_ADMIN_SECRET && secret === process.env.TRANSPORT_ADMIN_SECRET) {
+    return next();
+  }
+  return authenticateToken(req, res, () => {
+    const r = normalizeRole(req.user.role);
+    if (r === 'admin' || r === 'superadmin') return next();
+    return res.status(403).json({
+      error: 'Forbidden',
+      details: 'Set X-Transport-Admin-Secret header or login as school admin / superadmin',
+    });
+  });
+}
+
+/** Transport admin secret OR any JWT (admin/superadmin/transport_driver) */
+function requireTransportUser(req, res, next) {
+  const secret = req.headers['x-transport-admin-secret'];
+  if (process.env.TRANSPORT_ADMIN_SECRET && secret === process.env.TRANSPORT_ADMIN_SECRET) {
+    return next();
+  }
+  return authenticateToken(req, res, () => {
+    const r = normalizeRole(req.user.role);
+    if (r === 'admin' || r === 'superadmin' || r === 'transportdriver') return next();
+    return res.status(403).json({
+      error: 'Forbidden',
+      details: 'Login required',
+    });
+  });
+}
+
+/** RFID scanner (device) secret (header) OR transport admin secret OR admin/superadmin JWT */
+function requireTransportScanner(req, res, next) {
+  const scannerSecret = req.headers['x-transport-scanner-secret'];
+  if (process.env.TRANSPORT_SCANNER_SECRET && scannerSecret === process.env.TRANSPORT_SCANNER_SECRET) {
+    return next();
+  }
+  // Allow transport admin secret and admin JWT as fallback for manual testing.
+  const adminSecret = req.headers['x-transport-admin-secret'];
+  if (process.env.TRANSPORT_ADMIN_SECRET && adminSecret === process.env.TRANSPORT_ADMIN_SECRET) {
+    return next();
+  }
+  return authenticateToken(req, res, () => {
+    const r = normalizeRole(req.user.role);
+    if (r === 'admin' || r === 'superadmin') return next();
+    return res.status(403).json({
+      error: 'Forbidden',
+      details: 'Set X-Transport-Scanner-Secret (device) or X-Transport-Admin-Secret / admin login',
+    });
+  });
+}
+
+function mapStopRow(r) {
+  return {
+    id: String(r.id),
+    name: r.name,
+    sequenceOrder: r.sequence_order,
+    lat: r.lat != null ? Number(r.lat) : null,
+    lng: r.lng != null ? Number(r.lng) : null,
+  };
+}
+
+async function loadStopsForRoute(routeId, direction) {
+  if (!routeId) return [];
+  const order = direction === 'desc' ? 'DESC' : 'ASC';
+  const [rows] = await db.query(
+    `SELECT id, name, sequence_order, lat, lng FROM transport_route_stops WHERE route_id = ? ORDER BY sequence_order ${order}`,
+    [routeId],
+  );
+  return (rows || []).map(mapStopRow);
+}
+
+function mapDriverSummary(row) {
+  return {
+    id: String(row.id),
+    email: row.email,
+    fullName: row.full_name,
+    phone: row.phone,
+    licenseNo: row.license_no,
+    busId: row.bus_id != null ? String(row.bus_id) : null,
+    busName: row.bus_name || null,
+    busRegistrationNo: row.bus_registration_no || null,
+    busCapacity: row.bus_capacity != null ? Number(row.bus_capacity) : null,
+    morningRouteId: row.morning_route_id != null ? String(row.morning_route_id) : null,
+    morningRouteName: row.morning_route_name || null,
+    eveningRouteId: row.evening_route_id != null ? String(row.evening_route_id) : null,
+    eveningRouteName: row.evening_route_name || null,
+    createdAt: row.created_at,
+  };
+}
+
+async function buildDriverResponse(row) {
+  const morningStops = await loadStopsForRoute(row.morning_route_id, 'asc');
+  const eveningStops = await loadStopsForRoute(row.evening_route_id, 'desc');
+  return {
+    id: String(row.id),
+    email: row.email,
+    fullName: row.full_name,
+    phone: row.phone,
+    licenseNo: row.license_no,
+    busId: row.bus_id != null ? String(row.bus_id) : null,
+    busName: row.bus_name || null,
+    busRegistrationNo: row.bus_registration_no || null,
+    busCapacity: row.bus_capacity != null ? Number(row.bus_capacity) : null,
+    morningRouteId: row.morning_route_id != null ? String(row.morning_route_id) : null,
+    morningRouteName: row.morning_route_name || null,
+    morningStops,
+    eveningRouteId: row.evening_route_id != null ? String(row.evening_route_id) : null,
+    eveningRouteName: row.evening_route_name || null,
+    eveningStops,
+  };
+}
+
+/** GET /api/transport/buses */
+router.get('/buses', requireTransportAdmin, async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      'SELECT id, name, registration_no, capacity, created_at FROM transport_buses ORDER BY name ASC',
+      [],
+    );
+    res.json({
+      buses: (rows || []).map((r) => ({
+        id: String(r.id),
+        name: r.name,
+        registrationNo: r.registration_no,
+        capacity: r.capacity,
+        createdAt: r.created_at,
+      })),
+    });
+  } catch (err) {
+    console.error('transport list buses:', err);
+    if (err.code === 'ER_NO_SUCH_TABLE') {
+      return res.status(503).json({
+        error: 'Database not ready',
+        details: 'Run backend/sql/2026-04-08-transport_fleet.sql',
+      });
+    }
+    res.status(500).json({ error: 'Failed to list buses' });
+  }
+});
+
+/** POST /api/transport/buses */
+router.post('/buses', requireTransportAdmin, async (req, res) => {
+  try {
+    const { name, registrationNo, capacity } = req.body || {};
+    if (!name || !String(name).trim()) {
+      return res.status(400).json({ error: 'name is required' });
+    }
+    const [insertRows] = await db.query(
+      `INSERT INTO transport_buses (name, registration_no, capacity)
+       VALUES (?, ?, ?) RETURNING id`,
+      [
+        String(name).trim(),
+        registrationNo != null ? String(registrationNo).trim() : null,
+        capacity != null ? parseInt(String(capacity), 10) : null,
+      ],
+    );
+    const newId = insertRows && insertRows[0] && insertRows[0].id ? String(insertRows[0].id) : null;
+    res.status(201).json({ ok: true, id: newId, message: 'Bus created' });
+  } catch (err) {
+    console.error('transport create bus:', err);
+    if (err.code === 'ER_NO_SUCH_TABLE') {
+      return res.status(503).json({
+        error: 'Database not ready',
+        details: 'Run backend/sql/2026-04-08-transport_fleet.sql',
+      });
+    }
+    res.status(500).json({ error: 'Failed to create bus' });
+  }
+});
+
+/** GET /api/transport/routes */
+router.get('/routes', requireTransportAdmin, async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      'SELECT id, name, created_at FROM transport_routes ORDER BY name ASC',
+      [],
+    );
+    const routes = (rows || []).map((r) => ({
+      id: String(r.id),
+      name: r.name,
+      createdAt: r.created_at,
+    }));
+
+    const includeStops = String(req.query.includeStops || '') === '1' || req.query.includeStops === 'true';
+    if (!includeStops) {
+      return res.json({ routes });
+    }
+
+    const out = [];
+    for (const r of routes) {
+      const [stops] = await db.query(
+        'SELECT id, name, sequence_order, lat, lng FROM transport_route_stops WHERE route_id = ? ORDER BY sequence_order ASC',
+        [r.id],
+      );
+      out.push({
+        ...r,
+        stops: (stops || []).map(mapStopRow),
+      });
+    }
+    res.json({ routes: out });
+  } catch (err) {
+    console.error('transport list routes:', err);
+    if (err.code === 'ER_NO_SUCH_TABLE') {
+      return res.status(503).json({
+        error: 'Database not ready',
+        details: 'Run backend/sql/2026-04-08-transport_fleet.sql',
+      });
+    }
+    res.status(500).json({ error: 'Failed to list routes' });
+  }
+});
+
+/** POST /api/transport/routes — body: { name, stops: [{ name, lat, lng }] } */
+router.post('/routes', requireTransportAdmin, async (req, res) => {
+  try {
+    const { name, stops } = req.body || {};
+    if (!name || !String(name).trim()) {
+      return res.status(400).json({ error: 'name is required' });
+    }
+    if (!Array.isArray(stops) || stops.length === 0) {
+      return res.status(400).json({ error: 'stops must be a non-empty array' });
+    }
+
+    const conn = await db.getConnection();
+    let routeId;
+    try {
+      await conn.beginTransaction();
+      const [ins] = await conn.query(
+        `INSERT INTO transport_routes (name) VALUES (?) RETURNING id`,
+        [String(name).trim()],
+      );
+      routeId = ins && ins[0] && ins[0].id ? ins[0].id : null;
+      if (!routeId) {
+        throw new Error('Failed to create route');
+      }
+      let seq = 0;
+      for (const s of stops) {
+        seq += 1;
+        const lat = s.lat != null ? Number(s.lat) : NaN;
+        const lng = s.lng != null ? Number(s.lng) : NaN;
+        if (!s.name || Number.isNaN(lat) || Number.isNaN(lng)) {
+          throw new Error('Each stop needs name, lat, lng');
+        }
+        await conn.query(
+          `INSERT INTO transport_route_stops (route_id, sequence_order, name, lat, lng) VALUES (?, ?, ?, ?, ?)`,
+          [routeId, seq, String(s.name).trim(), lat, lng],
+        );
+      }
+      await conn.commit();
+      res.status(201).json({ ok: true, id: String(routeId), message: 'Route created' });
+    } catch (e) {
+      try {
+        await conn.rollback();
+      } catch (_) {
+        /* ignore */
+      }
+      if (e.message && e.message.includes('Each stop')) {
+        conn.release();
+        return res.status(400).json({ error: e.message });
+      }
+      conn.release(e);
+      throw e;
+    }
+    conn.release();
+  } catch (err) {
+    console.error('transport create route:', err);
+    if (err.code === 'ER_NO_SUCH_TABLE') {
+      return res.status(503).json({
+        error: 'Database not ready',
+        details: 'Run backend/sql/2026-04-08-transport_fleet.sql',
+      });
+    }
+    res.status(500).json({ error: 'Failed to create route' });
+  }
+});
+
+/** POST /api/transport/driver/login */
+router.post('/driver/login', async (req, res) => {
+  try {
+    const { email, password } = req.body || {};
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required' });
+    }
+
+    const [rows] = await db.query(
+      `SELECT d.id, d.email, d.password_hash, d.full_name, d.phone, d.license_no,
+              d.bus_id, d.morning_route_id, d.evening_route_id,
+              b.name AS bus_name, b.registration_no AS bus_registration_no, b.capacity AS bus_capacity,
+              mr.name AS morning_route_name, er.name AS evening_route_name
+       FROM transport_drivers d
+       LEFT JOIN transport_buses b ON b.id = d.bus_id
+       LEFT JOIN transport_routes mr ON mr.id = d.morning_route_id
+       LEFT JOIN transport_routes er ON er.id = d.evening_route_id
+       WHERE d.email = ?`,
+      [String(email).trim().toLowerCase()],
+    );
+
+    if (!rows || rows.length === 0) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    const row = rows[0];
+    const ok = await bcrypt.compare(password, row.password_hash);
+    if (!ok) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    const token = generateToken({
+      id: String(row.id),
+      email: row.email,
+      username: row.full_name || row.email,
+      role: 'transport_driver',
+      school_id: null,
+    });
+
+    const driver = await buildDriverResponse(row);
+
+    res.json({
+      token,
+      driver,
+    });
+  } catch (err) {
+    console.error('transport driver login:', err);
+    if (err.code === 'ER_NO_SUCH_TABLE') {
+      return res.status(503).json({
+        error: 'Database not ready',
+        details: 'Run transport SQL migrations on your database',
+      });
+    }
+    res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+/** GET /api/transport/driver/me — Bearer transport_driver JWT */
+router.get('/driver/me', async (req, res) => {
+  try {
+    const auth = req.headers.authorization;
+    if (!auth || !auth.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Bearer token required' });
+    }
+    const token = auth.slice(7);
+    const jwt = require('jsonwebtoken');
+    const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+    if (normalizeRole(decoded.role) !== 'transportdriver') {
+      return res.status(403).json({ error: 'Not a driver session' });
+    }
+
+    const [rows] = await db.query(
+      `SELECT d.id, d.email, d.full_name, d.phone, d.license_no,
+              d.bus_id, d.morning_route_id, d.evening_route_id,
+              b.name AS bus_name, b.registration_no AS bus_registration_no, b.capacity AS bus_capacity,
+              mr.name AS morning_route_name, er.name AS evening_route_name
+       FROM transport_drivers d
+       LEFT JOIN transport_buses b ON b.id = d.bus_id
+       LEFT JOIN transport_routes mr ON mr.id = d.morning_route_id
+       LEFT JOIN transport_routes er ON er.id = d.evening_route_id
+       WHERE d.id = ?`,
+      [decoded.id],
+    );
+    if (!rows || rows.length === 0) {
+      return res.status(404).json({ error: 'Driver not found' });
+    }
+    const driver = await buildDriverResponse(rows[0]);
+    res.json({ driver });
+  } catch (err) {
+    console.error('transport driver me:', err);
+    res.status(500).json({ error: 'Failed to load driver' });
+  }
+});
+
+/** GET /api/transport/drivers */
+router.get('/drivers', requireTransportAdmin, async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      `SELECT d.id, d.email, d.full_name, d.phone, d.license_no,
+              d.bus_id, d.morning_route_id, d.evening_route_id,
+              b.name AS bus_name, mr.name AS morning_route_name, er.name AS evening_route_name,
+              d.created_at
+       FROM transport_drivers d
+       LEFT JOIN transport_buses b ON b.id = d.bus_id
+       LEFT JOIN transport_routes mr ON mr.id = d.morning_route_id
+       LEFT JOIN transport_routes er ON er.id = d.evening_route_id
+       ORDER BY d.created_at DESC`,
+      [],
+    );
+    const drivers = (rows || []).map((r) => mapDriverSummary(r));
+    res.json({ drivers });
+  } catch (err) {
+    console.error('transport list drivers:', err);
+    if (err.code === 'ER_NO_SUCH_TABLE') {
+      return res.status(503).json({
+        error: 'Database not ready',
+        details: 'Run transport SQL migrations',
+      });
+    }
+    res.status(500).json({ error: 'Failed to list drivers' });
+  }
+});
+
+/** POST /api/transport/drivers */
+router.post('/drivers', requireTransportAdmin, async (req, res) => {
+  try {
+    const { email, password, fullName, phone, licenseNo, busId, morningRouteId, eveningRouteId } = req.body || {};
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required' });
+    }
+    if (!busId || !morningRouteId || !eveningRouteId) {
+      return res.status(400).json({ error: 'busId, morningRouteId, and eveningRouteId are required' });
+    }
+    if (String(morningRouteId) === String(eveningRouteId)) {
+      return res.status(400).json({ error: 'Morning and evening route must be different' });
+    }
+
+    // Enforce: a route can only be assigned to ONE driver at a time (either slot).
+    const [conflicts] = await db.query(
+      `SELECT id, email FROM transport_drivers
+       WHERE morning_route_id IN (?, ?) OR evening_route_id IN (?, ?)
+       LIMIT 1`,
+      [String(morningRouteId), String(eveningRouteId), String(morningRouteId), String(eveningRouteId)],
+    );
+    if (conflicts && conflicts.length) {
+      return res.status(409).json({ error: 'Route is already assigned to another driver' });
+    }
+
+    // Enforce: a bus can only be assigned to ONE driver at a time.
+    const [busConflicts] = await db.query(
+      `SELECT id, email FROM transport_drivers WHERE bus_id = ? LIMIT 1`,
+      [String(busId)],
+    );
+    if (busConflicts && busConflicts.length) {
+      return res.status(409).json({ error: 'Bus is already assigned to another driver' });
+    }
+
+    const hash = await bcrypt.hash(String(password), 10);
+    const emailNorm = String(email).trim().toLowerCase();
+
+    const [insertRows] = await db.query(
+      `INSERT INTO transport_drivers (email, password_hash, full_name, phone, license_no, bus_id, morning_route_id, evening_route_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+      [
+        emailNorm,
+        hash,
+        fullName ? String(fullName).trim() : null,
+        phone ? String(phone).trim() : null,
+        licenseNo ? String(licenseNo).trim() : null,
+        String(busId),
+        String(morningRouteId),
+        String(eveningRouteId),
+      ],
+    );
+
+    const newId = insertRows && insertRows[0] && insertRows[0].id ? String(insertRows[0].id) : null;
+    res.status(201).json({
+      ok: true,
+      id: newId,
+      message: 'Driver created',
+    });
+  } catch (err) {
+    console.error('transport create driver:', err);
+    if (err.code === 'ER_DUP_ENTRY' || err.code === '23505') {
+      return res.status(409).json({ error: 'Email already registered' });
+    }
+    if (err.code === 'ER_NO_REFERENCED_ROW_2' || err.code === '23503') {
+      return res.status(400).json({ error: 'Invalid bus or route id' });
+    }
+    if (err.code === 'ER_NO_SUCH_TABLE') {
+      return res.status(503).json({
+        error: 'Database not ready',
+        details: 'Run transport SQL migrations',
+      });
+    }
+    res.status(500).json({ error: 'Failed to create driver' });
+  }
+});
+
+function placesForwardHeaders(req) {
+  const fallbackBase = (process.env.FRONTEND_URL || 'http://localhost:8081').trim().replace(/\/$/, '');
+  const refererHeader = req.get('referer') || req.get('Referer') || `${fallbackBase}/`;
+  let originHeader = req.get('origin') || req.get('Origin');
+  if (!originHeader) {
+    try {
+      originHeader = new URL(refererHeader).origin;
+    } catch {
+      originHeader = fallbackBase;
+    }
+  }
+  return { Referer: refererHeader, Origin: originHeader };
+}
+
+function getPlacesRegion() {
+  return (process.env.AWS_PLACES_REGION || process.env.AWS_REGION || 'ap-south-1').trim();
+}
+
+function getTrackerRegion() {
+  return (process.env.AWS_TRACKER_REGION || process.env.AWS_REGION || 'ap-south-1').trim();
+}
+
+function getTrackerName() {
+  return (process.env.AWS_TRACKER_NAME || '').trim();
+}
+
+function getLocationClient(region) {
+  // Allow dedicated credentials for Location Tracker calls (common when tracker is in a different AWS account).
+  const accessKeyId = (process.env.AWS_TRACKER_ACCESS_KEY_ID || '').trim();
+  const secretAccessKey = (process.env.AWS_TRACKER_SECRET_ACCESS_KEY || '').trim();
+  const sessionToken = (process.env.AWS_TRACKER_SESSION_TOKEN || '').trim();
+  const credentials =
+    accessKeyId && secretAccessKey
+      ? {
+          accessKeyId,
+          secretAccessKey,
+          sessionToken: sessionToken || undefined,
+        }
+      : undefined;
+  return new LocationClient({
+    region,
+    credentials,
+  });
+}
+
+function toUtcDateString(d = new Date()) {
+  // YYYY-MM-DD in UTC
+  return d.toISOString().slice(0, 10);
+}
+
+/** Bias for Autocomplete [lng, lat] — default Hyderabad. */
+function getPlacesBias() {
+  const lng = parseFloat(process.env.AWS_PLACES_BIAS_LNG || '78.4747');
+  const lat = parseFloat(process.env.AWS_PLACES_BIAS_LAT || '17.3850');
+  if (Number.isNaN(lng) || Number.isNaN(lat)) {
+    return [78.4747, 17.3850];
+  }
+  return [lng, lat];
+}
+
+/** Optional country filter for Autocomplete, e.g. IND. Set AWS_PLACES_INCLUDE_COUNTRIES= to disable. */
+function getAutocompleteCountryFilter() {
+  const raw = process.env.AWS_PLACES_INCLUDE_COUNTRIES;
+  if (raw === '') {
+    return null;
+  }
+  const codes = (raw || 'IND')
+    .split(',')
+    .map((s) => s.trim().toUpperCase())
+    .filter(Boolean);
+  return codes.length ? codes : null;
+}
+
+/**
+ * GET /api/transport/places/autocomplete?q=...
+ * Proxies Amazon Location Places Autocomplete (API key on server).
+ */
+router.get('/places/autocomplete', requireTransportAdmin, async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    if (q.length < 2) {
+      return res.json({ suggestions: [] });
+    }
+    const key = (process.env.AWS_LOCATION_API_KEY || '').trim();
+    if (!key) {
+      return res.status(503).json({ error: 'AWS_LOCATION_API_KEY is not set on the server' });
+    }
+    const region = getPlacesRegion();
+    // Prefer Suggest for POI discovery (e.g., malls/apartments) — more complete than Autocomplete in many cases.
+    const url = `https://places.geo.${region}.amazonaws.com/suggest?key=${encodeURIComponent(key)}`;
+    const urlV2 = `https://places.geo.${region}.amazonaws.com/v2/suggest?key=${encodeURIComponent(key)}`;
+    const body = {
+      QueryText: q,
+      MaxResults: 20,
+      BiasPosition: getPlacesBias(),
+      Language: 'en',
+    };
+    const countries = getAutocompleteCountryFilter();
+    if (countries) {
+      body.Filter = { IncludeCountries: countries };
+    }
+    const headers = {
+      'Content-Type': 'application/json',
+      ...placesForwardHeaders(req),
+    };
+
+    async function postJson(targetUrl) {
+      const r = await fetch(targetUrl, { method: 'POST', headers, body: JSON.stringify(body) });
+      const data = await r.json().catch(() => ({}));
+      return { r, data };
+    }
+
+    let { r, data } = await postJson(url);
+    // Some accounts/regions behave as if Suggest is only exposed under /v2/suggest for API keys.
+    if (!r.ok) {
+      const msg = String((data && (data.message || data.Message || data.error)) || '');
+      if (r.status === 403 && /determine service\/operation name to be authorized/i.test(msg)) {
+        ({ r, data } = await postJson(urlV2));
+      }
+    }
+    if (!r.ok) {
+      console.error('transport places autocomplete', r.status, data);
+      return res.status(r.status >= 400 ? r.status : 502).json({
+        error: data.message || data.Message || data.error || 'Autocomplete failed',
+      });
+    }
+    const suggestions = (data.ResultItems || [])
+      .filter((it) => it && it.Place && it.Place.PlaceId)
+      .map((it) => {
+        const place = it.Place || {};
+        const title = it.Title || place.Title || '';
+        const subtitle =
+          place.Address && place.Address.Label
+            ? place.Address.Label
+            : place.Address && place.Address.Locality
+              ? place.Address.Locality
+              : '';
+        return { placeId: place.PlaceId, title, subtitle };
+      });
+    res.json({ suggestions });
+  } catch (err) {
+    console.error('transport places autocomplete:', err);
+    res.status(500).json({ error: 'Autocomplete failed' });
+  }
+});
+
+/**
+ * GET /api/transport/places/reverse-geocode?lat=..&lng=..
+ * Returns a label/title for the cursor position (used for map hover tooltips).
+ */
+router.get('/places/reverse-geocode', requireTransportUser, async (req, res) => {
+  try {
+    const lat = Number(req.query.lat);
+    const lng = Number(req.query.lng);
+    if (Number.isNaN(lat) || Number.isNaN(lng)) {
+      return res.status(400).json({ error: 'lat and lng are required' });
+    }
+    const key = (process.env.AWS_LOCATION_API_KEY || '').trim();
+    if (!key) {
+      return res.status(503).json({ error: 'AWS_LOCATION_API_KEY is not set on the server' });
+    }
+    const region = getPlacesRegion();
+    const url = `https://places.geo.${region}.amazonaws.com/reverse-geocode?key=${encodeURIComponent(key)}`;
+    const body = {
+      QueryPosition: [lng, lat],
+      MaxResults: 1,
+      Language: 'en',
+      IntendedUse: 'SingleUse',
+    };
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...placesForwardHeaders(req),
+      },
+      body: JSON.stringify(body),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      console.error('transport reverse-geocode', r.status, data);
+      return res.status(r.status >= 400 ? r.status : 502).json({
+        error: data.message || data.error || 'ReverseGeocode failed',
+      });
+    }
+    const item = data.ResultItems && data.ResultItems[0] ? data.ResultItems[0] : null;
+    const label =
+      (item && item.Address && item.Address.Label) ||
+      (item && item.Title) ||
+      (item && item.PlaceId ? String(item.PlaceId) : '');
+    res.json({ label: label || 'Unknown', lat, lng });
+  } catch (err) {
+    console.error('transport reverse-geocode:', err);
+    res.status(500).json({ error: 'ReverseGeocode failed' });
+  }
+});
+
+/**
+ * GET /api/transport/places/details?placeId=...
+ * Resolves PlaceId to name + lat/lng (GetPlace).
+ */
+router.get('/places/details', requireTransportAdmin, async (req, res) => {
+  try {
+    const placeId = String(req.query.placeId || '').trim();
+    if (!placeId) {
+      return res.status(400).json({ error: 'placeId is required' });
+    }
+    const key = (process.env.AWS_LOCATION_API_KEY || '').trim();
+    if (!key) {
+      return res.status(503).json({ error: 'AWS_LOCATION_API_KEY is not set on the server' });
+    }
+    const region = getPlacesRegion();
+    const pathSeg = encodeURIComponent(placeId);
+    const qs = new URLSearchParams({
+      key,
+      language: 'en',
+      'intended-use': 'SingleUse',
+    });
+    const url = `https://places.geo.${region}.amazonaws.com/v2/place/${pathSeg}?${qs.toString()}`;
+    const r = await fetch(url, {
+      method: 'GET',
+      headers: {
+        ...placesForwardHeaders(req),
+      },
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      console.error('transport places details', r.status, data);
+      return res.status(r.status >= 400 ? r.status : 502).json({
+        error: data.message || data.error || 'GetPlace failed',
+      });
+    }
+    const pos = data.Position;
+    if (!Array.isArray(pos) || pos.length < 2) {
+      return res.status(502).json({ error: 'No coordinates for this place' });
+    }
+    const lng = Number(pos[0]);
+    const lat = Number(pos[1]);
+    let name = '';
+    if (data.Address && data.Address.Label) {
+      name = data.Address.Label;
+    } else if (typeof data.Title === 'string') {
+      name = data.Title;
+    } else if (Array.isArray(data.Title) && data.Title[0] && data.Title[0].Value) {
+      name = data.Title[0].Value;
+    } else {
+      name = 'Stop';
+    }
+    res.json({
+      placeId: data.PlaceId || placeId,
+      name,
+      lat,
+      lng,
+    });
+  } catch (err) {
+    console.error('transport places details:', err);
+    res.status(500).json({ error: 'GetPlace failed' });
+  }
+});
+
+/** PATCH /api/transport/drivers/:id — assign bus + morning/evening routes */
+router.patch('/drivers/:id', requireTransportAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { busId, morningRouteId, eveningRouteId } = req.body || {};
+    // Allow explicit unassign by sending null; but if one is set, both must be set.
+    const busVal = busId != null ? String(busId) : null;
+    const mVal = morningRouteId != null ? String(morningRouteId) : null;
+    const eVal = eveningRouteId != null ? String(eveningRouteId) : null;
+    if (!busVal) {
+      return res.status(400).json({ error: 'busId is required' });
+    }
+    if ((mVal && !eVal) || (!mVal && eVal)) {
+      return res.status(400).json({ error: 'Set both morningRouteId and eveningRouteId (or set both to null to unassign)' });
+    }
+    if (mVal && eVal && mVal === eVal) {
+      return res.status(400).json({ error: 'Morning and evening route must be different' });
+    }
+
+    if (mVal && eVal) {
+      const [conflicts] = await db.query(
+        `SELECT id, email FROM transport_drivers
+         WHERE id <> ? AND (morning_route_id IN (?, ?) OR evening_route_id IN (?, ?))
+         LIMIT 1`,
+        [String(id), mVal, eVal, mVal, eVal],
+      );
+      if (conflicts && conflicts.length) {
+        return res.status(409).json({ error: 'Route is already assigned to another driver' });
+      }
+    }
+
+    const [busConflicts] = await db.query(
+      `SELECT id, email FROM transport_drivers WHERE id <> ? AND bus_id = ? LIMIT 1`,
+      [String(id), busVal],
+    );
+    if (busConflicts && busConflicts.length) {
+      return res.status(409).json({ error: 'Bus is already assigned to another driver' });
+    }
+    const [upd] = await db.query(
+      `UPDATE transport_drivers SET bus_id = ?, morning_route_id = ?, evening_route_id = ? WHERE id = ? RETURNING id`,
+      [busVal, mVal, eVal, String(id)],
+    );
+    if (!upd || !upd.length) {
+      return res.status(404).json({ error: 'Driver not found' });
+    }
+    res.json({ ok: true, message: 'Driver assignment updated' });
+  } catch (err) {
+    console.error('transport patch driver:', err);
+    if (err.code === 'ER_NO_REFERENCED_ROW_2' || err.code === '23503') {
+      return res.status(400).json({ error: 'Invalid bus or route id' });
+    }
+    res.status(500).json({ error: 'Failed to update driver' });
+  }
+});
+
+/**
+ * Proxy Amazon Location map/tile requests with the server-side API key.
+ */
+router.get('/maps-proxy', async (req, res) => {
+  const key = (process.env.AWS_LOCATION_API_KEY || '').trim();
+  if (!key) {
+    return res.status(503).json({ error: 'AWS_LOCATION_API_KEY is not set on the server' });
+  }
+  const raw = req.query.u;
+  if (!raw || typeof raw !== 'string') {
+    return res.status(400).json({ error: 'Missing query parameter u' });
+  }
+  let target;
+  try {
+    target = new URL(raw);
+  } catch {
+    return res.status(400).json({ error: 'Invalid URL' });
+  }
+  if (!/^maps\.geo\.[a-z0-9-]+\.amazonaws\.com$/i.test(target.hostname)) {
+    return res.status(400).json({ error: 'Host not allowed' });
+  }
+  target.searchParams.set('key', key);
+
+  const refererHeader = req.get('referer') || req.get('Referer') || 'http://localhost:8081/';
+  let originHeader = req.get('origin') || req.get('Origin');
+  if (!originHeader) {
+    try {
+      originHeader = new URL(refererHeader).origin;
+    } catch {
+      originHeader = 'http://localhost:8081';
+    }
+  }
+
+  try {
+    const r = await fetch(target.toString(), {
+      headers: {
+        Referer: refererHeader,
+        Origin: originHeader,
+      },
+    });
+    const ct = r.headers.get('content-type') || 'application/octet-stream';
+    res.setHeader('Content-Type', ct);
+    const cc = r.headers.get('cache-control');
+    if (cc) {
+      res.setHeader('Cache-Control', cc);
+    } else {
+      res.setHeader('Cache-Control', 'public, max-age=300');
+    }
+    if (!r.ok) {
+      console.error('transport maps-proxy upstream', r.status, target.origin + target.pathname);
+    }
+    const ab = await r.arrayBuffer();
+    res.status(r.status).send(Buffer.from(ab));
+  } catch (err) {
+    console.error('transport maps-proxy:', err);
+    res.status(502).json({ error: 'Upstream fetch failed' });
+  }
+});
+
+/**
+ * POST /api/transport/routes/calculate
+ * Body: { stops: [{ lat, lng }, ...], travelMode?: "Car"|"Truck"|"Scooter"|"Pedestrian" }
+ *
+ * Returns: { lineString: [[lng,lat],...], distanceMeters, durationSeconds }
+ *
+ * Uses Amazon Location Routes V2: POST /routes?key=...
+ */
+router.post('/routes/calculate', requireTransportUser, async (req, res) => {
+  try {
+    const key = (process.env.AWS_LOCATION_API_KEY || '').trim();
+    if (!key) {
+      return res.status(503).json({ error: 'AWS_LOCATION_API_KEY is not set on the server' });
+    }
+    const region = (process.env.AWS_ROUTES_REGION || process.env.AWS_PLACES_REGION || process.env.AWS_REGION || 'ap-south-1').trim();
+    const stops = Array.isArray(req.body?.stops) ? req.body.stops : [];
+    const travelModeRaw = String(req.body?.travelMode || 'Car').trim();
+    const travelMode = ['Car', 'Truck', 'Scooter', 'Pedestrian'].includes(travelModeRaw) ? travelModeRaw : 'Car';
+
+    if (stops.length < 2) {
+      return res.status(400).json({ error: 'stops must have at least 2 points' });
+    }
+    const coords = stops.map((s) => {
+      const lat = Number(s.lat);
+      const lng = Number(s.lng);
+      return { lat, lng };
+    });
+    if (coords.some((c) => Number.isNaN(c.lat) || Number.isNaN(c.lng))) {
+      return res.status(400).json({ error: 'Each stop must have numeric lat/lng' });
+    }
+
+    const origin = [coords[0].lng, coords[0].lat];
+    const destination = [coords[coords.length - 1].lng, coords[coords.length - 1].lat];
+    const waypoints = coords.slice(1, -1).map((c) => ({ Position: [c.lng, c.lat] }));
+
+    const url = `https://routes.geo.${region}.amazonaws.com/v2/routes?key=${encodeURIComponent(key)}`;
+    const body = {
+      Origin: origin,
+      Destination: destination,
+      Waypoints: waypoints.length ? waypoints : undefined,
+      TravelMode: travelMode,
+      LegGeometryFormat: 'FlexiblePolyline',
+    };
+
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        // API keys with referrer restrictions often require Origin/Referer; forward from client.
+        ...placesForwardHeaders(req),
+      },
+      body: JSON.stringify(body),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      console.error('transport routes calculate', r.status, data);
+      return res.status(r.status >= 400 ? r.status : 502).json({
+        error: data.message || data.error || 'Route calculation failed',
+      });
+    }
+
+    const route = data && data.Routes && data.Routes[0] ? data.Routes[0] : null;
+    if (!route || !Array.isArray(route.Legs) || route.Legs.length === 0) {
+      return res.status(502).json({ error: 'No route legs returned' });
+    }
+
+    // Decode detailed road geometry (FlexiblePolyline). Fallback to LineString if needed.
+    awsPolyline.setCompressionAlgorithm(awsPolyline.CompressionAlgorithm.FlexiblePolyline);
+    const line = [];
+    for (const leg of route.Legs) {
+      const enc = leg && leg.Geometry ? leg.Geometry.Polyline : null;
+      if (typeof enc === 'string' && enc.trim()) {
+        try {
+          const coords = awsPolyline.decodeToLngLatArray(enc);
+          for (const p of coords) {
+            if (!Array.isArray(p) || p.length < 2) continue;
+            const lng = Number(p[0]);
+            const lat = Number(p[1]);
+            if (Number.isNaN(lng) || Number.isNaN(lat)) continue;
+            const last = line.length ? line[line.length - 1] : null;
+            if (last && last[0] === lng && last[1] === lat) continue;
+            line.push([lng, lat]);
+          }
+          continue;
+        } catch (e) {
+          console.error('transport routes calculate polyline decode failed:', e);
+          // fall through to LineString fallback
+        }
+      }
+
+      const ls = leg && leg.Geometry && Array.isArray(leg.Geometry.LineString) ? leg.Geometry.LineString : null;
+      if (!ls) continue;
+      for (const p of ls) {
+        if (!Array.isArray(p) || p.length < 2) continue;
+        const lng = Number(p[0]);
+        const lat = Number(p[1]);
+        if (Number.isNaN(lng) || Number.isNaN(lat)) continue;
+        const last = line.length ? line[line.length - 1] : null;
+        if (last && last[0] === lng && last[1] === lat) continue;
+        line.push([lng, lat]);
+      }
+    }
+
+    const summary = route.Summary && route.Summary.Overview ? route.Summary.Overview : null;
+    res.json({
+      lineString: line,
+      distanceMeters: summary && summary.Distance != null ? Number(summary.Distance) : null,
+      durationSeconds: summary && summary.Duration != null ? Number(summary.Duration) : null,
+    });
+  } catch (err) {
+    console.error('transport routes calculate:', err);
+    res.status(500).json({ error: 'Route calculation failed' });
+  }
+});
+
+/**
+ * POST /api/transport/tracker/position
+ * Body: { deviceId?: string, lat: number, lng: number, accuracyMeters?: number, sampleTime?: ISO string }
+ *
+ * Driver auth (Bearer transport_driver) OR transport admin secret/JWT.
+ *
+ * Notes:
+ * - Tracker APIs require SigV4 (AWS credentials), not Amazon Location API keys.
+ * - We default deviceId to the driver's busId if available; else driverId.
+ */
+router.post('/tracker/position', requireTransportUser, async (req, res) => {
+  try {
+    const trackerName = getTrackerName();
+    if (!trackerName) {
+      return res.status(503).json({ error: 'AWS_TRACKER_NAME is not set on the server' });
+    }
+    const region = getTrackerRegion();
+
+    const lat = Number(req.body?.lat);
+    const lng = Number(req.body?.lng);
+    if (Number.isNaN(lat) || Number.isNaN(lng)) {
+      return res.status(400).json({ error: 'lat and lng are required (numbers)' });
+    }
+
+    const accuracyMetersRaw = req.body?.accuracyMeters;
+    const accuracyMeters = accuracyMetersRaw != null ? Number(accuracyMetersRaw) : null;
+    const sampleTime = req.body?.sampleTime ? new Date(String(req.body.sampleTime)) : new Date();
+    if (Number.isNaN(sampleTime.getTime())) {
+      return res.status(400).json({ error: 'sampleTime must be a valid ISO timestamp' });
+    }
+
+    let deviceId = req.body?.deviceId != null ? String(req.body.deviceId).trim() : '';
+    // If driver JWT exists, prefer binding to busId/driverId so the client can't spoof another bus.
+    if (req.user && normalizeRole(req.user.role) === 'transportdriver') {
+      const driverId = req.user.id != null ? String(req.user.id) : '';
+      // Load busId for driver so deviceId can be stable per bus.
+      const [rows] = await db.query(`SELECT bus_id FROM transport_drivers WHERE id = ? LIMIT 1`, [driverId]);
+      const busId = rows && rows[0] && rows[0].bus_id != null ? String(rows[0].bus_id) : '';
+      deviceId = busId || driverId;
+      if (!deviceId) {
+        return res.status(400).json({ error: 'Driver has no device identifier (bus_id missing)' });
+      }
+    } else if (!deviceId) {
+      return res.status(400).json({ error: 'deviceId is required for admin updates' });
+    }
+
+    const client = getLocationClient(region);
+    const cmd = new BatchUpdateDevicePositionCommand({
+      TrackerName: trackerName,
+      Updates: [
+        {
+          DeviceId: deviceId,
+          SampleTime: sampleTime,
+          Position: [lng, lat],
+          Accuracy: accuracyMeters != null && !Number.isNaN(accuracyMeters) ? { Horizontal: accuracyMeters } : undefined,
+        },
+      ],
+    });
+    const out = await client.send(cmd);
+    if (out && Array.isArray(out.Errors) && out.Errors.length) {
+      return res.status(502).json({ error: 'Tracker update failed', details: out.Errors });
+    }
+
+    res.json({
+      ok: true,
+      trackerName,
+      deviceId,
+      sampleTime: sampleTime.toISOString(),
+    });
+  } catch (err) {
+    // Surface AWS error details to speed up setup (permissions/region/tracker name issues).
+    const name = err && err.name ? String(err.name) : 'Error';
+    const message = err && err.message ? String(err.message) : 'Failed to update device position';
+    const httpStatus = err && err.$metadata && err.$metadata.httpStatusCode ? Number(err.$metadata.httpStatusCode) : null;
+    console.error('transport tracker update position:', name, message);
+    res.status(502).json({
+      error: 'Failed to update device position',
+      awsError: { name, message, httpStatus },
+      hint:
+        'Tracker APIs require AWS IAM permissions (geo:BatchUpdateDevicePosition) on the tracker ARN and correct AWS_TRACKER_REGION/AWS_TRACKER_NAME.',
+    });
+  }
+});
+
+/**
+ * GET /api/transport/tracker/position/me
+ * Driver-only (Bearer transport_driver). Returns last known position for the driver's assigned bus.
+ *
+ * IMPORTANT: define this BEFORE /tracker/position/:deviceId (otherwise "me" matches :deviceId).
+ */
+router.get('/tracker/position/me', authenticateToken, async (req, res) => {
+  try {
+    const r = normalizeRole(req.user?.role);
+    if (r !== 'transportdriver') {
+      return res.status(403).json({ error: 'Driver session required' });
+    }
+    const trackerName = getTrackerName();
+    if (!trackerName) {
+      return res.status(503).json({ error: 'AWS_TRACKER_NAME is not set on the server' });
+    }
+    const region = getTrackerRegion();
+
+    const driverId = String(req.user.id || '');
+    const [rows] = await db.query(`SELECT bus_id FROM transport_drivers WHERE id = ? LIMIT 1`, [driverId]);
+    const busId = rows && rows[0] && rows[0].bus_id != null ? String(rows[0].bus_id) : '';
+    if (!busId) {
+      return res.status(400).json({ error: 'Driver has no bus assigned' });
+    }
+
+    const client = getLocationClient(region);
+    const cmd = new GetDevicePositionCommand({
+      TrackerName: trackerName,
+      DeviceId: busId,
+    });
+    const out = await client.send(cmd);
+    const pos = out && Array.isArray(out.Position) ? out.Position : null;
+    if (!pos || pos.length < 2) {
+      return res.status(404).json({ error: 'No position found' });
+    }
+    res.json({
+      trackerName,
+      deviceId: busId,
+      lng: Number(pos[0]),
+      lat: Number(pos[1]),
+      sampleTime: out.SampleTime ? new Date(out.SampleTime).toISOString() : null,
+      receivedTime: out.ReceivedTime ? new Date(out.ReceivedTime).toISOString() : null,
+    });
+  } catch (err) {
+    const name = err && err.name ? String(err.name) : '';
+    const message = err && err.message ? String(err.message) : 'Failed to load device position';
+    const httpStatus = err && err.$metadata && err.$metadata.httpStatusCode ? Number(err.$metadata.httpStatusCode) : null;
+    console.error('transport tracker get my position:', name, message);
+    if (name === 'ResourceNotFoundException') {
+      return res.status(404).json({ error: 'Tracker/device not found' });
+    }
+    res.status(502).json({
+      error: 'Failed to load device position',
+      awsError: { name, message, httpStatus },
+    });
+  }
+});
+
+/**
+ * GET /api/transport/tracker/position/:deviceId
+ * Admin-only (secret/JWT). Returns last known position for a device.
+ */
+router.get('/tracker/position/:deviceId', requireTransportAdmin, async (req, res) => {
+  try {
+    const trackerName = getTrackerName();
+    if (!trackerName) {
+      return res.status(503).json({ error: 'AWS_TRACKER_NAME is not set on the server' });
+    }
+    const region = getTrackerRegion();
+    const deviceId = String(req.params.deviceId || '').trim();
+    if (!deviceId) {
+      return res.status(400).json({ error: 'deviceId is required' });
+    }
+
+    const client = getLocationClient(region);
+    const cmd = new GetDevicePositionCommand({
+      TrackerName: trackerName,
+      DeviceId: deviceId,
+    });
+    const out = await client.send(cmd);
+    const pos = out && Array.isArray(out.Position) ? out.Position : null;
+    if (!pos || pos.length < 2) {
+      return res.status(404).json({ error: 'No position found' });
+    }
+    res.json({
+      trackerName,
+      deviceId,
+      lng: Number(pos[0]),
+      lat: Number(pos[1]),
+      sampleTime: out.SampleTime ? new Date(out.SampleTime).toISOString() : null,
+      receivedTime: out.ReceivedTime ? new Date(out.ReceivedTime).toISOString() : null,
+    });
+  } catch (err) {
+    // AWS SDK throws ResourceNotFoundException, ValidationException, etc.
+    const name = err && err.name ? String(err.name) : '';
+    const message = err && err.message ? String(err.message) : 'Failed to load device position';
+    const httpStatus = err && err.$metadata && err.$metadata.httpStatusCode ? Number(err.$metadata.httpStatusCode) : null;
+    console.error('transport tracker get position:', name, message);
+    if (name === 'ResourceNotFoundException') {
+      return res.status(404).json({ error: 'Tracker/device not found' });
+    }
+    res.status(502).json({
+      error: 'Failed to load device position',
+      awsError: { name, message, httpStatus },
+    });
+  }
+});
+
+/**
+ * POST /api/transport/driver/trip/start
+ * Body: { tripType: "morning"|"evening" }
+ * Driver-only. Records "active" status for today in DB.
+ */
+router.post('/driver/trip/start', authenticateToken, async (req, res) => {
+  try {
+    const r = normalizeRole(req.user?.role);
+    if (r !== 'transportdriver') {
+      return res.status(403).json({ error: 'Driver session required' });
+    }
+    const driverId = String(req.user.id || '');
+    const tripType = String(req.body?.tripType || '').trim().toLowerCase();
+    if (tripType !== 'morning' && tripType !== 'evening') {
+      return res.status(400).json({ error: 'tripType must be morning or evening' });
+    }
+
+    const [rows] = await db.query(`SELECT bus_id FROM transport_drivers WHERE id = ? LIMIT 1`, [driverId]);
+    const busId = rows && rows[0] && rows[0].bus_id != null ? String(rows[0].bus_id) : '';
+    if (!busId) {
+      return res.status(400).json({ error: 'Driver has no bus assigned' });
+    }
+
+    const today = toUtcDateString();
+    // Upsert: create or update today's row.
+    await db.query(
+      `
+      INSERT INTO transport_bus_trips (bus_id, driver_id, trip_date, trip_type, status, started_at, updated_at)
+      VALUES (?, ?, ?, ?, 'active', NOW(), NOW())
+      ON CONFLICT (bus_id, trip_date, trip_type)
+      DO UPDATE SET
+        driver_id = EXCLUDED.driver_id,
+        status = 'active',
+        started_at = COALESCE(transport_bus_trips.started_at, NOW()),
+        ended_at = NULL,
+        updated_at = NOW()
+      `,
+      [busId, driverId, today, tripType],
+    );
+
+    res.json({ ok: true, busId, tripType, status: 'active', tripDate: today });
+  } catch (err) {
+    console.error('transport trip start:', err);
+    res.status(500).json({ error: 'Failed to start trip' });
+  }
+});
+
+/**
+ * POST /api/transport/driver/trip/end
+ * Body: { tripType: "morning"|"evening" }
+ * Driver-only. Records "ended" status for today in DB.
+ */
+router.post('/driver/trip/end', authenticateToken, async (req, res) => {
+  try {
+    const r = normalizeRole(req.user?.role);
+    if (r !== 'transportdriver') {
+      return res.status(403).json({ error: 'Driver session required' });
+    }
+    const driverId = String(req.user.id || '');
+    const tripType = String(req.body?.tripType || '').trim().toLowerCase();
+    if (tripType !== 'morning' && tripType !== 'evening') {
+      return res.status(400).json({ error: 'tripType must be morning or evening' });
+    }
+
+    const [rows] = await db.query(`SELECT bus_id FROM transport_drivers WHERE id = ? LIMIT 1`, [driverId]);
+    const busId = rows && rows[0] && rows[0].bus_id != null ? String(rows[0].bus_id) : '';
+    if (!busId) {
+      return res.status(400).json({ error: 'Driver has no bus assigned' });
+    }
+
+    const today = toUtcDateString();
+    await db.query(
+      `
+      INSERT INTO transport_bus_trips (bus_id, driver_id, trip_date, trip_type, status, started_at, ended_at, updated_at)
+      VALUES (?, ?, ?, ?, 'ended', NOW(), NOW(), NOW())
+      ON CONFLICT (bus_id, trip_date, trip_type)
+      DO UPDATE SET
+        driver_id = EXCLUDED.driver_id,
+        status = 'ended',
+        started_at = COALESCE(transport_bus_trips.started_at, NOW()),
+        ended_at = NOW(),
+        updated_at = NOW()
+      `,
+      [busId, driverId, today, tripType],
+    );
+
+    res.json({ ok: true, busId, tripType, status: 'ended', tripDate: today });
+  } catch (err) {
+    console.error('transport trip end:', err);
+    res.status(500).json({ error: 'Failed to end trip' });
+  }
+});
+
+/**
+ * GET /api/transport/trips/today
+ * Admin-only. Returns per-bus trip status for today (morning/evening).
+ */
+router.get('/trips/today', requireTransportAdmin, async (req, res) => {
+  try {
+    const today = toUtcDateString();
+    const [rows] = await db.query(
+      `
+      SELECT bus_id, trip_type, status, started_at, ended_at, updated_at
+      FROM transport_bus_trips
+      WHERE trip_date = ?
+      `,
+      [today],
+    );
+    const trips = (rows || []).map((r) => ({
+      busId: String(r.bus_id),
+      tripType: r.trip_type,
+      status: r.status,
+      startedAt: r.started_at,
+      endedAt: r.ended_at,
+      updatedAt: r.updated_at,
+    }));
+    res.json({ tripDate: today, trips });
+  } catch (err) {
+    console.error('transport trips today:', err);
+    if (err.code === 'ER_NO_SUCH_TABLE') {
+      return res.status(503).json({
+        error: 'Database not ready',
+        details: 'Run backend/sql/2026-04-07-transport_trips.sql',
+      });
+    }
+    res.status(500).json({ error: 'Failed to load trips' });
+  }
+});
+
+// --- Attendance (RFID scans) ---
+
+/** POST /api/transport/attendance/scan
+ * body: { tagUid, busId, tripType, direction?: 'on'|'off', scannedAt?: ISO string }
+ * auth: X-Transport-Scanner-Secret (recommended) OR transport admin secret/admin JWT for testing.
+ */
+router.post('/attendance/scan', requireTransportScanner, async (req, res) => {
+  try {
+    const tagUidRaw = req.body?.tagUid ?? req.body?.rfid ?? req.body?.uid;
+    const tagUid = tagUidRaw != null ? String(tagUidRaw).trim() : '';
+    const busId = req.body?.busId != null ? String(req.body.busId).trim() : '';
+    const tripType = req.body?.tripType != null ? String(req.body.tripType).trim().toLowerCase() : '';
+    const direction = req.body?.direction != null ? String(req.body.direction).trim().toLowerCase() : 'on';
+    const scannedAt = req.body?.scannedAt ? new Date(String(req.body.scannedAt)) : new Date();
+
+    if (!tagUid) return res.status(400).json({ error: 'tagUid is required' });
+    if (!busId) return res.status(400).json({ error: 'busId is required' });
+    if (tripType !== 'morning' && tripType !== 'evening') return res.status(400).json({ error: 'tripType must be morning|evening' });
+    if (direction !== 'on' && direction !== 'off') return res.status(400).json({ error: "direction must be 'on'|'off'" });
+
+    // Find student mapped to this RFID (must be assigned)
+    const [tagRows] = await db.query(
+      `SELECT assigned_student_id FROM transport_rfid_tags WHERE LOWER(tag_uid) = LOWER(?) LIMIT 2`,
+      [tagUid],
+    );
+    if (!tagRows || tagRows.length === 0) {
+      return res.status(404).json({ error: 'Unknown RFID', details: 'Tag not found in transport_rfid_tags' });
+    }
+    if (tagRows.length > 1) {
+      // tag_uid is unique per school_id, but if school_id is not used consistently, avoid ambiguity.
+      return res.status(409).json({ error: 'Ambiguous RFID', details: 'Multiple tags matched; ensure tag_uid is unique' });
+    }
+    const studentId = tagRows[0].assigned_student_id != null ? String(tagRows[0].assigned_student_id) : null;
+    if (!studentId) {
+      return res.status(409).json({ error: 'RFID not assigned', details: 'This tag has no assigned_student_id' });
+    }
+
+    // Record scan event (append-only)
+    await db.query(
+      `INSERT INTO transport_attendance_scans (bus_id, trip_type, direction, tag_uid, student_id, scanned_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [busId, tripType, direction, tagUid, studentId, scannedAt],
+    );
+
+    // Upsert latest boarding state (green=on)
+    await db.query(
+      `
+      INSERT INTO transport_bus_boarding (bus_id, trip_type, student_id, tag_uid, status, last_scanned_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())
+      ON CONFLICT (bus_id, trip_date, trip_type, student_id)
+      DO UPDATE SET
+        tag_uid = EXCLUDED.tag_uid,
+        status = EXCLUDED.status,
+        last_scanned_at = EXCLUDED.last_scanned_at,
+        updated_at = NOW()
+      `,
+      [busId, tripType, studentId, tagUid, direction, scannedAt],
+    );
+
+    // Optional: resolve student name if the students table exists in this DB.
+    let studentName = null;
+    try {
+      const [stu] = await db.query(`SELECT name FROM students WHERE id = ? LIMIT 1`, [studentId]);
+      if (stu && stu.length) studentName = stu[0].name || null;
+    } catch (e) {
+      // ignore if students table is not in this DB
+    }
+
+    res.json({ ok: true, busId, tripType, direction, tagUid, studentId, studentName });
+  } catch (err) {
+    console.error('transport attendance scan:', err);
+    if (err.code === 'ER_NO_SUCH_TABLE' || err.code === '42P01') {
+      return res.status(503).json({ error: 'Database not ready', details: 'Run backend/sql/2026-04-07-transport_attendance_rfid.sql' });
+    }
+    res.status(500).json({ error: 'Failed to record scan' });
+  }
+});
+
+/** GET /api/transport/attendance/bus/:busId?tripType=morning&date=YYYY-MM-DD */
+router.get('/attendance/bus/:busId', requireTransportAdmin, async (req, res) => {
+  try {
+    const busId = String(req.params.busId || '').trim();
+    const tripType = req.query.tripType != null ? String(req.query.tripType).trim().toLowerCase() : 'morning';
+    const date = req.query.date != null ? String(req.query.date).trim() : null;
+    if (!busId) return res.status(400).json({ error: 'busId is required' });
+    if (tripType !== 'morning' && tripType !== 'evening') return res.status(400).json({ error: 'tripType must be morning|evening' });
+
+    const whereDate = date ? `trip_date = ?` : `trip_date = (NOW() AT TIME ZONE 'UTC')::date`;
+    const params = date ? [busId, tripType, date] : [busId, tripType];
+
+    const [rows] = await db.query(
+      `
+      SELECT student_id, tag_uid, status, last_scanned_at
+      FROM transport_bus_boarding
+      WHERE bus_id = ?
+        AND trip_type = ?
+        AND ${whereDate}
+      ORDER BY last_scanned_at DESC
+      `,
+      params,
+    );
+
+    res.json({
+      busId,
+      tripType,
+      date: date || toUtcDateString(new Date()),
+      boarded: (rows || []).filter((r) => r.status === 'on').map((r) => ({
+        studentId: String(r.student_id),
+        tagUid: r.tag_uid || null,
+        boardedAt: r.last_scanned_at,
+      })),
+      all: (rows || []).map((r) => ({
+        studentId: String(r.student_id),
+        tagUid: r.tag_uid || null,
+        status: r.status,
+        lastScannedAt: r.last_scanned_at,
+      })),
+    });
+  } catch (err) {
+    console.error('transport attendance bus:', err);
+    if (err.code === 'ER_NO_SUCH_TABLE' || err.code === '42P01') {
+      return res.status(503).json({ error: 'Database not ready', details: 'Run backend/sql/2026-04-07-transport_attendance_rfid.sql' });
+    }
+    res.status(500).json({ error: 'Failed to fetch attendance' });
+  }
+});
+
+// --- RFID tags (admin) ---
+
+/** GET /api/transport/rfid-tags */
+router.get('/rfid-tags', requireTransportAdmin, async (req, res) => {
+  try {
+    const schoolId = req.user?.schoolId || req.user?.school_id || null;
+    // When using admin secret (no JWT), caller must pass schoolId explicitly.
+    const effectiveSchoolId = schoolId || (req.query.schoolId ? String(req.query.schoolId) : null);
+    if (!effectiveSchoolId) {
+      return res.status(400).json({ error: 'schoolId is required' });
+    }
+    const [rows] = await db.query(
+      `SELECT id, tag_uid, assigned_student_id, created_at
+       FROM transport_rfid_tags
+       WHERE school_id = ?
+       ORDER BY created_at DESC`,
+      [String(effectiveSchoolId)],
+    );
+    res.json({
+      tags: (rows || []).map((r) => ({
+        id: String(r.id),
+        tagUid: r.tag_uid,
+        assignedStudentId: r.assigned_student_id != null ? String(r.assigned_student_id) : null,
+        createdAt: r.created_at,
+      })),
+    });
+  } catch (err) {
+    console.error('transport list rfid tags:', err);
+    if (err.code === 'ER_NO_SUCH_TABLE') {
+      return res.status(503).json({ error: 'Database not ready', details: 'Run backend/sql/2026-04-07-transport_rfid_pickup_points.sql' });
+    }
+    res.status(500).json({ error: 'Failed to list RFID tags' });
+  }
+});
+
+/** POST /api/transport/rfid-tags body: { schoolId, tagUid } */
+router.post('/rfid-tags', requireTransportAdmin, async (req, res) => {
+  try {
+    const schoolId = req.user?.schoolId || req.user?.school_id || req.body?.schoolId;
+    const tagUid = req.body?.tagUid != null ? String(req.body.tagUid).trim() : '';
+    if (!schoolId) return res.status(400).json({ error: 'schoolId is required' });
+    if (!tagUid) return res.status(400).json({ error: 'tagUid is required' });
+    const [ins] = await db.query(
+      `INSERT INTO transport_rfid_tags (school_id, tag_uid) VALUES (?, ?) RETURNING id`,
+      [String(schoolId), tagUid],
+    );
+    const newId = ins && ins[0] && ins[0].id ? String(ins[0].id) : null;
+    res.status(201).json({ ok: true, id: newId });
+  } catch (err) {
+    console.error('transport create rfid tag:', err);
+    if (err.code === 'ER_DUP_ENTRY' || err.code === '23505') {
+      return res.status(409).json({ error: 'RFID already exists or already assigned' });
+    }
+    if (err.code === 'ER_NO_SUCH_TABLE') {
+      return res.status(503).json({ error: 'Database not ready', details: 'Run backend/sql/2026-04-07-transport_rfid_pickup_points.sql' });
+    }
+    res.status(500).json({ error: 'Failed to create RFID tag' });
+  }
+});
+
+// --- Pickup points (admin) ---
+
+/** POST /api/transport/pickup-points body: { schoolId, name, lat, lng } */
+router.post('/pickup-points', requireTransportAdmin, async (req, res) => {
+  try {
+    const schoolId = req.user?.schoolId || req.user?.school_id || req.body?.schoolId;
+    const name = req.body?.name != null ? String(req.body.name).trim() : '';
+    const lat = Number(req.body?.lat);
+    const lng = Number(req.body?.lng);
+    if (!schoolId) return res.status(400).json({ error: 'schoolId is required' });
+    if (!name) return res.status(400).json({ error: 'name is required' });
+    if (Number.isNaN(lat) || Number.isNaN(lng)) return res.status(400).json({ error: 'lat and lng are required (numbers)' });
+    const [ins] = await db.query(
+      `INSERT INTO transport_pickup_points (school_id, name, lat, lng) VALUES (?, ?, ?, ?) RETURNING id`,
+      [String(schoolId), name, lat, lng],
+    );
+    const newId = ins && ins[0] && ins[0].id ? String(ins[0].id) : null;
+    res.status(201).json({ ok: true, id: newId });
+  } catch (err) {
+    console.error('transport create pickup point:', err);
+    if (err.code === 'ER_NO_SUCH_TABLE') {
+      return res.status(503).json({ error: 'Database not ready', details: 'Run backend/sql/2026-04-07-transport_rfid_pickup_points.sql' });
+    }
+    res.status(500).json({ error: 'Failed to create pickup point' });
+  }
+});
+
+/** Public: GET /api/transport/registration/:code/rfid/available */
+router.get('/registration/:code/rfid/available', async (req, res) => {
+  try {
+    const code = String(req.params.code || '').trim();
+    if (!code) return res.status(400).json({ error: 'code is required' });
+    const [links] = await db.query(
+      'SELECT school_id FROM registration_links WHERE link_code = ? AND is_active = TRUE AND (expires_at IS NULL OR expires_at > NOW())',
+      [code],
+    );
+    if (!links.length) return res.status(404).json({ error: 'Invalid or expired registration link' });
+    const schoolId = String(links[0].school_id);
+    const [rows] = await db.query(
+      `SELECT id, tag_uid FROM transport_rfid_tags WHERE school_id = ? AND assigned_student_id IS NULL ORDER BY created_at DESC`,
+      [schoolId],
+    );
+    res.json({ schoolId, tags: (rows || []).map((r) => ({ id: String(r.id), tagUid: r.tag_uid })) });
+  } catch (err) {
+    console.error('transport available rfid:', err);
+    res.status(500).json({ error: 'Failed to fetch available RFID tags' });
+  }
+});
+
+/** Public: GET /api/transport/registration/:code/pickup-points */
+router.get('/registration/:code/pickup-points', async (req, res) => {
+  try {
+    const code = String(req.params.code || '').trim();
+    const q = req.query.q != null ? String(req.query.q).trim() : '';
+    if (!code) return res.status(400).json({ error: 'code is required' });
+    if (!q) return res.json({ pickupPoints: [] });
+
+    const [links] = await db.query(
+      'SELECT school_id FROM registration_links WHERE link_code = ? AND is_active = TRUE AND (expires_at IS NULL OR expires_at > NOW())',
+      [code],
+    );
+    if (!links.length) return res.status(404).json({ error: 'Invalid or expired registration link' });
+    const schoolId = String(links[0].school_id);
+
+    // Geocode child address (q) via AWS Places Suggest + Details using server API key.
+    const key = (process.env.AWS_LOCATION_API_KEY || '').trim();
+    if (!key) {
+      return res.status(503).json({ error: 'AWS_LOCATION_API_KEY is not set on the server' });
+    }
+    const region = getPlacesRegion();
+    const url = `https://places.geo.${region}.amazonaws.com/suggest?key=${encodeURIComponent(key)}`;
+    const urlV2 = `https://places.geo.${region}.amazonaws.com/v2/suggest?key=${encodeURIComponent(key)}`;
+    const body = {
+      QueryText: q,
+      MaxResults: 5,
+      BiasPosition: getPlacesBias(),
+      Language: 'en',
+    };
+    const countries = getAutocompleteCountryFilter();
+    if (countries) body.Filter = { IncludeCountries: countries };
+    const headers = {
+      'Content-Type': 'application/json',
+      ...placesForwardHeaders(req),
+    };
+
+    async function postJson(targetUrl) {
+      const r = await fetch(targetUrl, { method: 'POST', headers, body: JSON.stringify(body) });
+      const data = await r.json().catch(() => ({}));
+      return { r, data };
+    }
+
+    let { r, data } = await postJson(url);
+    if (!r.ok) {
+      const msg = String((data && (data.message || data.Message || data.error)) || '');
+      if (r.status === 403 && /determine service\/operation name to be authorized/i.test(msg)) {
+        ({ r, data } = await postJson(urlV2));
+      }
+    }
+    if (!r.ok) {
+      console.error('transport registration geocode suggest', r.status, data);
+      return res.status(r.status >= 400 ? r.status : 502).json({
+        error: data.message || data.Message || data.error || 'Geocode suggest failed',
+      });
+    }
+    const first = (data.ResultItems || []).find((it) => it && it.Place && it.Place.PlaceId);
+    const placeId = first && first.Place && first.Place.PlaceId ? String(first.Place.PlaceId) : '';
+    if (!placeId) return res.json({ pickupPoints: [] });
+
+    const pathSeg = encodeURIComponent(placeId);
+    const qs = new URLSearchParams({
+      key,
+      language: 'en',
+      'intended-use': 'SingleUse',
+    });
+    const detailsUrl = `https://places.geo.${region}.amazonaws.com/v2/place/${pathSeg}?${qs.toString()}`;
+    const dr = await fetch(detailsUrl, { method: 'GET', headers: { ...placesForwardHeaders(req) } });
+    const dd = await dr.json().catch(() => ({}));
+    if (!dr.ok) {
+      console.error('transport registration geocode details', dr.status, dd);
+      return res.status(dr.status >= 400 ? dr.status : 502).json({
+        error: dd.message || dd.error || 'Geocode details failed',
+      });
+    }
+    const pos = dd.Position;
+    if (!Array.isArray(pos) || pos.length < 2) return res.json({ pickupPoints: [] });
+    const lng = Number(pos[0]);
+    const lat = Number(pos[1]);
+    if (Number.isNaN(lat) || Number.isNaN(lng)) return res.json({ pickupPoints: [] });
+
+    // Haversine-ish ordering without PostGIS (ok for short ranges)
+    const [rows] = await db.query(
+      `
+      SELECT id, name, lat, lng,
+        ( (lat - ?) * (lat - ?) + (lng - ?) * (lng - ?) ) AS d2
+      FROM transport_pickup_points
+      WHERE school_id = ?
+      ORDER BY d2 ASC
+      LIMIT 8
+      `,
+      [lat, lat, lng, lng, schoolId],
+    );
+    res.json({
+      pickupPoints: (rows || []).map((r) => ({
+        id: String(r.id),
+        name: r.name,
+        lat: Number(r.lat),
+        lng: Number(r.lng),
+      })),
+    });
+  } catch (err) {
+    console.error('transport registration pickup points:', err);
+    res.status(500).json({ error: 'Failed to fetch pickup points' });
+  }
+});
+
+/** PATCH /api/transport/routes/:id — update route name and replace stops */
+router.patch('/routes/:id', requireTransportAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, stops } = req.body || {};
+    if (!id) return res.status(400).json({ error: 'id is required' });
+    if (!name || !String(name).trim()) {
+      return res.status(400).json({ error: 'name is required' });
+    }
+    if (!Array.isArray(stops) || stops.length === 0) {
+      return res.status(400).json({ error: 'stops must be a non-empty array' });
+    }
+
+    const conn = await db.getConnection();
+    try {
+      await conn.beginTransaction();
+      const [upd] = await conn.query(`UPDATE transport_routes SET name = ? WHERE id = ? RETURNING id`, [
+        String(name).trim(),
+        String(id),
+      ]);
+      if (!upd || !upd.length) {
+        await conn.rollback();
+        conn.release();
+        return res.status(404).json({ error: 'Route not found' });
+      }
+
+      await conn.query(`DELETE FROM transport_route_stops WHERE route_id = ?`, [String(id)]);
+
+      let seq = 0;
+      for (const s of stops) {
+        seq += 1;
+        const lat = s.lat != null ? Number(s.lat) : NaN;
+        const lng = s.lng != null ? Number(s.lng) : NaN;
+        if (!s.name || Number.isNaN(lat) || Number.isNaN(lng)) {
+          await conn.rollback();
+          conn.release();
+          return res.status(400).json({ error: 'Each stop needs name, lat, lng' });
+        }
+        await conn.query(
+          `INSERT INTO transport_route_stops (route_id, sequence_order, name, lat, lng) VALUES (?, ?, ?, ?, ?)`,
+          [String(id), seq, String(s.name).trim(), lat, lng],
+        );
+      }
+
+      await conn.commit();
+      conn.release();
+      res.json({ ok: true, message: 'Route updated' });
+    } catch (e) {
+      try {
+        await conn.rollback();
+      } catch (_) {
+        /* ignore */
+      }
+      conn.release(e);
+      throw e;
+    }
+  } catch (err) {
+    console.error('transport patch route:', err);
+    res.status(500).json({ error: 'Failed to update route' });
+  }
+});
+
+module.exports = router;
