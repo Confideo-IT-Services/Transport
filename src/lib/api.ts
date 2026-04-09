@@ -1,5 +1,8 @@
 // API Configuration and Service Layer
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api';
+// Prefer same-origin "/api" so it works in:
+// - local dev (Vite proxy /api -> backend)
+// - production (reverse proxy routes /api -> backend)
+const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
 // Types
 export interface User {
@@ -773,7 +776,7 @@ export const uploadApi = {
     if (!response.ok) {
       const error = await response.json().catch(() => ({ error: 'Upload failed' }));
       const msg = error.details ? `${error.error}: ${error.details}` : (error.error || 'Failed to upload ID template');
-      throw new Error(msg);throw new Error(error.error || 'Failed to upload ID template');
+      throw new Error(msg);
     }
     
     return response.json();
@@ -795,7 +798,7 @@ export const uploadApi = {
     if (!response.ok) {
       const error = await response.json().catch(() => ({ error: 'Upload failed' }));
       const msg = error.details ? `${error.error}: ${error.details}` : (error.error || 'Failed to upload ID layout');
-      throw new Error(msg);throw new Error(error.error || 'Failed to upload ID layout');
+      throw new Error(msg);
     }
     
     return response.json();

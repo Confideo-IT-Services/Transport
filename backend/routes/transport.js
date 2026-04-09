@@ -9,6 +9,7 @@ const db = require('../config/database');
 const { generateToken, authenticateToken } = require('../middleware/auth');
 const awsPolyline = require('@aws/polyline');
 const { LocationClient, BatchUpdateDevicePositionCommand, GetDevicePositionCommand } = require('@aws-sdk/client-location');
+const { sendTransportEmail } = require('../utils/sesMailer');
 
 const router = express.Router();
 
@@ -159,6 +160,91 @@ router.get('/buses', requireTransportAdmin, async (req, res) => {
   }
 });
 
+/**
+ * GET /api/transport/buses/:busId/pickup-points?schoolId=...&tripType=morning
+ * Returns pickup points derived from the assigned driver's route stops.
+ * Also syncs stops into transport_pickup_points (route_stop_id) so assignment can store pickup_point_id.
+ */
+router.get('/buses/:busId/pickup-points', requireTransportAdmin, async (req, res) => {
+  try {
+    const busId = String(req.params.busId || '').trim();
+    const tripType = req.query.tripType != null ? String(req.query.tripType).trim().toLowerCase() : 'morning';
+    const schoolId = req.user?.schoolId || req.user?.school_id || null;
+    const effectiveSchoolId = schoolId || (req.query.schoolId ? String(req.query.schoolId) : null);
+    if (!busId) return res.status(400).json({ error: 'busId is required' });
+    if (!effectiveSchoolId) return res.status(400).json({ error: 'schoolId is required' });
+    if (tripType !== 'morning' && tripType !== 'evening') return res.status(400).json({ error: 'tripType must be morning|evening' });
+
+    const [drivers] = await db.query(
+      `SELECT morning_route_id, evening_route_id FROM transport_drivers WHERE bus_id = ? LIMIT 1`,
+      [busId],
+    );
+    if (!drivers || !drivers.length) {
+      return res.json({ pickupPoints: [] });
+    }
+    const routeId = tripType === 'evening' ? drivers[0].evening_route_id : drivers[0].morning_route_id;
+    if (!routeId) return res.json({ pickupPoints: [] });
+
+    const order = tripType === 'evening' ? 'DESC' : 'ASC';
+    const [stops] = await db.query(
+      `SELECT id, name, lat, lng, sequence_order
+       FROM transport_route_stops
+       WHERE route_id = ?
+       ORDER BY sequence_order ${order}`,
+      [String(routeId)],
+    );
+
+    // Sync route stops into pickup points table so assignment can reference pickup_point_id.
+    // Uses unique (school_id, route_stop_id) index.
+    for (const s of stops || []) {
+      try {
+        await db.query(
+          `
+          INSERT INTO transport_pickup_points (school_id, route_stop_id, name, lat, lng)
+          VALUES (?, ?, ?, ?, ?)
+          ON CONFLICT (school_id, route_stop_id)
+          DO UPDATE SET name = EXCLUDED.name, lat = EXCLUDED.lat, lng = EXCLUDED.lng
+          `,
+          [String(effectiveSchoolId), String(s.id), String(s.name || '').trim(), Number(s.lat), Number(s.lng)],
+        );
+      } catch (e) {
+        console.error('transport bus pickup points sync stop failed:', e);
+      }
+    }
+
+    const [rows] = await db.query(
+      `
+      SELECT id, name, lat, lng, route_stop_id
+      FROM transport_pickup_points
+      WHERE school_id = ? AND route_stop_id IS NOT NULL
+        AND route_stop_id IN (${(stops || []).map(() => '?').join(',') || "NULL"})
+      `,
+      [String(effectiveSchoolId), ...(stops || []).map((s) => String(s.id))],
+    );
+
+    // Preserve stop order from route stops
+    const byStopId = new Map((rows || []).map((r) => [String(r.route_stop_id), r]));
+    const pickupPoints = (stops || [])
+      .map((s) => {
+        const r = byStopId.get(String(s.id));
+        if (!r) return null;
+        return {
+          id: String(r.id),
+          name: r.name,
+          lat: Number(r.lat),
+          lng: Number(r.lng),
+          routeStopId: String(r.route_stop_id),
+        };
+      })
+      .filter(Boolean);
+
+    res.json({ busId, tripType, pickupPoints });
+  } catch (err) {
+    console.error('transport bus pickup points:', err);
+    res.status(500).json({ error: 'Failed to load bus pickup points' });
+  }
+});
+
 /** POST /api/transport/buses */
 router.post('/buses', requireTransportAdmin, async (req, res) => {
   try {
@@ -186,6 +272,92 @@ router.post('/buses', requireTransportAdmin, async (req, res) => {
       });
     }
     res.status(500).json({ error: 'Failed to create bus' });
+  }
+});
+
+/** PATCH /api/transport/buses/:id — update bus metadata */
+router.patch('/buses/:id', requireTransportAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, registrationNo, capacity } = req.body || {};
+    if (!id) return res.status(400).json({ error: 'id is required' });
+    if (!name || !String(name).trim()) return res.status(400).json({ error: 'name is required' });
+    const cap = capacity != null ? parseInt(String(capacity), 10) : null;
+    if (capacity != null && (Number.isNaN(cap) || cap < 1)) {
+      return res.status(400).json({ error: 'capacity must be a positive integer' });
+    }
+    const [upd] = await db.query(
+      `UPDATE transport_buses SET name = ?, registration_no = ?, capacity = ? WHERE id = ? RETURNING id`,
+      [String(name).trim(), registrationNo != null ? String(registrationNo).trim() : null, cap, String(id)],
+    );
+    if (!upd || !upd.length) return res.status(404).json({ error: 'Bus not found' });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('transport patch bus:', err);
+    res.status(500).json({ error: 'Failed to update bus' });
+  }
+});
+
+/** DELETE /api/transport/buses/:id — delete bus (only if unassigned) */
+router.delete('/buses/:id', requireTransportAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!id) return res.status(400).json({ error: 'id is required' });
+    const [inUse] = await db.query(`SELECT id FROM transport_drivers WHERE bus_id = ? LIMIT 1`, [String(id)]);
+    if (inUse && inUse.length) {
+      return res.status(409).json({ error: 'Bus is assigned to a driver. Unassign it first.' });
+    }
+    const [childUse] = await db.query(`SELECT student_id FROM transport_student_assignments WHERE bus_id = ? LIMIT 1`, [
+      String(id),
+    ]);
+    if (childUse && childUse.length) {
+      return res.status(409).json({ error: 'Bus is assigned to children. Unassign them first.' });
+    }
+    const [del] = await db.query(`DELETE FROM transport_buses WHERE id = ? RETURNING id`, [String(id)]);
+    if (!del || !del.length) return res.status(404).json({ error: 'Bus not found' });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('transport delete bus:', err);
+    res.status(500).json({ error: 'Failed to delete bus' });
+  }
+});
+
+/** PATCH /api/transport/buses/:id/unassign-children — clears bus_id for all children assignments on this bus */
+router.patch('/buses/:id/unassign-children', requireTransportAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!id) return res.status(400).json({ error: 'id is required' });
+    await db.query(
+      `UPDATE transport_student_assignments
+       SET bus_id = NULL, updated_at = NOW()
+       WHERE bus_id = ?`,
+      [String(id)],
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('transport unassign bus children:', err);
+    res.status(500).json({ error: 'Failed to unassign children from bus' });
+  }
+});
+
+/** PATCH /api/transport/buses/:id/unassign-driver — clears driver assignment so bus can be deleted */
+router.patch('/buses/:id/unassign-driver', requireTransportAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!id) return res.status(400).json({ error: 'id is required' });
+
+    // Unassign any driver currently bound to this bus.
+    // Also clear routes to keep driver profile consistent.
+    await db.query(
+      `UPDATE transport_drivers
+       SET bus_id = NULL, morning_route_id = NULL, evening_route_id = NULL
+       WHERE bus_id = ?`,
+      [String(id)],
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('transport unassign driver from bus:', err);
+    res.status(500).json({ error: 'Failed to unassign driver from bus' });
   }
 });
 
@@ -392,6 +564,57 @@ router.get('/driver/me', async (req, res) => {
   } catch (err) {
     console.error('transport driver me:', err);
     res.status(500).json({ error: 'Failed to load driver' });
+  }
+});
+
+/** POST /api/transport/driver/password — change driver password (Bearer transport_driver JWT) */
+router.post('/driver/password', authenticateToken, async (req, res) => {
+  try {
+    const r = normalizeRole(req.user?.role);
+    if (r !== 'transportdriver') {
+      return res.status(403).json({ error: 'Driver session required' });
+    }
+    const driverId = String(req.user.id || '');
+    const currentPassword = req.body?.currentPassword != null ? String(req.body.currentPassword) : '';
+    const newPassword = req.body?.newPassword != null ? String(req.body.newPassword) : '';
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: 'currentPassword and newPassword are required' });
+    }
+    if (newPassword.length < 8) {
+      return res.status(400).json({ error: 'New password must be at least 8 characters' });
+    }
+
+    const [rows] = await db.query(`SELECT password_hash FROM transport_drivers WHERE id = ? LIMIT 1`, [driverId]);
+    if (!rows || !rows.length) return res.status(404).json({ error: 'Driver not found' });
+    const ok = await bcrypt.compare(currentPassword, rows[0].password_hash);
+    if (!ok) return res.status(401).json({ error: 'Current password is incorrect' });
+
+    const hash = await bcrypt.hash(newPassword, 10);
+    await db.query(`UPDATE transport_drivers SET password_hash = ? WHERE id = ?`, [hash, driverId]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('transport driver change password:', err);
+    res.status(500).json({ error: 'Failed to update password' });
+  }
+});
+
+/** PATCH /api/transport/drivers/:id/password — admin reset driver password */
+router.patch('/drivers/:id/password', requireTransportAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const newPassword = req.body?.newPassword != null ? String(req.body.newPassword) : '';
+    if (!newPassword) return res.status(400).json({ error: 'newPassword is required' });
+    if (newPassword.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    const hash = await bcrypt.hash(newPassword, 10);
+    const [upd] = await db.query(`UPDATE transport_drivers SET password_hash = ? WHERE id = ? RETURNING id`, [
+      hash,
+      String(id),
+    ]);
+    if (!upd || !upd.length) return res.status(404).json({ error: 'Driver not found' });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('transport admin reset driver password:', err);
+    res.status(500).json({ error: 'Failed to reset password' });
   }
 });
 
@@ -1274,6 +1497,126 @@ router.post('/driver/trip/end', authenticateToken, async (req, res) => {
 });
 
 /**
+ * GET /api/transport/driver/trips/today
+ * Driver-only. Returns today's trip status for the driver's assigned bus (morning + evening).
+ */
+router.get('/driver/trips/today', authenticateToken, async (req, res) => {
+  try {
+    const r = normalizeRole(req.user?.role);
+    if (r !== 'transportdriver') {
+      return res.status(403).json({ error: 'Driver session required' });
+    }
+    const driverId = String(req.user.id || '');
+    const [rows] = await db.query(`SELECT bus_id FROM transport_drivers WHERE id = ? LIMIT 1`, [driverId]);
+    const busId = rows && rows[0] && rows[0].bus_id != null ? String(rows[0].bus_id) : '';
+    if (!busId) {
+      return res.status(400).json({ error: 'Driver has no bus assigned' });
+    }
+
+    const today = toUtcDateString();
+    const [tripRows] = await db.query(
+      `
+      SELECT trip_type, status, started_at, ended_at, updated_at
+      FROM transport_bus_trips
+      WHERE bus_id = ? AND trip_date = ?
+      `,
+      [busId, today],
+    );
+
+    const byType = { morning: null, evening: null };
+    for (const tr of tripRows || []) {
+      const t = String(tr.trip_type || '').toLowerCase();
+      if (t !== 'morning' && t !== 'evening') continue;
+      byType[t] = {
+        tripType: t,
+        status: tr.status || 'idle',
+        startedAt: tr.started_at ? new Date(tr.started_at).toISOString() : null,
+        endedAt: tr.ended_at ? new Date(tr.ended_at).toISOString() : null,
+        updatedAt: tr.updated_at ? new Date(tr.updated_at).toISOString() : null,
+      };
+    }
+
+    res.json({
+      tripDate: today,
+      busId,
+      trips: [
+        byType.morning || { tripType: 'morning', status: 'idle', startedAt: null, endedAt: null, updatedAt: null },
+        byType.evening || { tripType: 'evening', status: 'idle', startedAt: null, endedAt: null, updatedAt: null },
+      ],
+    });
+  } catch (err) {
+    console.error('transport driver trips today:', err);
+    res.status(500).json({ error: 'Failed to load trips' });
+  }
+});
+
+/**
+ * GET /api/transport/driver/assigned-children?tripType=morning
+ * Driver-only. Returns children assigned to this driver's bus and whether each is onboarded for today.
+ */
+router.get('/driver/assigned-children', authenticateToken, async (req, res) => {
+  try {
+    const r = normalizeRole(req.user?.role);
+    if (r !== 'transportdriver') {
+      return res.status(403).json({ error: 'Driver session required' });
+    }
+    const tripType = req.query.tripType != null ? String(req.query.tripType).trim().toLowerCase() : 'morning';
+    if (tripType !== 'morning' && tripType !== 'evening') {
+      return res.status(400).json({ error: 'tripType must be morning|evening' });
+    }
+
+    const driverId = String(req.user.id || '');
+    const [rows] = await db.query(`SELECT bus_id FROM transport_drivers WHERE id = ? LIMIT 1`, [driverId]);
+    const busId = rows && rows[0] && rows[0].bus_id != null ? String(rows[0].bus_id) : '';
+    if (!busId) {
+      return res.status(400).json({ error: 'Driver has no bus assigned' });
+    }
+
+    const today = toUtcDateString();
+    const [children] = await db.query(
+      `
+      SELECT
+        c.id,
+        c.child_name,
+        c.parent_email,
+        c.gender,
+        c.address,
+        COALESCE(bb.status, NULL) AS boarding_status,
+        bb.last_scanned_at
+      FROM transport_student_assignments a
+      JOIN transport_children c ON c.id = a.student_id
+      LEFT JOIN transport_bus_boarding bb
+        ON bb.bus_id = a.bus_id
+       AND bb.trip_type = ?
+       AND bb.student_id = a.student_id
+       AND bb.trip_date = ?
+      WHERE a.bus_id = ?
+      ORDER BY c.child_name ASC
+      `,
+      [tripType, today, busId],
+    );
+
+    res.json({
+      busId,
+      tripType,
+      tripDate: today,
+      children: (children || []).map((c) => ({
+        id: String(c.id),
+        childName: c.child_name,
+        parentEmail: c.parent_email,
+        gender: c.gender || null,
+        address: c.address || null,
+        onboarded: String(c.boarding_status || '').toLowerCase() === 'on',
+        lastScannedAt: c.last_scanned_at || null,
+      })),
+    });
+  } catch (err) {
+    console.error('transport driver assigned children:', err);
+    res.status(500).json({ error: 'Failed to load assigned children' });
+  }
+});
+
+/**
  * GET /api/transport/trips/today
  * Admin-only. Returns per-bus trip status for today (morning/evening).
  */
@@ -1319,15 +1662,97 @@ router.post('/attendance/scan', requireTransportScanner, async (req, res) => {
   try {
     const tagUidRaw = req.body?.tagUid ?? req.body?.rfid ?? req.body?.uid;
     const tagUid = tagUidRaw != null ? String(tagUidRaw).trim() : '';
-    const busId = req.body?.busId != null ? String(req.body.busId).trim() : '';
-    const tripType = req.body?.tripType != null ? String(req.body.tripType).trim().toLowerCase() : '';
+    let busId = req.body?.busId != null ? String(req.body.busId).trim() : '';
+    let tripType = req.body?.tripType != null ? String(req.body.tripType).trim().toLowerCase() : '';
     const direction = req.body?.direction != null ? String(req.body.direction).trim().toLowerCase() : 'on';
     const scannedAt = req.body?.scannedAt ? new Date(String(req.body.scannedAt)) : new Date();
 
     if (!tagUid) return res.status(400).json({ error: 'tagUid is required' });
+    // If busId/tripType are not provided by the scanner, infer them from today's active trip.
+    // This avoids hardcoding BUS_ID/TRIP_TYPE into ESP32 code.
+    if (!busId || !tripType) {
+      try {
+        const today = toUtcDateString(new Date());
+        const [activeTrips] = await db.query(
+          `
+          SELECT bus_id, trip_type
+          FROM transport_bus_trips
+          WHERE trip_date = ? AND status = 'active'
+          ORDER BY started_at DESC
+          `,
+          [today],
+        );
+        if (!activeTrips || activeTrips.length === 0) {
+          return res.status(409).json({
+            error: 'No active trip',
+            details: 'Driver must start a trip before RFID scanning is accepted',
+          });
+        }
+        if (activeTrips.length > 1) {
+          return res.status(409).json({
+            error: 'Multiple active trips',
+            details: 'Provide busId and tripType to disambiguate',
+            trips: activeTrips.map((t) => ({ busId: String(t.bus_id), tripType: String(t.trip_type) })),
+          });
+        }
+        busId = String(activeTrips[0].bus_id);
+        tripType = String(activeTrips[0].trip_type).toLowerCase();
+      } catch (e) {
+        if (e && e.code === '42P01') {
+          return res.status(503).json({
+            error: 'Database not ready',
+            details: 'Run backend/sql/2026-04-07-transport_trips.sql',
+          });
+        }
+        console.error('transport attendance scan infer active trip failed:', e);
+        return res.status(503).json({ error: 'Trip status unavailable' });
+      }
+    }
+
     if (!busId) return res.status(400).json({ error: 'busId is required' });
     if (tripType !== 'morning' && tripType !== 'evening') return res.status(400).json({ error: 'tripType must be morning|evening' });
     if (direction !== 'on' && direction !== 'off') return res.status(400).json({ error: "direction must be 'on'|'off'" });
+
+    // Gate scanning by trip status:
+    // Only accept scans when the driver has started today's trip for this bus + tripType.
+    // When driver ends the trip, scans should stop until the next start (e.g. evening).
+    try {
+      const today = toUtcDateString(new Date());
+      const [tripRows] = await db.query(
+        `
+        SELECT status
+        FROM transport_bus_trips
+        WHERE bus_id = ? AND trip_date = ? AND trip_type = ?
+        LIMIT 1
+        `,
+        [busId, today, tripType],
+      );
+      const status = tripRows && tripRows.length ? String(tripRows[0].status || '').toLowerCase() : '';
+      if (status !== 'active') {
+        return res.status(409).json({
+          error: 'Trip not active',
+          details: 'Driver must start the trip before RFID scanning is accepted',
+          busId,
+          tripType,
+          tripDate: today,
+          status: status || null,
+        });
+      }
+    } catch (e) {
+      // If trips table isn't migrated, guide user.
+      if (e && e.code === '42P01') {
+        return res.status(503).json({
+          error: 'Database not ready',
+          details: 'Run backend/sql/2026-04-07-transport_trips.sql',
+        });
+      }
+      // If trip gating query fails for any other reason, be safe and block scans.
+      console.error('transport attendance scan trip gate failed:', e);
+      return res.status(503).json({
+        error: 'Trip status unavailable',
+        details: 'Unable to verify trip status; please try again',
+      });
+    }
 
     // Find student mapped to this RFID (must be assigned)
     const [tagRows] = await db.query(
@@ -1344,6 +1769,23 @@ router.post('/attendance/scan', requireTransportScanner, async (req, res) => {
     const studentId = tagRows[0].assigned_student_id != null ? String(tagRows[0].assigned_student_id) : null;
     if (!studentId) {
       return res.status(409).json({ error: 'RFID not assigned', details: 'This tag has no assigned_student_id' });
+    }
+
+    // Load previous boarding state to avoid duplicate emails on repeated scans.
+    let prevStatus = null;
+    try {
+      const [prev] = await db.query(
+        `
+        SELECT status
+        FROM transport_bus_boarding
+        WHERE bus_id = ? AND trip_type = ? AND student_id = ? AND trip_date = (NOW() AT TIME ZONE 'UTC')::date
+        LIMIT 1
+        `,
+        [busId, tripType, studentId],
+      );
+      if (prev && prev.length) prevStatus = prev[0].status || null;
+    } catch (_) {
+      // ignore
     }
 
     // Record scan event (append-only)
@@ -1368,6 +1810,24 @@ router.post('/attendance/scan', requireTransportScanner, async (req, res) => {
       [busId, tripType, studentId, tagUid, direction, scannedAt],
     );
 
+    // Resolve child details (Transport module) for email notifications.
+    let childName = null;
+    let parentEmail = null;
+    let gender = null;
+    try {
+      const [rows] = await db.query(
+        `SELECT child_name, parent_email, gender FROM transport_children WHERE id = ? LIMIT 1`,
+        [studentId],
+      );
+      if (rows && rows.length) {
+        childName = rows[0].child_name || null;
+        parentEmail = rows[0].parent_email || null;
+        gender = rows[0].gender || null;
+      }
+    } catch (_) {
+      // ignore if table isn't migrated yet
+    }
+
     // Optional: resolve student name if the students table exists in this DB.
     let studentName = null;
     try {
@@ -1377,7 +1837,73 @@ router.post('/attendance/scan', requireTransportScanner, async (req, res) => {
       // ignore if students table is not in this DB
     }
 
-    res.json({ ok: true, busId, tripType, direction, tagUid, studentId, studentName });
+    // Send email to parent on "onboard" transition (best-effort; do not block scan).
+    let emailSent = false;
+    let emailError = null;
+    if (direction === 'on' && parentEmail && prevStatus !== 'on') {
+      try {
+        // Resolve bus + driver details for parent email.
+        let busName = null;
+        let driverFullName = null;
+        let driverPhone = null;
+        let driverEmail = null;
+        try {
+          const [busRows] = await db.query(`SELECT name FROM transport_buses WHERE id = ? LIMIT 1`, [busId]);
+          if (busRows && busRows.length) busName = busRows[0].name || null;
+        } catch (_) {
+          // ignore
+        }
+        try {
+          const [drvRows] = await db.query(
+            `SELECT full_name, phone, email FROM transport_drivers WHERE bus_id = ? LIMIT 1`,
+            [busId],
+          );
+          if (drvRows && drvRows.length) {
+            driverFullName = drvRows[0].full_name || null;
+            driverPhone = drvRows[0].phone || null;
+            driverEmail = drvRows[0].email || null;
+          }
+        } catch (_) {
+          // ignore
+        }
+
+        const displayName = childName || studentName || 'Your child';
+        const subject = `Transport update: ${displayName} onboarded`;
+        const lines = [
+          `${displayName} has onboarded the bus.`,
+          '',
+          `Trip: ${tripType}`,
+          `Time: ${scannedAt.toISOString()}`,
+          busName ? `Bus: ${busName}` : `Bus ID: ${busId}`,
+          '',
+          `Driver: ${driverFullName || 'N/A'}`,
+          `Driver phone: ${driverPhone || 'N/A'}`,
+          `Driver email: ${driverEmail || 'N/A'}`,
+          '',
+          `RFID: ${tagUid}`,
+        ];
+        const textBody = lines.join('\n');
+        await sendTransportEmail(parentEmail, { subject, textBody });
+        emailSent = true;
+      } catch (e) {
+        emailError = e && e.message ? String(e.message) : 'Failed to send email';
+        console.error('transport attendance scan email failed:', emailError);
+      }
+    }
+
+    res.json({
+      ok: true,
+      busId,
+      tripType,
+      direction,
+      tagUid,
+      studentId,
+      studentName: childName || studentName,
+      gender,
+      parentEmail: parentEmail ? String(parentEmail) : null,
+      emailSent,
+      emailError,
+    });
   } catch (err) {
     console.error('transport attendance scan:', err);
     if (err.code === 'ER_NO_SUCH_TABLE' || err.code === '42P01') {
@@ -1448,7 +1974,7 @@ router.get('/rfid-tags', requireTransportAdmin, async (req, res) => {
       return res.status(400).json({ error: 'schoolId is required' });
     }
     const [rows] = await db.query(
-      `SELECT id, tag_uid, assigned_student_id, created_at
+      `SELECT id, tag_uid, tag_name, assigned_student_id, created_at
        FROM transport_rfid_tags
        WHERE school_id = ?
        ORDER BY created_at DESC`,
@@ -1458,6 +1984,7 @@ router.get('/rfid-tags', requireTransportAdmin, async (req, res) => {
       tags: (rows || []).map((r) => ({
         id: String(r.id),
         tagUid: r.tag_uid,
+        tagName: r.tag_name || null,
         assignedStudentId: r.assigned_student_id != null ? String(r.assigned_student_id) : null,
         createdAt: r.created_at,
       })),
@@ -1476,11 +2003,12 @@ router.post('/rfid-tags', requireTransportAdmin, async (req, res) => {
   try {
     const schoolId = req.user?.schoolId || req.user?.school_id || req.body?.schoolId;
     const tagUid = req.body?.tagUid != null ? String(req.body.tagUid).trim() : '';
+    const tagName = req.body?.tagName != null ? String(req.body.tagName).trim() : '';
     if (!schoolId) return res.status(400).json({ error: 'schoolId is required' });
     if (!tagUid) return res.status(400).json({ error: 'tagUid is required' });
     const [ins] = await db.query(
-      `INSERT INTO transport_rfid_tags (school_id, tag_uid) VALUES (?, ?) RETURNING id`,
-      [String(schoolId), tagUid],
+      `INSERT INTO transport_rfid_tags (school_id, tag_uid, tag_name) VALUES (?, ?, ?) RETURNING id`,
+      [String(schoolId), tagUid, tagName || null],
     );
     const newId = ins && ins[0] && ins[0].id ? String(ins[0].id) : null;
     res.status(201).json({ ok: true, id: newId });
@@ -1493,6 +2021,234 @@ router.post('/rfid-tags', requireTransportAdmin, async (req, res) => {
       return res.status(503).json({ error: 'Database not ready', details: 'Run backend/sql/2026-04-07-transport_rfid_pickup_points.sql' });
     }
     res.status(500).json({ error: 'Failed to create RFID tag' });
+  }
+});
+
+/** PATCH /api/transport/rfid-tags/:id/assign body: { studentId } (studentId == transport_children.id for now) */
+router.patch('/rfid-tags/:id/assign', requireTransportAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const studentId = req.body?.studentId != null ? String(req.body.studentId).trim() : '';
+    if (!id) return res.status(400).json({ error: 'id is required' });
+    if (!studentId) return res.status(400).json({ error: 'studentId is required' });
+
+    const [upd] = await db.query(
+      `UPDATE transport_rfid_tags SET assigned_student_id = ? WHERE id = ? RETURNING id`,
+      [studentId, String(id)],
+    );
+    if (!upd || !upd.length) return res.status(404).json({ error: 'RFID tag not found' });
+
+    // Best-effort: email parent with card details on assignment.
+    let emailSent = false;
+    let emailError = null;
+    try {
+      const [rows] = await db.query(
+        `
+        SELECT c.child_name, c.parent_email, t.tag_uid, t.tag_name
+        FROM transport_children c
+        JOIN transport_rfid_tags t ON t.id = ?
+        WHERE c.id = ?
+        LIMIT 1
+        `,
+        [String(id), String(studentId)],
+      );
+      if (rows && rows.length) {
+        const r = rows[0];
+        const to = r.parent_email ? String(r.parent_email).trim() : '';
+        if (to) {
+          const childName = r.child_name || 'Your child';
+          const tagUid = r.tag_uid || '';
+          const tagName = r.tag_name || '';
+          const subject = `Transport RFID assigned for ${childName}`;
+          const textBody =
+            `RFID card assigned successfully.\n\n` +
+            `Child: ${childName}\n` +
+            `Card UID: ${tagUid}\n` +
+            (tagName ? `Card name: ${tagName}\n` : '') +
+            `\nPlease keep this card safe.`;
+          await sendTransportEmail(to, { subject, textBody });
+          emailSent = true;
+        }
+      }
+    } catch (e) {
+      emailError = e && e.message ? String(e.message) : 'Failed to send email';
+      console.error('transport rfid assign email failed:', emailError);
+    }
+    res.json({ ok: true, emailSent, emailError });
+  } catch (err) {
+    console.error('transport assign rfid tag:', err);
+    if (err.code === 'ER_DUP_ENTRY' || err.code === '23505') {
+      return res.status(409).json({ error: 'This student already has an RFID assigned (or RFID already assigned)' });
+    }
+    if (err.code === 'ER_NO_SUCH_TABLE' || err.code === '42P01') {
+      return res.status(503).json({ error: 'Database not ready', details: 'Run backend/sql/2026-04-09-transport_children_rfid_tag_name.sql' });
+    }
+    res.status(500).json({ error: 'Failed to assign RFID tag' });
+  }
+});
+
+/** PATCH /api/transport/rfid-tags/:id/unassign — clears assigned_student_id so tag can be reused */
+router.patch('/rfid-tags/:id/unassign', requireTransportAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!id) return res.status(400).json({ error: 'id is required' });
+    const [upd] = await db.query(
+      `UPDATE transport_rfid_tags SET assigned_student_id = NULL WHERE id = ? RETURNING id`,
+      [String(id)],
+    );
+    if (!upd || !upd.length) return res.status(404).json({ error: 'RFID tag not found' });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('transport unassign rfid tag:', err);
+    if (err.code === 'ER_NO_SUCH_TABLE' || err.code === '42P01') {
+      return res.status(503).json({ error: 'Database not ready' });
+    }
+    res.status(500).json({ error: 'Failed to unassign RFID tag' });
+  }
+});
+
+// --- Children (admin) ---
+
+/** GET /api/transport/children?schoolId=... */
+router.get('/children', requireTransportAdmin, async (req, res) => {
+  try {
+    const schoolId = req.user?.schoolId || req.user?.school_id || null;
+    const effectiveSchoolId = schoolId || (req.query.schoolId ? String(req.query.schoolId) : null);
+    if (!effectiveSchoolId) {
+      return res.status(400).json({ error: 'schoolId is required' });
+    }
+    const [rows] = await db.query(
+      `
+      SELECT c.id, c.school_id, c.child_name, c.gender, c.parent_email, c.address, c.created_at, c.updated_at,
+             a.bus_id, a.pickup_point_id,
+             pp.name AS pickup_point_name
+      FROM transport_children c
+      LEFT JOIN transport_student_assignments a ON a.student_id = c.id
+      LEFT JOIN transport_pickup_points pp ON pp.id = a.pickup_point_id
+      WHERE c.school_id = ?
+      ORDER BY c.created_at DESC
+      `,
+      [String(effectiveSchoolId)],
+    );
+    res.json({
+      children: (rows || []).map((r) => ({
+        id: String(r.id),
+        schoolId: String(r.school_id),
+        childName: r.child_name,
+        gender: r.gender || null,
+        parentEmail: r.parent_email,
+        address: r.address || null,
+        busId: r.bus_id != null ? String(r.bus_id) : null,
+        pickupPointId: r.pickup_point_id != null ? String(r.pickup_point_id) : null,
+        pickupPointName: r.pickup_point_name || null,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+      })),
+    });
+  } catch (err) {
+    console.error('transport list children:', err);
+    if (err.code === 'ER_NO_SUCH_TABLE' || err.code === '42P01') {
+      return res.status(503).json({ error: 'Database not ready', details: 'Run backend/sql/2026-04-09-transport_children_rfid_tag_name.sql' });
+    }
+    res.status(500).json({ error: 'Failed to list children' });
+  }
+});
+
+/** POST /api/transport/children body: { schoolId, childName, gender?, parentEmail } */
+router.post('/children', requireTransportAdmin, async (req, res) => {
+  try {
+    const schoolId = req.user?.schoolId || req.user?.school_id || req.body?.schoolId;
+    const childName = req.body?.childName != null ? String(req.body.childName).trim() : '';
+    const parentEmail = req.body?.parentEmail != null ? String(req.body.parentEmail).trim() : '';
+    const gender = req.body?.gender != null ? String(req.body.gender).trim() : '';
+    const address = req.body?.address != null ? String(req.body.address).trim() : '';
+
+    if (!schoolId) return res.status(400).json({ error: 'schoolId is required' });
+    if (!childName) return res.status(400).json({ error: 'childName is required' });
+    if (!parentEmail) return res.status(400).json({ error: 'parentEmail is required' });
+    if (!address) return res.status(400).json({ error: 'address is required' });
+
+    const [ins] = await db.query(
+      `
+      INSERT INTO transport_children (school_id, child_name, gender, parent_email, address)
+      VALUES (?, ?, ?, ?, ?)
+      RETURNING id
+      `,
+      [String(schoolId), childName, gender || null, parentEmail, address],
+    );
+    const newId = ins && ins[0] && ins[0].id ? String(ins[0].id) : null;
+    res.status(201).json({ ok: true, id: newId });
+  } catch (err) {
+    console.error('transport create child:', err);
+    if (err.code === 'ER_NO_SUCH_TABLE' || err.code === '42P01') {
+      return res.status(503).json({ error: 'Database not ready', details: 'Run backend/sql/2026-04-09-transport_children_rfid_tag_name.sql' });
+    }
+    res.status(500).json({ error: 'Failed to create child' });
+  }
+});
+
+/** PATCH /api/transport/children/:id/assignment body: { busId?, pickupPointId? } */
+router.patch('/children/:id/assignment', requireTransportAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const busId = req.body?.busId != null ? String(req.body.busId).trim() : null;
+    const pickupPointId = req.body?.pickupPointId != null ? String(req.body.pickupPointId).trim() : null;
+    if (!id) return res.status(400).json({ error: 'id is required' });
+
+    const [c] = await db.query(`SELECT school_id, child_name, parent_email FROM transport_children WHERE id = ? LIMIT 1`, [String(id)]);
+    if (!c || !c.length) return res.status(404).json({ error: 'Child not found' });
+    const schoolId = String(c[0].school_id);
+    const childName = c[0].child_name || 'Your child';
+    const parentEmail = c[0].parent_email ? String(c[0].parent_email).trim() : '';
+
+    await db.query(
+      `
+      INSERT INTO transport_student_assignments (student_id, school_id, bus_id, pickup_point_id, updated_at)
+      VALUES (?, ?, ?, ?, NOW())
+      ON CONFLICT (student_id)
+      DO UPDATE SET
+        school_id = EXCLUDED.school_id,
+        bus_id = EXCLUDED.bus_id,
+        pickup_point_id = EXCLUDED.pickup_point_id,
+        updated_at = NOW()
+      `,
+      [String(id), schoolId, busId || null, pickupPointId || null],
+    );
+
+    // Notify parent about bus/pickup assignment (best-effort).
+    let emailSent = false;
+    let emailError = null;
+    if (parentEmail && (busId || pickupPointId)) {
+      try {
+        let busName = '';
+        let pickupName = '';
+        if (busId) {
+          const [b] = await db.query(`SELECT name FROM transport_buses WHERE id = ? LIMIT 1`, [String(busId)]);
+          if (b && b.length) busName = b[0].name || '';
+        }
+        if (pickupPointId) {
+          const [p] = await db.query(`SELECT name FROM transport_pickup_points WHERE id = ? LIMIT 1`, [String(pickupPointId)]);
+          if (p && p.length) pickupName = p[0].name || '';
+        }
+        const subject = `Transport assignment updated for ${childName}`;
+        const textBody =
+          `Transport assignment updated.\n\n` +
+          `Child: ${childName}\n` +
+          (pickupName ? `Pickup point: ${pickupName}\n` : '') +
+          (busName ? `Bus: ${busName}\n` : '') +
+          `\nThank you.`;
+        await sendTransportEmail(parentEmail, { subject, textBody });
+        emailSent = true;
+      } catch (e) {
+        emailError = e && e.message ? String(e.message) : 'Failed to send email';
+        console.error('transport child assignment email failed:', emailError);
+      }
+    }
+
+    res.json({ ok: true, emailSent, emailError });
+  } catch (err) {
+    console.error('transport patch child assignment:', err);
+    res.status(500).json({ error: 'Failed to update child assignment' });
   }
 });
 
@@ -1520,6 +2276,136 @@ router.post('/pickup-points', requireTransportAdmin, async (req, res) => {
       return res.status(503).json({ error: 'Database not ready', details: 'Run backend/sql/2026-04-07-transport_rfid_pickup_points.sql' });
     }
     res.status(500).json({ error: 'Failed to create pickup point' });
+  }
+});
+
+/** GET /api/transport/pickup-points?schoolId=... */
+router.get('/pickup-points', requireTransportAdmin, async (req, res) => {
+  try {
+    const schoolId = req.user?.schoolId || req.user?.school_id || null;
+    const effectiveSchoolId = schoolId || (req.query.schoolId ? String(req.query.schoolId) : null);
+    if (!effectiveSchoolId) return res.status(400).json({ error: 'schoolId is required' });
+    const [rows] = await db.query(
+      `SELECT id, name, lat, lng, created_at
+       FROM transport_pickup_points
+       WHERE school_id = ?
+       ORDER BY created_at DESC`,
+      [String(effectiveSchoolId)],
+    );
+    res.json({
+      pickupPoints: (rows || []).map((r) => ({
+        id: String(r.id),
+        schoolId: String(effectiveSchoolId),
+        name: r.name,
+        lat: Number(r.lat),
+        lng: Number(r.lng),
+        createdAt: r.created_at,
+      })),
+    });
+  } catch (err) {
+    console.error('transport list pickup points:', err);
+    res.status(500).json({ error: 'Failed to list pickup points' });
+  }
+});
+
+/** GET /api/transport/pickup-points/nearest?schoolId=...&q=address */
+router.get('/pickup-points/nearest', requireTransportAdmin, async (req, res) => {
+  try {
+    const schoolId = req.user?.schoolId || req.user?.school_id || null;
+    const effectiveSchoolId = schoolId || (req.query.schoolId ? String(req.query.schoolId) : null);
+    const q = req.query.q != null ? String(req.query.q).trim() : '';
+    if (!effectiveSchoolId) return res.status(400).json({ error: 'schoolId is required' });
+    if (!q) return res.json({ pickupPoints: [] });
+
+    const key = (process.env.AWS_LOCATION_API_KEY || '').trim();
+    if (!key) {
+      return res.status(503).json({ error: 'AWS_LOCATION_API_KEY is not set on the server' });
+    }
+
+    const region = getPlacesRegion();
+    const url = `https://places.geo.${region}.amazonaws.com/suggest?key=${encodeURIComponent(key)}`;
+    const urlV2 = `https://places.geo.${region}.amazonaws.com/v2/suggest?key=${encodeURIComponent(key)}`;
+    const body = {
+      QueryText: q,
+      MaxResults: 5,
+      BiasPosition: getPlacesBias(),
+      Language: 'en',
+    };
+    const countries = getAutocompleteCountryFilter();
+    if (countries) body.Filter = { IncludeCountries: countries };
+    const headers = {
+      'Content-Type': 'application/json',
+      ...placesForwardHeaders(req),
+    };
+
+    async function postJson(targetUrl) {
+      const r = await fetch(targetUrl, { method: 'POST', headers, body: JSON.stringify(body) });
+      const data = await r.json().catch(() => ({}));
+      return { r, data };
+    }
+
+    let { r, data } = await postJson(url);
+    if (!r.ok) {
+      const msg = String((data && (data.message || data.Message || data.error)) || '');
+      if (r.status === 403 && /determine service\/operation name to be authorized/i.test(msg)) {
+        ({ r, data } = await postJson(urlV2));
+      }
+    }
+    if (!r.ok) {
+      console.error('transport nearest pickup suggest', r.status, data);
+      return res.status(r.status >= 400 ? r.status : 502).json({
+        error: data.message || data.Message || data.error || 'Geocode suggest failed',
+      });
+    }
+
+    const first = (data.ResultItems || []).find((it) => it && it.Place && it.Place.PlaceId);
+    const placeId = first && first.Place && first.Place.PlaceId ? String(first.Place.PlaceId) : '';
+    if (!placeId) return res.json({ pickupPoints: [] });
+
+    const pathSeg = encodeURIComponent(placeId);
+    const qs = new URLSearchParams({
+      key,
+      language: 'en',
+      'intended-use': 'SingleUse',
+    });
+    const detailsUrl = `https://places.geo.${region}.amazonaws.com/v2/place/${pathSeg}?${qs.toString()}`;
+    const dr = await fetch(detailsUrl, { method: 'GET', headers: { ...placesForwardHeaders(req) } });
+    const dd = await dr.json().catch(() => ({}));
+    if (!dr.ok) {
+      console.error('transport nearest pickup details', dr.status, dd);
+      return res.status(dr.status >= 400 ? dr.status : 502).json({
+        error: dd.message || dd.error || 'Geocode details failed',
+      });
+    }
+    const pos = dd.Position;
+    if (!Array.isArray(pos) || pos.length < 2) return res.json({ pickupPoints: [] });
+    const lng = Number(pos[0]);
+    const lat = Number(pos[1]);
+    if (Number.isNaN(lat) || Number.isNaN(lng)) return res.json({ pickupPoints: [] });
+
+    const [rows] = await db.query(
+      `
+      SELECT id, name, lat, lng,
+        ( (lat - ?) * (lat - ?) + (lng - ?) * (lng - ?) ) AS d2
+      FROM transport_pickup_points
+      WHERE school_id = ?
+      ORDER BY d2 ASC
+      LIMIT 8
+      `,
+      [lat, lat, lng, lng, String(effectiveSchoolId)],
+    );
+
+    res.json({
+      pickupPoints: (rows || []).map((r2) => ({
+        id: String(r2.id),
+        name: r2.name,
+        lat: Number(r2.lat),
+        lng: Number(r2.lng),
+      })),
+    });
+  } catch (err) {
+    console.error('transport nearest pickup points:', err);
+    res.status(500).json({ error: 'Failed to fetch nearest pickup points' });
   }
 });
 
@@ -1710,6 +2596,27 @@ router.patch('/routes/:id', requireTransportAdmin, async (req, res) => {
   } catch (err) {
     console.error('transport patch route:', err);
     res.status(500).json({ error: 'Failed to update route' });
+  }
+});
+
+/** DELETE /api/transport/routes/:id — delete route (only if unassigned) */
+router.delete('/routes/:id', requireTransportAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!id) return res.status(400).json({ error: 'id is required' });
+    const [inUse] = await db.query(
+      `SELECT id FROM transport_drivers WHERE morning_route_id = ? OR evening_route_id = ? LIMIT 1`,
+      [String(id), String(id)],
+    );
+    if (inUse && inUse.length) {
+      return res.status(409).json({ error: 'Route is assigned to a driver. Unassign it first.' });
+    }
+    const [del] = await db.query(`DELETE FROM transport_routes WHERE id = ? RETURNING id`, [String(id)]);
+    if (!del || !del.length) return res.status(404).json({ error: 'Route not found' });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('transport delete route:', err);
+    res.status(500).json({ error: 'Failed to delete route' });
   }
 });
 

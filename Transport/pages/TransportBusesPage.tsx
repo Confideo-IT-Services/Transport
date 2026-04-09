@@ -14,12 +14,15 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Bus, ChevronRight, Plus } from "lucide-react";
+import { Bus, ChevronRight, Plus, Pencil, Trash2 } from "lucide-react";
 import {
   createTransportBus,
+  deleteTransportBus,
   fetchTodayTripStatuses,
   fetchTransportBuses,
   fetchTransportDrivers,
+  unassignDriverFromBus,
+  patchTransportBus,
   type TransportBusDto,
   type TransportDriverDto,
 } from "@transport/lib/transportApi";
@@ -96,6 +99,69 @@ export default function TransportBusesPage() {
       await refresh();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to create bus");
+    }
+  };
+
+  const [editOpen, setEditOpen] = useState(false);
+  const [editSaving, setEditSaving] = useState(false);
+  const [editBus, setEditBus] = useState<TransportBusDto | null>(null);
+  const [editForm, setEditForm] = useState({ name: "", registrationNo: "", capacity: "40" });
+
+  const openEdit = (b: TransportBusDto) => {
+    setEditBus(b);
+    setEditForm({
+      name: b.name ?? "",
+      registrationNo: b.registrationNo ?? "",
+      capacity: b.capacity != null ? String(b.capacity) : "40",
+    });
+    setEditOpen(true);
+  };
+
+  const submitEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editBus) return;
+    const cap = editForm.capacity ? parseInt(editForm.capacity, 10) : NaN;
+    if (!editForm.name.trim() || Number.isNaN(cap) || cap < 1) {
+      toast.error("Fill bus name and valid capacity");
+      return;
+    }
+    setEditSaving(true);
+    try {
+      await patchTransportBus(editBus.id, {
+        name: editForm.name.trim(),
+        registrationNo: editForm.registrationNo.trim() || null,
+        capacity: cap,
+      });
+      toast.success("Bus updated");
+      setEditOpen(false);
+      setEditBus(null);
+      await refresh();
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to update bus");
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
+  const onDelete = async (b: TransportBusDto) => {
+    if (!confirm(`Delete bus "${b.name}"?\n\nThis is allowed only if the bus is unassigned.`)) return;
+    try {
+      await deleteTransportBus(b.id);
+      toast.success("Bus deleted");
+      await refresh();
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to delete bus");
+    }
+  };
+
+  const onUnassignDriver = async (b: TransportBusDto) => {
+    if (!confirm(`Unassign driver from "${b.name}"?\n\nThis is required before deleting the bus.`)) return;
+    try {
+      await unassignDriverFromBus(b.id);
+      toast.success("Driver unassigned from bus");
+      await refresh();
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to unassign driver");
     }
   };
 
@@ -179,6 +245,45 @@ export default function TransportBusesPage() {
               </form>
             </DialogContent>
           </Dialog>
+
+          <Dialog open={editOpen} onOpenChange={setEditOpen}>
+            <DialogContent className="sm:max-w-md">
+              <form onSubmit={submitEdit}>
+                <DialogHeader>
+                  <DialogTitle>Edit bus</DialogTitle>
+                  <DialogDescription>Update name, registration, and capacity.</DialogDescription>
+                </DialogHeader>
+                <div className="grid gap-3 py-4">
+                  <div className="grid gap-2">
+                    <Label>Name</Label>
+                    <Input value={editForm.name} onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))} required />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label>Registration</Label>
+                    <Input
+                      value={editForm.registrationNo}
+                      onChange={(e) => setEditForm((f) => ({ ...f, registrationNo: e.target.value }))}
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label>Seat capacity</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      value={editForm.capacity}
+                      onChange={(e) => setEditForm((f) => ({ ...f, capacity: e.target.value }))}
+                      required
+                    />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button type="submit" disabled={editSaving}>
+                    {editSaving ? "Saving…" : "Save changes"}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
         </div>
       </div>
 
@@ -237,6 +342,19 @@ export default function TransportBusesPage() {
                 <div className="text-sm">
                   <span className="text-muted-foreground">Route · </span>
                   <span className="font-medium">{routeName}</span>
+                </div>
+                <div className="flex gap-2">
+                  <Button type="button" variant="outline" className="flex-1" onClick={() => openEdit(b)}>
+                    <Pencil className="h-4 w-4 mr-2" />
+                    Modify
+                  </Button>
+                  <Button type="button" variant="outline" className="flex-1" onClick={() => void onUnassignDriver(b)}>
+                    Unassign driver
+                  </Button>
+                  <Button type="button" variant="outline" className="flex-1" onClick={() => void onDelete(b)}>
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Delete
+                  </Button>
                 </div>
                 <Button variant="secondary" className="w-full justify-between" asChild>
                   <Link to={`/transport/buses/${b.id}`}>

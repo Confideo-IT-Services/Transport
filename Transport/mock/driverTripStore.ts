@@ -76,6 +76,26 @@ function saveTripState(state: DriverTripState): void {
   localStorage.setItem(key, JSON.stringify(state));
 }
 
+export function upsertTripStateFromServer(args: {
+  driverId: string;
+  tripType: TripType;
+  date: string;
+  status: TripStatus;
+  startedAt: string | null;
+  endedAt: string | null;
+}): DriverTripState {
+  const next: DriverTripState = {
+    date: args.date,
+    driverId: args.driverId,
+    tripType: args.tripType,
+    status: args.status,
+    startedAt: args.startedAt,
+    endedAt: args.endedAt,
+  };
+  saveTripState(next);
+  return next;
+}
+
 function loadNotifyLog(): ParentNotifyEvent[] {
   try {
     const raw = localStorage.getItem(NOTIFY_LOG);

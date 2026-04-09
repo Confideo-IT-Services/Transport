@@ -28,7 +28,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { UserPlus, Loader2, Bus, Route, Pencil } from "lucide-react";
+import { UserPlus, Loader2, Bus, Route, Pencil, KeyRound } from "lucide-react";
 import { useMemo } from "react";
 import {
   fetchTransportDrivers,
@@ -38,6 +38,7 @@ import {
   createTransportBus,
   createTransportRoute,
   patchTransportDriverAssignment,
+  adminResetDriverPassword,
   type TransportDriverDto,
   type TransportBusDto,
   type TransportRouteDto,
@@ -263,6 +264,37 @@ export default function TransportDriversPage() {
       toast.error(err instanceof Error ? err.message : "Update failed");
     } finally {
       setEditSaving(false);
+    }
+  };
+
+  const [pwOpen, setPwOpen] = useState(false);
+  const [pwSaving, setPwSaving] = useState(false);
+  const [pwDriver, setPwDriver] = useState<TransportDriverDto | null>(null);
+  const [pwValue, setPwValue] = useState("");
+
+  const openResetPassword = (d: TransportDriverDto) => {
+    setPwDriver(d);
+    setPwValue("");
+    setPwOpen(true);
+  };
+
+  const submitResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pwDriver) return;
+    if (!pwValue || pwValue.length < 8) {
+      toast.error("Password must be at least 8 characters");
+      return;
+    }
+    setPwSaving(true);
+    try {
+      await adminResetDriverPassword(pwDriver.id, pwValue);
+      toast.success("Password reset");
+      setPwOpen(false);
+      setPwDriver(null);
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to reset password");
+    } finally {
+      setPwSaving(false);
     }
   };
 
@@ -548,6 +580,31 @@ export default function TransportDriversPage() {
               </form>
             </DialogContent>
           </Dialog>
+
+          <Dialog open={pwOpen} onOpenChange={setPwOpen}>
+            <DialogContent className="sm:max-w-md">
+              <form onSubmit={submitResetPassword}>
+                <DialogHeader>
+                  <DialogTitle>Reset driver password</DialogTitle>
+                  <DialogDescription>
+                    Set a new password for {pwDriver?.fullName ?? pwDriver?.email ?? "driver"}. Share it securely with the driver.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="grid gap-3 py-4">
+                  <div className="grid gap-2">
+                    <Label>New password</Label>
+                    <Input type="password" value={pwValue} onChange={(e) => setPwValue(e.target.value)} required />
+                    <p className="text-xs text-muted-foreground">Minimum 8 characters.</p>
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button type="submit" disabled={pwSaving}>
+                    {pwSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Reset password"}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
         </div>
       </div>
 
@@ -602,10 +659,16 @@ export default function TransportDriversPage() {
                       <TableCell>{d.morningRouteName ?? d.morningRouteId ?? "—"}</TableCell>
                       <TableCell>{d.eveningRouteName ?? d.eveningRouteId ?? "—"}</TableCell>
                       <TableCell>
-                        <Button type="button" variant="outline" size="sm" onClick={() => openEdit(d)}>
-                          <Pencil className="h-4 w-4 mr-1" />
-                          Edit
-                        </Button>
+                        <div className="flex flex-wrap gap-2">
+                          <Button type="button" variant="outline" size="sm" onClick={() => openEdit(d)}>
+                            <Pencil className="h-4 w-4 mr-1" />
+                            Edit
+                          </Button>
+                          <Button type="button" variant="outline" size="sm" onClick={() => openResetPassword(d)}>
+                            <KeyRound className="h-4 w-4 mr-1" />
+                            Reset
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))

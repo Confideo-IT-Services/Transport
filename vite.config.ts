@@ -21,6 +21,14 @@ export default defineConfig(({ mode }) => {
     server: {
       host: "::",
       port: 8080,
+      proxy: {
+        // Allows frontend to use same-origin "/api" in dev.
+        // Production should route "/api" via your reverse proxy to the backend.
+        "/api": {
+          target: "http://localhost:3000",
+          changeOrigin: true,
+        },
+      },
     },
     plugins: [react()],
     resolve: {

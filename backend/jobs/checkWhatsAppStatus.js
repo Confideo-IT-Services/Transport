@@ -55,6 +55,14 @@ async function checkPendingMessages() {
       console.log(`[WhatsApp Status Check] Updated ${updated} message statuses`);
     }
   } catch (error) {
+    // If the WhatsApp schema isn't installed in this DB, don't crash the server.
+    // This job is optional and should be safe to run in transport-only deployments.
+    const code = error && error.code ? String(error.code) : '';
+    const msg = error && error.message ? String(error.message) : '';
+    if (code === 'ER_NO_SUCH_TABLE' || code === '42P01' || /relation "whatsapp_messages" does not exist/i.test(msg)) {
+      console.warn('[WhatsApp Status Check] Skipped: whatsapp_messages table not found');
+      return;
+    }
     console.error('[WhatsApp Status Check] Error:', error);
   }
 }
@@ -62,10 +70,14 @@ async function checkPendingMessages() {
 // Auto-run if enabled via environment variable
 if (process.env.ENABLE_WHATSAPP_STATUS_CHECK === 'true') {
   // Run every 5 minutes
-  setInterval(checkPendingMessages, 5 * 60 * 1000);
+  setInterval(() => {
+    checkPendingMessages().catch((e) => console.error('[WhatsApp Status Check] Unhandled:', e));
+  }, 5 * 60 * 1000);
   
   // Run once on startup after 1 minute
-  setTimeout(checkPendingMessages, 60 * 1000);
+  setTimeout(() => {
+    checkPendingMessages().catch((e) => console.error('[WhatsApp Status Check] Unhandled:', e));
+  }, 60 * 1000);
   
   console.log('✅ WhatsApp status check job enabled (runs every 5 minutes)');
 }

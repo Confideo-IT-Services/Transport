@@ -66,6 +66,7 @@ import DriverLayout from "@transport/driver/DriverLayout";
 import DriverHomePage from "@transport/driver/DriverHomePage";
 import DriverRoutePage from "@transport/driver/DriverRoutePage";
 import DriverAttendancePage from "@transport/driver/DriverAttendancePage";
+import DriverSettingsPage from "@transport/driver/DriverSettingsPage";
 
 const queryClient = new QueryClient();
 
@@ -144,6 +145,7 @@ const AppContent = () => {
         <Route index element={<DriverHomePage />} />
         <Route path="my-route" element={<DriverRoutePage />} />
         <Route path="attendance" element={<DriverAttendancePage />} />
+        <Route path="settings" element={<DriverSettingsPage />} />
       </Route>
       
       {/* Legacy redirects */}

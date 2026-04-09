@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { Bus, ArrowLeft, Eye, EyeOff } from "lucide-react";
+import { Bus, ArrowLeft, Eye, EyeOff, MapPin } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -21,12 +21,34 @@ export default function DriverLogin() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [locChecked, setLocChecked] = useState(false);
+  const [locDenied, setLocDenied] = useState(false);
 
   useEffect(() => {
     if (isDriverAuthenticated()) {
       navigate("/transport/driver", { replace: true });
     }
   }, [navigate]);
+
+  useEffect(() => {
+    // Trigger location permission prompt on the login screen (driver requirement).
+    // Note: browsers won't always re-prompt if the user already chose Allow/Block.
+    if (!navigator.geolocation) {
+      setLocChecked(true);
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      () => {
+        setLocDenied(false);
+        setLocChecked(true);
+      },
+      (err) => {
+        setLocDenied(err.code === err.PERMISSION_DENIED);
+        setLocChecked(true);
+      },
+      { enableHighAccuracy: true, timeout: 10_000, maximumAge: 0 },
+    );
+  }, []);
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -141,6 +163,27 @@ export default function DriverLogin() {
         </div>
 
         <div className="rounded-xl border bg-card p-6 shadow-sm">
+          <div className="mb-4 rounded-lg border bg-muted/30 px-3 py-2 text-sm">
+            <div className="flex items-start gap-2">
+              <MapPin className="h-4 w-4 mt-0.5 text-amber-700 dark:text-amber-300" />
+              <div className="min-w-0">
+                <p className="font-medium">Location required</p>
+                {!locChecked ? (
+                  <p className="text-xs text-muted-foreground mt-0.5">Requesting location permission…</p>
+                ) : locDenied ? (
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Location permission is blocked. Allow it in your browser settings to start trips and share live bus
+                    location.
+                  </p>
+                ) : (
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Allow GPS so parents can see live bus location during the trip.
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+
           <form onSubmit={onSubmit} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="driver-email">Email</Label>

@@ -23,10 +23,11 @@ import {
 } from "@/components/ui/table";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import { MapPin, Plus } from "lucide-react";
+import { MapPin, Plus, Trash2 } from "lucide-react";
 import {
   calculateTransportRouteLine,
   createTransportRoute,
+  deleteTransportRoute,
   fetchTransportBuses,
   fetchTransportDrivers,
   fetchTransportRoutes,
@@ -160,6 +161,17 @@ export default function TransportRoutesPage() {
     }
   };
 
+  const onDelete = async (r: TransportRouteDto) => {
+    if (!confirm(`Delete route "${r.name}"?\n\nThis is allowed only if the route is unassigned.`)) return;
+    try {
+      await deleteTransportRoute(r.id);
+      toast.success("Route deleted");
+      await refresh();
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to delete route");
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -185,8 +197,8 @@ export default function TransportRoutesPage() {
               Add route
             </Button>
           </DialogTrigger>
-          <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
-            <form onSubmit={submitRoute}>
+          <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-hidden">
+            <form onSubmit={submitRoute} className="flex max-h-[85vh] flex-col">
               <DialogHeader>
                 <DialogTitle>New route</DialogTitle>
                 <DialogDescription>
@@ -194,7 +206,7 @@ export default function TransportRoutesPage() {
                   reverse.
                 </DialogDescription>
               </DialogHeader>
-              <div className="grid gap-3 py-4">
+              <div className="grid gap-3 py-4 flex-1 overflow-y-auto pr-1">
                 <div className="grid gap-2">
                   <Label>Route name</Label>
                   <Input
@@ -224,7 +236,7 @@ export default function TransportRoutesPage() {
                   )}
                 </div>
               </div>
-              <DialogFooter>
+              <DialogFooter className="pt-2 border-t">
                 <Button type="submit" disabled={saving}>
                   {saving ? "Saving…" : "Save route"}
                 </Button>
@@ -328,7 +340,21 @@ export default function TransportRoutesPage() {
                         )}
                       </TableCell>
                       <TableCell className="text-muted-foreground">{busesText}</TableCell>
-                      <TableCell className="text-muted-foreground">{driversText}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="truncate">{driversText}</span>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => void onDelete(r)}
+                            disabled={driverCount > 0}
+                            title={driverCount > 0 ? "Unassign this route from drivers before deleting" : "Delete route"}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
                     </TableRow>
                   );
                 })}

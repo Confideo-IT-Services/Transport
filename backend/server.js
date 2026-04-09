@@ -7,6 +7,12 @@ const cors = require('cors');
 const app = express();
 
 /** Origins allowed for browser CORS (Vite, Expo, deployed app). */
+const envOrigins = []
+  .concat(process.env.FRONTEND_URLS ? String(process.env.FRONTEND_URLS).split(',') : [])
+  .concat(process.env.FRONTEND_URL ? [String(process.env.FRONTEND_URL)] : [])
+  .map((s) => String(s).trim())
+  .filter(Boolean);
+
 const corsStaticOrigins = [
   'http://localhost:5173',
   'http://localhost:8080',
@@ -14,7 +20,7 @@ const corsStaticOrigins = [
   'http://127.0.0.1:5173',
   'http://127.0.0.1:8080',
   'http://127.0.0.1:8081',
-  process.env.FRONTEND_URL,
+  ...envOrigins,
 ].filter(Boolean);
 
 function corsOrigin(origin, callback) {

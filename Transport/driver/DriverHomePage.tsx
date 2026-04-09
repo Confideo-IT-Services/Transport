@@ -11,10 +11,11 @@ import {
   getRecentNotifyEvents,
   getTripHistoryForDriverAndType,
   type TripType,
+  upsertTripStateFromServer,
 } from "@transport/mock/driverTripStore";
 import { toast } from "sonner";
 import { format } from "date-fns";
-import { driverEndTrip, driverStartTrip, publishTrackerPosition } from "@transport/lib/transportApi";
+import { driverEndTrip, driverStartTrip, fetchDriverTodayTrips, publishTrackerPosition } from "@transport/lib/transportApi";
 
 export default function DriverHomePage() {
   const session = getDriverSession();
@@ -32,6 +33,28 @@ export default function DriverHomePage() {
   const geoDeniedToastShownRef = useRef(false);
   const lastSentAtRef = useRef<number>(0);
   const inFlightRef = useRef(false);
+
+  useEffect(() => {
+    if (!jwt || !driverId) return;
+    fetchDriverTodayTrips(jwt)
+      .then((out) => {
+        for (const t of out.trips || []) {
+          upsertTripStateFromServer({
+            driverId,
+            tripType: t.tripType,
+            date: out.tripDate,
+            status: t.status,
+            startedAt: t.startedAt,
+            endedAt: t.endedAt,
+          });
+        }
+        refresh();
+      })
+      .catch((e) => {
+        console.warn("fetchDriverTodayTrips failed:", e);
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jwt, driverId]);
 
   useEffect(() => {
     if (!jwt) return;

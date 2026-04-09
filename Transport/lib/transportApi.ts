@@ -1,6 +1,9 @@
 /** API base for ConventPulse backend (same as main app). */
 export function getTransportApiBase(): string {
-  const base = import.meta.env.VITE_API_URL || "http://localhost:3000/api";
+  const fromEnv = (import.meta.env.VITE_API_URL as string | undefined) || "";
+  const base =
+    fromEnv.trim() ||
+    (typeof window !== "undefined" && window.location?.origin ? `${window.location.origin}/api` : "http://localhost:3000/api");
   return base.replace(/\/$/, "");
 }
 
@@ -116,6 +119,32 @@ export async function createTransportBus(body: {
   return data.id ?? null;
 }
 
+export async function patchTransportBus(
+  busId: string,
+  body: { name: string; registrationNo?: string | null; capacity?: number | null },
+): Promise<void> {
+  const res = await fetch(`${getTransportApiBase()}/transport/buses/${encodeURIComponent(busId)}`, {
+    method: "PATCH",
+    headers: getTransportAdminHeaders(),
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data as { error?: string }).error || res.statusText);
+  }
+}
+
+export async function deleteTransportBus(busId: string): Promise<void> {
+  const res = await fetch(`${getTransportApiBase()}/transport/buses/${encodeURIComponent(busId)}`, {
+    method: "DELETE",
+    headers: getTransportAdminHeaders(),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data as { error?: string }).error || res.statusText);
+  }
+}
+
 export async function createTransportRoute(body: {
   name: string;
   stops: { name: string; lat: number; lng: number }[];
@@ -143,6 +172,18 @@ export async function fetchTransportDrivers(): Promise<TransportDriverDto[]> {
   }
   const data = (await res.json()) as { drivers: TransportDriverDto[] };
   return data.drivers || [];
+}
+
+export async function adminResetDriverPassword(driverId: string, newPassword: string): Promise<void> {
+  const res = await fetch(`${getTransportApiBase()}/transport/drivers/${encodeURIComponent(driverId)}/password`, {
+    method: "PATCH",
+    headers: getTransportAdminHeaders(),
+    body: JSON.stringify({ newPassword }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data as { error?: string }).error || res.statusText);
+  }
 }
 
 export async function createTransportDriver(body: {
@@ -286,6 +327,17 @@ export async function patchTransportRoute(
   }
 }
 
+export async function deleteTransportRoute(routeId: string): Promise<void> {
+  const res = await fetch(`${getTransportApiBase()}/transport/routes/${encodeURIComponent(routeId)}`, {
+    method: "DELETE",
+    headers: getTransportAdminHeaders(),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data as { error?: string }).error || res.statusText);
+  }
+}
+
 export type DriverProfileDto = TransportDriverDto & {
   morningStops: RouteStopDto[];
   eveningStops: RouteStopDto[];
@@ -321,6 +373,18 @@ export async function fetchDriverProfile(jwt: string): Promise<DriverProfileDto>
     throw new Error((data as { error?: string }).error || "Failed to load profile");
   }
   return (data as { driver: DriverProfileDto }).driver;
+}
+
+export async function driverChangePassword(jwt: string, body: { currentPassword: string; newPassword: string }): Promise<void> {
+  const res = await fetch(`${getTransportApiBase()}/transport/driver/password`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${jwt}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data as { error?: string }).error || res.statusText);
+  }
 }
 
 export type TrackerPositionDto = {
@@ -419,6 +483,55 @@ export async function driverEndTrip(jwt: string, tripType: "morning" | "evening"
   }
 }
 
+export type DriverTodayTripsDto = {
+  tripDate: string;
+  busId: string;
+  trips: Array<{
+    tripType: "morning" | "evening";
+    status: "idle" | "active" | "ended";
+    startedAt: string | null;
+    endedAt: string | null;
+    updatedAt: string | null;
+  }>;
+};
+
+export async function fetchDriverTodayTrips(jwt: string): Promise<DriverTodayTripsDto> {
+  const res = await fetch(`${getTransportApiBase()}/transport/driver/trips/today`, {
+    headers: { Authorization: `Bearer ${jwt}` },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data as { error?: string }).error || res.statusText);
+  }
+  return data as DriverTodayTripsDto;
+}
+
+export type DriverAssignedChildDto = {
+  id: string;
+  childName: string;
+  parentEmail: string;
+  gender: string | null;
+  address: string | null;
+  onboarded: boolean;
+  lastScannedAt: string | null;
+};
+
+export async function fetchDriverAssignedChildren(
+  jwt: string,
+  tripType: "morning" | "evening" = "morning",
+): Promise<{ busId: string; tripType: "morning" | "evening"; tripDate: string; children: DriverAssignedChildDto[] }> {
+  const qs = new URLSearchParams();
+  qs.set("tripType", tripType);
+  const res = await fetch(`${getTransportApiBase()}/transport/driver/assigned-children?${qs.toString()}`, {
+    headers: { Authorization: `Bearer ${jwt}` },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data as { error?: string }).error || res.statusText);
+  }
+  return data as { busId: string; tripType: "morning" | "evening"; tripDate: string; children: DriverAssignedChildDto[] };
+}
+
 export type BusAttendanceDto = {
   busId: string;
   tripType: "morning" | "evening";
@@ -442,6 +555,7 @@ export async function fetchBusAttendance(busId: string, tripType: "morning" | "e
 export type RfidTagDto = {
   id: string;
   tagUid: string;
+  tagName?: string | null;
   assignedStudentId: string | null;
   createdAt?: string;
 };
@@ -458,11 +572,162 @@ export async function fetchRfidTags(schoolId?: string): Promise<RfidTagDto[]> {
   return (data as { tags: RfidTagDto[] }).tags || [];
 }
 
-export async function createRfidTag(body: { schoolId?: string; tagUid: string }): Promise<void> {
+export async function createRfidTag(body: { schoolId?: string; tagUid: string; tagName?: string | null }): Promise<void> {
   const res = await fetch(`${getTransportApiBase()}/transport/rfid-tags`, {
     method: "POST",
     headers: getTransportAdminHeaders(),
     body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data as { error?: string }).error || res.statusText);
+  }
+}
+
+export async function assignRfidTag(tagId: string, studentId: string): Promise<void> {
+  const res = await fetch(`${getTransportApiBase()}/transport/rfid-tags/${encodeURIComponent(tagId)}/assign`, {
+    method: "PATCH",
+    headers: getTransportAdminHeaders(),
+    body: JSON.stringify({ studentId }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data as { error?: string }).error || res.statusText);
+  }
+}
+
+export async function unassignRfidTag(tagId: string): Promise<void> {
+  const res = await fetch(`${getTransportApiBase()}/transport/rfid-tags/${encodeURIComponent(tagId)}/unassign`, {
+    method: "PATCH",
+    headers: getTransportAdminHeaders(),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data as { error?: string }).error || res.statusText);
+  }
+}
+
+export type TransportChildDto = {
+  id: string;
+  schoolId: string;
+  childName: string;
+  gender: string | null;
+  parentEmail: string;
+  address?: string | null;
+  busId?: string | null;
+  pickupPointId?: string | null;
+  pickupPointName?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export async function fetchTransportChildren(schoolId: string): Promise<TransportChildDto[]> {
+  const qs = `?schoolId=${encodeURIComponent(schoolId)}`;
+  const res = await fetch(`${getTransportApiBase()}/transport/children${qs}`, {
+    headers: getTransportAdminHeaders(),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data as { error?: string }).error || res.statusText);
+  }
+  return (data as { children: TransportChildDto[] }).children || [];
+}
+
+export async function createTransportChild(body: {
+  schoolId: string;
+  childName: string;
+  gender?: string | null;
+  parentEmail: string;
+  address: string;
+}): Promise<string | null> {
+  const res = await fetch(`${getTransportApiBase()}/transport/children`, {
+    method: "POST",
+    headers: getTransportAdminHeaders(),
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data as { error?: string }).error || res.statusText);
+  }
+  return (data as { id?: string }).id ?? null;
+}
+
+export async function patchChildAssignment(childId: string, body: { busId?: string | null; pickupPointId?: string | null }): Promise<void> {
+  const res = await fetch(`${getTransportApiBase()}/transport/children/${encodeURIComponent(childId)}/assignment`, {
+    method: "PATCH",
+    headers: getTransportAdminHeaders(),
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data as { error?: string }).error || res.statusText);
+  }
+}
+
+export type TransportPickupPointDto = {
+  id: string;
+  schoolId: string;
+  name: string;
+  lat: number;
+  lng: number;
+  createdAt?: string;
+};
+
+export async function fetchPickupPoints(schoolId: string): Promise<TransportPickupPointDto[]> {
+  const qs = `?schoolId=${encodeURIComponent(schoolId)}`;
+  const res = await fetch(`${getTransportApiBase()}/transport/pickup-points${qs}`, {
+    headers: getTransportAdminHeaders(),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data as { error?: string }).error || res.statusText);
+  }
+  return (data as { pickupPoints: TransportPickupPointDto[] }).pickupPoints || [];
+}
+
+export async function fetchNearestPickupPoints(schoolId: string, q: string): Promise<Array<{ id: string; name: string; lat: number; lng: number }>> {
+  const qs = new URLSearchParams();
+  qs.set("schoolId", schoolId);
+  qs.set("q", q);
+  const res = await fetch(`${getTransportApiBase()}/transport/pickup-points/nearest?${qs.toString()}`, {
+    headers: getTransportAdminHeaders(),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data as { error?: string }).error || res.statusText);
+  }
+  return (data as { pickupPoints: Array<{ id: string; name: string; lat: number; lng: number }> }).pickupPoints || [];
+}
+
+export async function fetchBusPickupPoints(busId: string, schoolId: string, tripType: "morning" | "evening" = "morning"): Promise<Array<{ id: string; name: string; lat: number; lng: number; routeStopId: string }>> {
+  const qs = new URLSearchParams();
+  qs.set("schoolId", schoolId);
+  qs.set("tripType", tripType);
+  const res = await fetch(`${getTransportApiBase()}/transport/buses/${encodeURIComponent(busId)}/pickup-points?${qs.toString()}`, {
+    headers: getTransportAdminHeaders(),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data as { error?: string }).error || res.statusText);
+  }
+  return (data as { pickupPoints: Array<{ id: string; name: string; lat: number; lng: number; routeStopId: string }> }).pickupPoints || [];
+}
+
+export async function unassignChildrenFromBus(busId: string): Promise<void> {
+  const res = await fetch(`${getTransportApiBase()}/transport/buses/${encodeURIComponent(busId)}/unassign-children`, {
+    method: "PATCH",
+    headers: getTransportAdminHeaders(),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data as { error?: string }).error || res.statusText);
+  }
+}
+
+export async function unassignDriverFromBus(busId: string): Promise<void> {
+  const res = await fetch(`${getTransportApiBase()}/transport/buses/${encodeURIComponent(busId)}/unassign-driver`, {
+    method: "PATCH",
+    headers: getTransportAdminHeaders(),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {

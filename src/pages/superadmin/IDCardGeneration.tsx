@@ -376,7 +376,7 @@ export default function IDCardGeneration() {
       // CORS or network error – try backend proxy
     }
     try {
-      const apiBase = import.meta.env.VITE_API_URL || "http://localhost:3000/api";
+      const apiBase = import.meta.env.VITE_API_URL || "/api";
       const token = getToken();
       const res = await fetch(
         `${apiBase}/id-cards/proxy-image?url=${encodeURIComponent(url)}`,

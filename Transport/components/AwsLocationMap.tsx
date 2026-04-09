@@ -58,6 +58,10 @@ export type AwsLocationMapProps = {
   routeLineString?: [number, number][];
   /** If provided, shows a "live" marker (e.g., bus GPS). Coordinates: [lng, lat]. */
   livePosition?: { lng: number; lat: number; label?: string } | null;
+  /** Optional: render multiple route polylines at once (ALL view). */
+  multiRoutes?: Array<{ id: string; lineString: [number, number][]; color?: string; label?: string }>;
+  /** Optional: render multiple live markers at once (ALL view). */
+  multiLivePositions?: Array<{ id: string; lng: number; lat: number; label?: string }>;
   className?: string;
   minHeight?: number;
 };
@@ -69,6 +73,8 @@ export function AwsLocationMap({
   currentStopIndex = 0,
   routeLineString,
   livePosition = null,
+  multiRoutes,
+  multiLivePositions,
   className,
   minHeight = 280,
 }: AwsLocationMapProps) {
@@ -111,6 +117,18 @@ export function AwsLocationMap({
     } as const;
   }, [stops, routeLineString]);
 
+  const multiRoutesGeoJson = useMemo(() => {
+    const items = (multiRoutes || []).filter((r) => Array.isArray(r.lineString) && r.lineString.length >= 2);
+    return {
+      type: "FeatureCollection",
+      features: items.map((r) => ({
+        type: "Feature",
+        properties: { id: r.id, color: r.color || "#1d4ed8" },
+        geometry: { type: "LineString", coordinates: r.lineString },
+      })),
+    } as const;
+  }, [multiRoutes]);
+
   const coveredRouteGeoJson = useMemo(() => {
     const end = Math.min(stops.length, Math.max(0, currentStopIndex) + 1);
     const coords = stops.slice(0, end).map((s) => [s.lng, s.lat] as [number, number]);
@@ -135,8 +153,18 @@ export function AwsLocationMap({
       if (stops.length) {
         stops.forEach((s) => bounds.extend([s.lng, s.lat]));
       }
+      if (multiRoutes && multiRoutes.length) {
+        multiRoutes.forEach((r) => {
+          (r.lineString || []).forEach((pt) => bounds.extend(pt));
+        });
+      }
       if (livePosition && !Number.isNaN(livePosition.lng) && !Number.isNaN(livePosition.lat)) {
         bounds.extend([livePosition.lng, livePosition.lat]);
+      }
+      if (multiLivePositions && multiLivePositions.length) {
+        multiLivePositions.forEach((p) => {
+          if (!Number.isNaN(p.lng) && !Number.isNaN(p.lat)) bounds.extend([p.lng, p.lat]);
+        });
       }
       try {
         if (!bounds.isEmpty()) {
@@ -185,15 +213,61 @@ export function AwsLocationMap({
           .addTo(map);
         markersRef.current.push(marker);
       }
+
+      if (multiLivePositions && multiLivePositions.length) {
+        multiLivePositions.forEach((p) => {
+          if (Number.isNaN(p.lng) || Number.isNaN(p.lat)) return;
+          const el = document.createElement("div");
+          el.style.width = "30px";
+          el.style.height = "30px";
+          el.style.borderRadius = "9999px";
+          el.style.background = "rgba(255,255,255,0.95)";
+          el.style.boxShadow = "0 10px 24px rgba(0,0,0,0.22)";
+          el.style.border = "2px solid rgba(16,185,129,0.9)";
+          el.style.display = "grid";
+          el.style.placeItems = "center";
+          el.innerHTML = `
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <path d="M7 4h10a3 3 0 0 1 3 3v10a2 2 0 0 1-2 2h-1v1a1 1 0 1 1-2 0v-1H9v1a1 1 0 1 1-2 0v-1H6a2 2 0 0 1-2-2V7a3 3 0 0 1 3-3Z" stroke="#059669" stroke-width="1.6"/>
+              <path d="M7 8h10" stroke="#059669" stroke-width="1.6" stroke-linecap="round"/>
+              <circle cx="8.2" cy="17.4" r="1.2" fill="#059669"/>
+              <circle cx="15.8" cy="17.4" r="1.2" fill="#059669"/>
+            </svg>
+          `;
+          const marker = new maplibregl.Marker({ element: el, anchor: "center" })
+            .setLngLat([p.lng, p.lat])
+            .setPopup(new maplibregl.Popup({ offset: 18 }).setText(p.label || "Bus"))
+            .addTo(map);
+          markersRef.current.push(marker);
+        });
+      }
     },
-    [stops, currentStopIndex, livePosition],
+    [stops, currentStopIndex, livePosition, multiRoutes, multiLivePositions],
   );
 
   const syncRouteLine = useCallback(
     (map: maplibregl.Map) => {
+      const hasMulti = Boolean(multiRoutes && multiRoutes.length);
       const hasLine = (routeLineString && routeLineString.length >= 2) || stops.length >= 2;
 
       if (!routeLayersAddedRef.current) {
+        if (!map.getSource("cp_routes_multi")) {
+          map.addSource("cp_routes_multi", { type: "geojson", data: multiRoutesGeoJson });
+        }
+        if (!map.getLayer("cp_routes_multi_line")) {
+          map.addLayer({
+            id: "cp_routes_multi_line",
+            type: "line",
+            source: "cp_routes_multi",
+            paint: {
+              "line-color": ["get", "color"],
+              "line-width": 6,
+              "line-opacity": 0.7,
+            },
+            layout: { "line-join": "round", "line-cap": "round" },
+          });
+        }
+
         if (!map.getSource("cp_route_all")) {
           map.addSource("cp_route_all", { type: "geojson", data: routeGeoJson });
         }
@@ -233,12 +307,15 @@ export function AwsLocationMap({
         routeLayersAddedRef.current = true;
       }
 
+      const srcMulti = map.getSource("cp_routes_multi") as maplibregl.GeoJSONSource | undefined;
+      srcMulti?.setData(hasMulti ? multiRoutesGeoJson : { type: "FeatureCollection", features: [] });
+
       const srcAll = map.getSource("cp_route_all") as maplibregl.GeoJSONSource | undefined;
       srcAll?.setData(hasLine ? routeGeoJson : { type: "FeatureCollection", features: [] });
       const srcCovered = map.getSource("cp_route_covered") as maplibregl.GeoJSONSource | undefined;
       srcCovered?.setData(hasLine ? coveredRouteGeoJson : { type: "FeatureCollection", features: [] });
     },
-    [stops.length, routeGeoJson, coveredRouteGeoJson, routeLineString],
+    [stops.length, routeGeoJson, coveredRouteGeoJson, routeLineString, multiRoutes, multiRoutesGeoJson],
   );
 
   useEffect(() => {
@@ -346,8 +423,10 @@ export function AwsLocationMap({
         try {
           if (map.getLayer("cp_route_covered_line")) map.removeLayer("cp_route_covered_line");
           if (map.getLayer("cp_route_all_line")) map.removeLayer("cp_route_all_line");
+          if (map.getLayer("cp_routes_multi_line")) map.removeLayer("cp_routes_multi_line");
           if (map.getSource("cp_route_covered")) map.removeSource("cp_route_covered");
           if (map.getSource("cp_route_all")) map.removeSource("cp_route_all");
+          if (map.getSource("cp_routes_multi")) map.removeSource("cp_routes_multi");
         } catch {
           /* ignore */
         }

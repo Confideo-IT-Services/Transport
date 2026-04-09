@@ -20,6 +20,7 @@ import { RouteCheckpointTimeline } from "@transport/components/RouteCheckpointTi
 import { RouteStopsBuilder, type RouteStopInput } from "@transport/components/RouteStopsBuilder";
 import {
   calculateTransportRouteLine,
+  deleteTransportRoute,
   fetchTransportRoutesWithStops,
   patchTransportRoute,
   type TransportRouteWithStopsDto,
@@ -119,6 +120,18 @@ export default function TransportRouteDetailPage() {
     }
   };
 
+  const onDelete = async () => {
+    if (!route) return;
+    if (!confirm(`Delete route "${route.name}"?\n\nThis is allowed only if the route is unassigned.`)) return;
+    try {
+      await deleteTransportRoute(route.id);
+      toast.success("Route deleted");
+      window.location.href = "/transport/routes";
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to delete route");
+    }
+  };
+
   if (loading) return <p className="text-muted-foreground">Loading…</p>;
   if (loadError) return <p className="text-destructive text-sm">{loadError}</p>;
   if (!route) {
@@ -142,36 +155,41 @@ export default function TransportRouteDetailPage() {
           </Link>
         </Button>
 
-        <Dialog open={editOpen} onOpenChange={setEditOpen}>
-          <DialogTrigger asChild>
-            <Button variant="outline" onClick={openEdit}>
-              <Pencil className="h-4 w-4 mr-2" />
-              Modify route
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
-            <form onSubmit={submitEdit}>
-              <DialogHeader>
-                <DialogTitle>Edit route</DialogTitle>
-                <DialogDescription>
-                  Changing stops updates the DB and will reflect for any driver assigned to this route.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="grid gap-3 py-4">
-                <div className="grid gap-2">
-                  <Label>Route name</Label>
-                  <Input value={editName} onChange={(e) => setEditName(e.target.value)} required />
+        <div className="flex gap-2">
+          <Button type="button" variant="outline" onClick={onDelete}>
+            Delete
+          </Button>
+          <Dialog open={editOpen} onOpenChange={setEditOpen}>
+            <DialogTrigger asChild>
+              <Button variant="outline" onClick={openEdit}>
+                <Pencil className="h-4 w-4 mr-2" />
+                Modify route
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
+              <form onSubmit={submitEdit}>
+                <DialogHeader>
+                  <DialogTitle>Edit route</DialogTitle>
+                  <DialogDescription>
+                    Changing stops updates the DB and will reflect for any driver assigned to this route.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="grid gap-3 py-4">
+                  <div className="grid gap-2">
+                    <Label>Route name</Label>
+                    <Input value={editName} onChange={(e) => setEditName(e.target.value)} required />
+                  </div>
+                  <RouteStopsBuilder stops={editStops} onChange={setEditStops} disabled={saving} />
                 </div>
-                <RouteStopsBuilder stops={editStops} onChange={setEditStops} disabled={saving} />
-              </div>
-              <DialogFooter>
-                <Button type="submit" disabled={saving}>
-                  {saving ? "Saving…" : "Save changes"}
-                </Button>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog>
+                <DialogFooter>
+                  <Button type="submit" disabled={saving}>
+                    {saving ? "Saving…" : "Save changes"}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+        </div>
       </div>
 
       <div>

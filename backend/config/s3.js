@@ -4,7 +4,8 @@ let s3Client = null;
 let lastConfigCheck = null;
 const CONFIG_CHECK_INTERVAL = 60000; // Check every 60 seconds
 
-// Runtime function to check if credentials are valid
+// Runtime function to check if explicit credentials are present.
+// In production on AWS (EC2/ECS/Lambda), prefer IAM role credentials (no env keys).
 function hasValidCredentials() {
   return !!(
     process.env.AWS_ACCESS_KEY_ID &&
@@ -22,18 +23,29 @@ function getBucketName() {
 // Get or create S3 client (lazy initialization)
 function getS3Client() {
   const now = Date.now();
+  const bucketName = getBucketName();
   
   // Re-check configuration periodically or if client doesn't exist
   if (!s3Client || !lastConfigCheck || (now - lastConfigCheck) > CONFIG_CHECK_INTERVAL) {
-    if (hasValidCredentials()) {
+    // Only create a client if a bucket is configured. Credentials may come from:
+    // - explicit env vars (local/dev)
+    // - instance/task IAM role (production)
+    if (bucketName) {
       try {
-        s3Client = new S3Client({
-          region: process.env.AWS_REGION || 'ap-south-1',
-          credentials: {
-            accessKeyId: process.env.AWS_ACCESS_KEY_ID.trim(),
-            secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY.trim(),
-          },
-        });
+        const hasExplicit = hasValidCredentials();
+        s3Client = new S3Client(
+          hasExplicit
+            ? {
+                region: process.env.AWS_REGION || 'ap-south-1',
+                credentials: {
+                  accessKeyId: process.env.AWS_ACCESS_KEY_ID.trim(),
+                  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY.trim(),
+                },
+              }
+            : {
+                region: process.env.AWS_REGION || 'ap-south-1',
+              },
+        );
         lastConfigCheck = now;
         console.log('✅ S3 Client initialized/reinitialized');
       } catch (error) {
@@ -53,7 +65,7 @@ function getS3Client() {
 function isS3Configured() {
   const bucketName = getBucketName();
   const client = getS3Client();
-  return !!(bucketName && hasValidCredentials() && client);
+  return !!(bucketName && client);
 }
 
 // Export functions and getters for backward compatibility

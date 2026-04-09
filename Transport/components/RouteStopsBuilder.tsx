@@ -183,7 +183,7 @@ export function RouteStopsBuilder({ stops, onChange, disabled }: Props) {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1 font-medium">
                     <MapPin className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                    <span className="truncate">{s.name}</span>
+                    <span className="break-words whitespace-normal">{s.name}</span>
                   </div>
                   <div className="font-mono text-xs text-muted-foreground">
                     {s.lat.toFixed(5)}, {s.lng.toFixed(5)}

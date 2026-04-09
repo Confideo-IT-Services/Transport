@@ -69,7 +69,7 @@ router.post('/photo', uploadImages.single('photo'), async (req, res) => {
     if (!isS3Configured() || !s3Client) {
       console.error('❌ S3 not configured:', {
         hasBucket: !!BUCKET_NAME,
-        hasCredentials: !!(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY),
+        hasExplicitCredentials: !!(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY),
         hasClient: !!s3Client,
         envVars: {
           AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID ? '***SET***' : 'NOT SET',
@@ -80,7 +80,8 @@ router.post('/photo', uploadImages.single('photo'), async (req, res) => {
       });
       return res.status(503).json({
         error: 'Failed to upload photo',
-        details: 'S3 storage is not configured. Set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and AWS_S3_BUCKET_NAME in the server .env file.',
+        details:
+          'S3 storage is not configured. Set AWS_S3_BUCKET_NAME (and AWS_REGION if needed). For localhost you can use AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY; in production prefer EC2 IAM role.',
       });
     }
 
@@ -198,7 +199,8 @@ router.post('/id-template', uploadImages.single('template'), async (req, res) =>
       console.error('❌ S3 not configured for ID template upload');
       return res.status(503).json({
         error: 'Failed to upload ID template',
-        details: 'S3 storage is not configured. Set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and AWS_S3_BUCKET_NAME in the server .env file.',
+        details:
+          'S3 storage is not configured. Set AWS_S3_BUCKET_NAME (and AWS_REGION if needed). For localhost you can use AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY; in production prefer EC2 IAM role.',
       });
     }
 
@@ -302,7 +304,8 @@ router.post('/id-layout', uploadJson.single('layout'), async (req, res) => {
       console.error('❌ S3 not configured for layout upload');
       return res.status(503).json({
         error: 'Failed to upload layout',
-        details: 'S3 storage is not configured. Set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and AWS_S3_BUCKET_NAME in the server .env file.',
+        details:
+          'S3 storage is not configured. Set AWS_S3_BUCKET_NAME (and AWS_REGION if needed). For localhost you can use AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY; in production prefer EC2 IAM role.',
       });
     }
 
@@ -380,7 +383,8 @@ router.post('/notification-attachment', uploadNotificationFile.single('attachmen
       console.error('❌ S3 not configured for notification attachment upload');
       return res.status(503).json({ 
         error: 'S3 bucket not configured',
-        details: 'S3 storage is not configured. Set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and AWS_S3_BUCKET_NAME in the server .env file.'
+        details:
+          'S3 storage is not configured. Set AWS_S3_BUCKET_NAME (and AWS_REGION if needed). For localhost you can use AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY; in production prefer EC2 IAM role.',
       });
     }
 
