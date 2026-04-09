@@ -1668,7 +1668,44 @@ router.post('/attendance/scan', requireTransportScanner, async (req, res) => {
     const scannedAt = req.body?.scannedAt ? new Date(String(req.body.scannedAt)) : new Date();
 
     if (!tagUid) return res.status(400).json({ error: 'tagUid is required' });
-    // If busId/tripType are not provided by the scanner, infer them from today's active trip.
+
+    // Resolve RFID first so unknown/unassigned tags get clear errors before trip inference
+    // (avoids "Multiple active trips" when the real problem is an unregistered card).
+    let studentId;
+    try {
+      const [tagRows] = await db.query(
+        `SELECT assigned_student_id FROM transport_rfid_tags WHERE LOWER(tag_uid) = LOWER(?) LIMIT 2`,
+        [tagUid],
+      );
+      if (!tagRows || tagRows.length === 0) {
+        return res.status(404).json({ error: 'Unknown RFID', details: 'Tag not found in transport_rfid_tags' });
+      }
+      if (tagRows.length > 1) {
+        return res.status(409).json({
+          error: 'Ambiguous RFID',
+          details: 'Multiple tags matched; ensure tag_uid is unique',
+        });
+      }
+      studentId =
+        tagRows[0].assigned_student_id != null ? String(tagRows[0].assigned_student_id) : null;
+      if (!studentId) {
+        return res.status(409).json({
+          error: 'RFID not assigned',
+          details: 'This tag has no assigned_student_id',
+        });
+      }
+    } catch (e) {
+      if (e && e.code === '42P01') {
+        return res.status(503).json({
+          error: 'Database not ready',
+          details: 'Run backend/sql/2026-04-07-transport_rfid_pickup_points.sql',
+        });
+      }
+      console.error('transport attendance scan tag lookup failed:', e);
+      return res.status(500).json({ error: 'Failed to validate RFID tag' });
+    }
+
+    // If busId/tripType are not provided by the scanner, infer them from today's active trip(s).
     // This avoids hardcoding BUS_ID/TRIP_TYPE into ESP32 code.
     if (!busId || !tripType) {
       try {
@@ -1689,14 +1726,42 @@ router.post('/attendance/scan', requireTransportScanner, async (req, res) => {
           });
         }
         if (activeTrips.length > 1) {
-          return res.status(409).json({
-            error: 'Multiple active trips',
-            details: 'Provide busId and tripType to disambiguate',
-            trips: activeTrips.map((t) => ({ busId: String(t.bus_id), tripType: String(t.trip_type) })),
-          });
+          // Prefer the bus this child is assigned to (fleet: multiple buses may be "active").
+          let chosen = null;
+          try {
+            const [assignRows] = await db.query(
+              `SELECT bus_id FROM transport_student_assignments WHERE student_id = ? LIMIT 1`,
+              [studentId],
+            );
+            const assignedBus =
+              assignRows && assignRows.length && assignRows[0].bus_id != null
+                ? String(assignRows[0].bus_id)
+                : '';
+            if (assignedBus) {
+              const matches = activeTrips.filter((t) => String(t.bus_id) === assignedBus);
+              if (matches.length === 1) {
+                chosen = matches[0];
+              }
+            }
+          } catch (assignErr) {
+            console.error('transport attendance scan assignment lookup failed:', assignErr);
+          }
+          if (!chosen) {
+            return res.status(409).json({
+              error: 'Multiple active trips',
+              details: 'Provide busId and tripType to disambiguate',
+              trips: activeTrips.map((t) => ({
+                busId: String(t.bus_id),
+                tripType: String(t.trip_type),
+              })),
+            });
+          }
+          busId = String(chosen.bus_id);
+          tripType = String(chosen.trip_type).toLowerCase();
+        } else {
+          busId = String(activeTrips[0].bus_id);
+          tripType = String(activeTrips[0].trip_type).toLowerCase();
         }
-        busId = String(activeTrips[0].bus_id);
-        tripType = String(activeTrips[0].trip_type).toLowerCase();
       } catch (e) {
         if (e && e.code === '42P01') {
           return res.status(503).json({
@@ -1752,23 +1817,6 @@ router.post('/attendance/scan', requireTransportScanner, async (req, res) => {
         error: 'Trip status unavailable',
         details: 'Unable to verify trip status; please try again',
       });
-    }
-
-    // Find student mapped to this RFID (must be assigned)
-    const [tagRows] = await db.query(
-      `SELECT assigned_student_id FROM transport_rfid_tags WHERE LOWER(tag_uid) = LOWER(?) LIMIT 2`,
-      [tagUid],
-    );
-    if (!tagRows || tagRows.length === 0) {
-      return res.status(404).json({ error: 'Unknown RFID', details: 'Tag not found in transport_rfid_tags' });
-    }
-    if (tagRows.length > 1) {
-      // tag_uid is unique per school_id, but if school_id is not used consistently, avoid ambiguity.
-      return res.status(409).json({ error: 'Ambiguous RFID', details: 'Multiple tags matched; ensure tag_uid is unique' });
-    }
-    const studentId = tagRows[0].assigned_student_id != null ? String(tagRows[0].assigned_student_id) : null;
-    if (!studentId) {
-      return res.status(409).json({ error: 'RFID not assigned', details: 'This tag has no assigned_student_id' });
     }
 
     // Load previous boarding state to avoid duplicate emails on repeated scans.
