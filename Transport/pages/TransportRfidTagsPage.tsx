@@ -14,12 +14,14 @@ import { toast } from "sonner";
 import {
   assignRfidTag,
   createRfidTag,
+  deleteRfidTag,
   fetchRfidTags,
   fetchTransportChildren,
   unassignRfidTag,
   type RfidTagDto,
   type TransportChildDto,
 } from "@transport/lib/transportApi";
+import { isWebNfcSupported, scanOneNfcTagSerialNumber } from "@transport/lib/nfc";
 
 export default function TransportRfidTagsPage() {
   const SCHOOL_ID_KEY = "cp_transport_school_id";
@@ -28,6 +30,7 @@ export default function TransportRfidTagsPage() {
   const [tagName, setTagName] = useState("");
   const [children, setChildren] = useState<TransportChildDto[]>([]);
   const [loading, setLoading] = useState(false);
+  const [nfcBusy, setNfcBusy] = useState(false);
 
   const schoolId = (typeof window !== "undefined" ? localStorage.getItem(SCHOOL_ID_KEY) : "") || "";
 
@@ -83,6 +86,32 @@ export default function TransportRfidTagsPage() {
     }
   };
 
+  const onAddViaNfc = async () => {
+    if (!schoolId.trim()) {
+      toast.error("School ID not set. Register a child first to set School ID.");
+      return;
+    }
+    if (!isWebNfcSupported()) {
+      toast.error("NFC not supported on this device/browser. Use Android Chrome (HTTPS) or enter UID manually.");
+      return;
+    }
+    setNfcBusy(true);
+    try {
+      toast.message("Ready to scan. Tap the RFID/NFC card on the phone.");
+      const { serialNumber } = await scanOneNfcTagSerialNumber({ timeoutMs: 20000 });
+      const uid = serialNumber.trim();
+      setTagUid(uid);
+      await createRfidTag({ schoolId, tagUid: uid, tagName: tagName.trim() || null });
+      setTagName("");
+      toast.success("RFID added from NFC tap");
+      await refresh();
+    } catch (e: any) {
+      toast.error(e?.message || "NFC scan failed");
+    } finally {
+      setNfcBusy(false);
+    }
+  };
+
   const childById = useMemo(() => {
     const m = new Map<string, TransportChildDto>();
     for (const c of children) m.set(c.id, c);
@@ -116,6 +145,20 @@ export default function TransportRfidTagsPage() {
     }
   };
 
+  const onDelete = async (tagId: string) => {
+    if (!confirm("Delete this RFID tag permanently?")) return;
+    setLoading(true);
+    try {
+      await deleteRfidTag(tagId);
+      toast.success("RFID deleted");
+      await refresh();
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to delete RFID");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -142,10 +185,16 @@ export default function TransportRfidTagsPage() {
               <Button onClick={onAdd} disabled={loading}>
                 Add
               </Button>
+              <Button variant="secondary" onClick={onAddViaNfc} disabled={loading || nfcBusy}>
+                {nfcBusy ? "Tap card…" : "Add via NFC"}
+              </Button>
               <Button variant="outline" onClick={refresh} disabled={loading}>
                 Refresh
               </Button>
             </div>
+            <p className="text-xs text-muted-foreground">
+              NFC works on Android Chrome (HTTPS; localhost is OK). iPhone Safari doesn’t support Web NFC yet.
+            </p>
           </div>
         </CardContent>
       </Card>
@@ -162,17 +211,18 @@ export default function TransportRfidTagsPage() {
         </CardHeader>
         <CardContent>
           <div className="border rounded-md overflow-hidden">
-            <div className="grid grid-cols-4 bg-muted/40 text-xs font-medium px-3 py-2">
+            <div className="grid grid-cols-5 bg-muted/40 text-xs font-medium px-3 py-2">
               <div>Tag</div>
               <div>Name</div>
               <div>Assigned child</div>
               <div>Assign</div>
+              <div>Delete</div>
             </div>
             {tags.length === 0 ? (
               <div className="px-3 py-8 text-sm text-muted-foreground">No RFID tags yet.</div>
             ) : (
               tags.map((t) => (
-                <div key={t.id} className="grid grid-cols-4 px-3 py-2 text-sm border-t items-center gap-2">
+                <div key={t.id} className="grid grid-cols-5 px-3 py-2 text-sm border-t items-center gap-2">
                   <div className="font-mono">{t.tagUid}</div>
                   <div className="text-xs">{t.tagName || "-"}</div>
                   <div className="text-xs">
@@ -204,6 +254,17 @@ export default function TransportRfidTagsPage() {
                         </SelectContent>
                       </Select>
                     )}
+                  </div>
+                  <div>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      className="h-8"
+                      onClick={() => onDelete(t.id)}
+                      disabled={loading}
+                    >
+                      Delete
+                    </Button>
                   </div>
                 </div>
               ))

@@ -61,6 +61,7 @@ import TransportBusDetailPage from "@transport/pages/TransportBusDetailPage";
 import TransportAttendancePage from "@transport/pages/TransportAttendancePage";
 import TransportBusAttendancePage from "@transport/pages/TransportBusAttendancePage";
 import TransportRfidTagsPage from "@transport/pages/TransportRfidTagsPage";
+import TransportAnnouncementsPage from "@transport/pages/TransportAnnouncementsPage";
 import DriverLogin from "@transport/driver/DriverLogin";
 import DriverLayout from "@transport/driver/DriverLayout";
 import DriverHomePage from "@transport/driver/DriverHomePage";
@@ -137,6 +138,7 @@ const AppContent = () => {
         <Route path="attendance" element={<TransportAttendancePage />} />
         <Route path="attendance/:busId" element={<TransportBusAttendancePage />} />
         <Route path="rfid" element={<TransportRfidTagsPage />} />
+        <Route path="announcements" element={<TransportAnnouncementsPage />} />
       </Route>
 
       {/* Transport driver (demo session — credentials issued by transport admin later) */}

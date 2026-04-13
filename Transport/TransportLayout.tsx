@@ -6,6 +6,7 @@ import {
   Bus,
   MapPin,
   ScanLine,
+  Bell,
   LogOut,
   ChevronRight,
   Menu,
@@ -23,6 +24,7 @@ const nav = [
   { to: "/transport/routes", label: "Routes", icon: MapPin },
   { to: "/transport/attendance", label: "Attendance (RFID)", icon: ScanLine },
   { to: "/transport/rfid", label: "RFID tags", icon: ScanLine },
+  { to: "/transport/announcements", label: "Announcements", icon: Bell },
 ];
 
 export default function TransportLayout() {

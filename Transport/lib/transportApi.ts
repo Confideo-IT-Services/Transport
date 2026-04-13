@@ -417,6 +417,26 @@ export async function publishTrackerPosition(jwt: string, body: {
   return data as { ok: true; deviceId: string; sampleTime: string };
 }
 
+/** Transport admin: push a position for a device/bus (manual move / testing). */
+export async function publishTrackerPositionAdmin(body: {
+  deviceId: string;
+  lat: number;
+  lng: number;
+  accuracyMeters?: number;
+  sampleTime?: string;
+}): Promise<{ ok: true; deviceId: string; sampleTime: string }> {
+  const res = await fetch(`${getTransportApiBase()}/transport/tracker/position`, {
+    method: "POST",
+    headers: getTransportAdminHeaders(),
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data as { error?: string }).error || res.statusText);
+  }
+  return data as { ok: true; deviceId: string; sampleTime: string };
+}
+
 export async function fetchTrackerPosition(deviceId: string): Promise<TrackerPositionDto> {
   const res = await fetch(`${getTransportApiBase()}/transport/tracker/position/${encodeURIComponent(deviceId)}`, {
     headers: getTransportAdminHeaders(),
@@ -457,6 +477,25 @@ export async function fetchTodayTripStatuses(): Promise<{ tripDate: string; trip
     throw new Error((data as { error?: string }).error || res.statusText);
   }
   return data as { tripDate: string; trips: TodayTripStatusDto[] };
+}
+
+export async function adminPatchTrip(
+  busId: string,
+  tripType: "morning" | "evening",
+  body: { status?: "idle" | "active" | "ended"; startedAt?: string | null; endedAt?: string | null },
+): Promise<void> {
+  const res = await fetch(
+    `${getTransportApiBase()}/transport/trips/${encodeURIComponent(busId)}/${encodeURIComponent(tripType)}`,
+    {
+      method: "PATCH",
+      headers: getTransportAdminHeaders(),
+      body: JSON.stringify(body),
+    },
+  );
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data as { error?: string }).error || res.statusText);
+  }
 }
 
 export async function driverStartTrip(jwt: string, tripType: "morning" | "evening"): Promise<void> {
@@ -552,11 +591,53 @@ export async function fetchBusAttendance(busId: string, tripType: "morning" | "e
   return data as BusAttendanceDto;
 }
 
+export async function driverAttendanceScan(
+  jwt: string,
+  body: { tagUid: string; tripType?: "morning" | "evening"; direction?: "on" | "off"; scannedAt?: string },
+): Promise<{
+  ok: true;
+  busId: string;
+  tripType: string;
+  direction: string;
+  tagUid: string;
+  studentId: string;
+  studentName?: string | null;
+  parentEmail?: string | null;
+  emailSent?: boolean;
+  emailError?: string | null;
+}> {
+  const res = await fetch(`${getTransportApiBase()}/transport/attendance/scan`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${jwt}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      tagUid: body.tagUid,
+      tripType: body.tripType,
+      direction: body.direction,
+      scannedAt: body.scannedAt,
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = (data as any)?.details ? `${(data as any).error}: ${(data as any).details}` : (data as any)?.error || res.statusText;
+    throw new Error(msg);
+  }
+  return data as any;
+}
+
 export type RfidTagDto = {
   id: string;
   tagUid: string;
   tagName?: string | null;
   assignedStudentId: string | null;
+  createdAt?: string;
+};
+
+export type TransportAnnouncementDto = {
+  id: string;
+  schoolId: string;
+  busId: string | null;
+  title: string;
+  message: string;
   createdAt?: string;
 };
 
@@ -605,6 +686,49 @@ export async function unassignRfidTag(tagId: string): Promise<void> {
   if (!res.ok) {
     throw new Error((data as { error?: string }).error || res.statusText);
   }
+}
+
+export async function deleteRfidTag(tagId: string): Promise<void> {
+  const res = await fetch(`${getTransportApiBase()}/transport/rfid-tags/${encodeURIComponent(tagId)}`, {
+    method: "DELETE",
+    headers: getTransportAdminHeaders(),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data as { error?: string }).error || res.statusText);
+  }
+}
+
+export async function fetchTransportAnnouncements(schoolId: string, busId?: string | null): Promise<TransportAnnouncementDto[]> {
+  const qs = new URLSearchParams();
+  qs.set("schoolId", schoolId);
+  if (busId) qs.set("busId", busId);
+  const res = await fetch(`${getTransportApiBase()}/transport/announcements?${qs.toString()}`, {
+    headers: getTransportAdminHeaders(),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data as { error?: string }).error || res.statusText);
+  }
+  return (data as { announcements: TransportAnnouncementDto[] }).announcements || [];
+}
+
+export async function createTransportAnnouncement(body: {
+  schoolId: string;
+  busId?: string | null;
+  title: string;
+  message: string;
+}): Promise<string | null> {
+  const res = await fetch(`${getTransportApiBase()}/transport/announcements`, {
+    method: "POST",
+    headers: getTransportAdminHeaders(),
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data as { error?: string }).error || res.statusText);
+  }
+  return (data as { id?: string }).id ?? null;
 }
 
 export type TransportChildDto = {

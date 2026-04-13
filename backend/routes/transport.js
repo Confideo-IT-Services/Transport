@@ -34,6 +34,22 @@ function requireTransportAdmin(req, res, next) {
   });
 }
 
+/** Parent JWT OR transport admin secret OR admin/superadmin JWT */
+function requireTransportParentOrAdmin(req, res, next) {
+  const secret = req.headers['x-transport-admin-secret'];
+  if (process.env.TRANSPORT_ADMIN_SECRET && secret === process.env.TRANSPORT_ADMIN_SECRET) {
+    return next();
+  }
+  return authenticateToken(req, res, () => {
+    const r = normalizeRole(req.user.role);
+    if (r === 'parent' || r === 'admin' || r === 'superadmin') return next();
+    return res.status(403).json({
+      error: 'Forbidden',
+      details: 'Parent/admin login required',
+    });
+  });
+}
+
 /** Transport admin secret OR any JWT (admin/superadmin/transport_driver) */
 function requireTransportUser(req, res, next) {
   const secret = req.headers['x-transport-admin-secret'];
@@ -63,7 +79,8 @@ function requireTransportScanner(req, res, next) {
   }
   return authenticateToken(req, res, () => {
     const r = normalizeRole(req.user.role);
-    if (r === 'admin' || r === 'superadmin') return next();
+    // Allow driver JWT so driver mobile web app can submit NFC scans.
+    if (r === 'admin' || r === 'superadmin' || r === 'transportdriver') return next();
     return res.status(403).json({
       error: 'Forbidden',
       details: 'Set X-Transport-Scanner-Secret (device) or X-Transport-Admin-Secret / admin login',
@@ -773,6 +790,27 @@ function toUtcDateString(d = new Date()) {
   return d.toISOString().slice(0, 10);
 }
 
+function haversineMeters(a, b) {
+  const R = 6371000;
+  const toRad = (n) => (n * Math.PI) / 180;
+  const dLat = toRad((b.lat || 0) - (a.lat || 0));
+  const dLng = toRad((b.lng || 0) - (a.lng || 0));
+  const s1 = Math.sin(dLat / 2);
+  const s2 = Math.sin(dLng / 2);
+  const c =
+    2 *
+    Math.asin(
+      Math.min(
+        1,
+        Math.sqrt(
+          s1 * s1 +
+            Math.cos(toRad(a.lat || 0)) * Math.cos(toRad(b.lat || 0)) * s2 * s2,
+        ),
+      ),
+    );
+  return R * c;
+}
+
 /** Bias for Autocomplete [lng, lat] — default Hyderabad. */
 function getPlacesBias() {
   const lng = parseFloat(process.env.AWS_PLACES_BIAS_LNG || '78.4747');
@@ -1274,6 +1312,146 @@ router.post('/tracker/position', requireTransportUser, async (req, res) => {
       return res.status(502).json({ error: 'Tracker update failed', details: out.Errors });
     }
 
+    // Best-effort: geofence-style "bus reached pickup point" notifications via email (SES).
+    // We keep this non-blocking and deduped via transport_geofence_events.
+    try {
+      const today = toUtcDateString(new Date(sampleTime));
+      // Determine active trip type for this bus (deviceId == busId for driver updates).
+      const [tripRows] = await db.query(
+        `
+        SELECT trip_type
+        FROM transport_bus_trips
+        WHERE bus_id = ? AND trip_date = ? AND status = 'active'
+        ORDER BY started_at DESC
+        LIMIT 2
+        `,
+        [deviceId, today],
+      );
+      const activeTripType =
+        tripRows && tripRows.length === 1
+          ? String(tripRows[0].trip_type || '').toLowerCase()
+          : '';
+      if (activeTripType === 'morning' || activeTripType === 'evening') {
+        // Load route_id for this bus + tripType via assigned driver.
+        const [drvRows] = await db.query(
+          `SELECT morning_route_id, evening_route_id FROM transport_drivers WHERE bus_id = ? LIMIT 1`,
+          [deviceId],
+        );
+        const routeId =
+          drvRows && drvRows.length
+            ? String(
+                activeTripType === 'morning'
+                  ? drvRows[0].morning_route_id || ''
+                  : drvRows[0].evening_route_id || '',
+              )
+            : '';
+        if (routeId) {
+          const [stopRows] = await db.query(
+            `SELECT id, sequence_order, name, lat, lng
+             FROM transport_route_stops
+             WHERE route_id = ?
+             ORDER BY sequence_order ASC`,
+            [routeId],
+          );
+          const stops = (stopRows || []).map((s) => ({
+            id: String(s.id),
+            order: Number(s.sequence_order) || 0,
+            name: s.name,
+            lat: Number(s.lat),
+            lng: Number(s.lng),
+          }));
+          if (stops.length) {
+            // Find nearest stop within radius.
+            const RADIUS_M = Number(process.env.TRANSPORT_GEOFENCE_RADIUS_M || 90);
+            let nearestIdx = -1;
+            let nearestDist = Infinity;
+            for (let i = 0; i < stops.length; i++) {
+              const d = haversineMeters({ lat, lng }, stops[i]);
+              if (d < nearestDist) {
+                nearestDist = d;
+                nearestIdx = i;
+              }
+            }
+            if (nearestIdx >= 0 && nearestDist <= RADIUS_M) {
+              const reached = stops[nearestIdx];
+              // Insert event (dedupe). If inserted, notify parents for NEXT stop.
+              const [ins] = await db.query(
+                `
+                INSERT INTO transport_geofence_events (bus_id, trip_date, trip_type, route_stop_id, event_type)
+                VALUES (?, ?::date, ?, ?, 'reached_stop')
+                ON CONFLICT (bus_id, trip_date, trip_type, route_stop_id, event_type) DO NOTHING
+                RETURNING id
+                `,
+                [deviceId, today, activeTripType, reached.id],
+              );
+              const inserted = Boolean(ins && ins.length && ins[0].id);
+              const next = stops[nearestIdx + 1] || null;
+              if (inserted && next) {
+                // Notify parents whose pickup point is the NEXT stop (route_stop_id match).
+                const [rows] = await db.query(
+                  `
+                  SELECT c.parent_email, c.child_name, pp.name AS pickup_name
+                  FROM transport_student_assignments a
+                  JOIN transport_children c ON c.id = a.student_id
+                  JOIN transport_pickup_points pp ON pp.id = a.pickup_point_id
+                  WHERE a.bus_id = ?
+                    AND pp.route_stop_id = ?
+                    AND c.parent_email IS NOT NULL
+                  `,
+                  [deviceId, next.id],
+                );
+                const emails = (rows || [])
+                  .map((r) => ({
+                    to: r.parent_email ? String(r.parent_email).trim() : '',
+                    childName: r.child_name || 'Your child',
+                    pickupName: r.pickup_name || next.name || 'your pickup point',
+                  }))
+                  .filter((x) => x.to);
+                for (const e of emails) {
+                  const subject = `Transport update: bus reached previous stop`;
+                  const textBody =
+                    `Bus has reached the previous pickup point.\n\n` +
+                    `Next: ${e.pickupName}\n` +
+                    `Child: ${e.childName}\n\n` +
+                    `It will reach in a few minutes.`;
+                  // best-effort; do not await all in parallel to avoid spikes
+                  // eslint-disable-next-line no-await-in-loop
+                  await sendTransportEmail(e.to, { subject, textBody });
+                }
+              } else if (inserted && !next && activeTripType === 'morning') {
+                // Last stop reached on morning trip: treat as "reached school" notification.
+                // We intentionally keep this simple: the final stop is treated as destination.
+                const [rows] = await db.query(
+                  `
+                  SELECT DISTINCT c.parent_email
+                  FROM transport_student_assignments a
+                  JOIN transport_children c ON c.id = a.student_id
+                  WHERE a.bus_id = ?
+                    AND c.parent_email IS NOT NULL
+                  `,
+                  [deviceId],
+                );
+                const tos = (rows || [])
+                  .map((r) => (r.parent_email ? String(r.parent_email).trim() : ''))
+                  .filter(Boolean);
+                for (const to of tos) {
+                  const subject = `Transport update: bus reached school`;
+                  const textBody =
+                    `Bus has reached the destination (school).\n\n` +
+                    `Trip: ${activeTripType}\n` +
+                    `Time: ${new Date().toISOString()}`;
+                  // eslint-disable-next-line no-await-in-loop
+                  await sendTransportEmail(to, { subject, textBody });
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch (notifyErr) {
+      console.error('transport tracker geofence notify failed:', notifyErr && notifyErr.message ? notifyErr.message : notifyErr);
+    }
+
     res.json({
       ok: true,
       trackerName,
@@ -1442,6 +1620,40 @@ router.post('/driver/trip/start', authenticateToken, async (req, res) => {
       `,
       [busId, driverId, today, tripType],
     );
+
+    // Best-effort: notify parents on this bus that trip started (email for now).
+    try {
+      const [rows2] = await db.query(
+        `
+        SELECT c.parent_email, c.child_name
+        FROM transport_student_assignments a
+        JOIN transport_children c ON c.id = a.student_id
+        WHERE a.bus_id = ? AND c.parent_email IS NOT NULL
+        `,
+        [busId],
+      );
+      // Dedupe: one email per parent (a parent may have multiple children assigned to same bus).
+      const byParent = new Map();
+      for (const r of rows2 || []) {
+        const to = r.parent_email ? String(r.parent_email).trim() : '';
+        if (!to) continue;
+        const childName = r.child_name || 'Your child';
+        if (!byParent.has(to)) byParent.set(to, []);
+        byParent.get(to).push(childName);
+      }
+      for (const [to, children] of byParent.entries()) {
+        const subject = `Transport update: ${tripType} trip started`;
+        const kids = Array.from(new Set(children)).filter(Boolean);
+        const textBody =
+          `The ${tripType} trip has started.\n\n` +
+          (kids.length ? `Children: ${kids.join(', ')}\n\n` : '') +
+          `You will receive pickup point updates.`;
+        // eslint-disable-next-line no-await-in-loop
+        await sendTransportEmail(to, { subject, textBody });
+      }
+    } catch (e) {
+      console.error('transport trip start parent email failed:', e && e.message ? e.message : e);
+    }
 
     res.json({ ok: true, busId, tripType, status: 'active', tripDate: today });
   } catch (err) {
@@ -1649,6 +1861,105 @@ router.get('/trips/today', requireTransportAdmin, async (req, res) => {
       });
     }
     res.status(500).json({ error: 'Failed to load trips' });
+  }
+});
+
+/**
+ * PATCH /api/transport/trips/:busId/:tripType
+ * Admin-only. Allows transport admin to restart/undo end and edit started/ended timestamps for TODAY.
+ *
+ * Body: { status?: "idle"|"active"|"ended", startedAt?: ISO|null, endedAt?: ISO|null }
+ */
+router.patch('/trips/:busId/:tripType', requireTransportAdmin, async (req, res) => {
+  try {
+    const busId = String(req.params.busId || '').trim();
+    const tripType = String(req.params.tripType || '').trim().toLowerCase();
+    if (!busId) return res.status(400).json({ error: 'busId is required' });
+    if (tripType !== 'morning' && tripType !== 'evening') {
+      return res.status(400).json({ error: 'tripType must be morning|evening' });
+    }
+
+    const statusRaw = req.body?.status != null ? String(req.body.status).trim().toLowerCase() : null;
+    const status = statusRaw && ['idle', 'active', 'ended'].includes(statusRaw) ? statusRaw : null;
+
+    const parseIsoOrNull = (v) => {
+      if (v === null) return null;
+      if (v == null) return undefined;
+      const d = new Date(String(v));
+      if (Number.isNaN(d.getTime())) return undefined;
+      return d.toISOString();
+    };
+
+    const startedAtIso = parseIsoOrNull(req.body?.startedAt);
+    const endedAtIso = parseIsoOrNull(req.body?.endedAt);
+    if (req.body?.startedAt != null && startedAtIso === undefined) {
+      return res.status(400).json({ error: 'startedAt must be ISO datetime or null' });
+    }
+    if (req.body?.endedAt != null && endedAtIso === undefined) {
+      return res.status(400).json({ error: 'endedAt must be ISO datetime or null' });
+    }
+
+    const today = toUtcDateString();
+
+    // Ensure a row exists, then apply updates (keep driver_id if any).
+    await db.query(
+      `
+      INSERT INTO transport_bus_trips (bus_id, trip_date, trip_type, status, started_at, ended_at, updated_at)
+      VALUES (?, ?, ?, COALESCE(?, 'idle'), ?::timestamptz, ?::timestamptz, NOW())
+      ON CONFLICT (bus_id, trip_date, trip_type)
+      DO UPDATE SET
+        status = COALESCE(EXCLUDED.status, transport_bus_trips.status),
+        started_at = COALESCE(EXCLUDED.started_at, transport_bus_trips.started_at),
+        ended_at = EXCLUDED.ended_at,
+        updated_at = NOW()
+      `,
+      [
+        busId,
+        today,
+        tripType,
+        status,
+        startedAtIso === undefined ? null : startedAtIso,
+        endedAtIso === undefined ? null : endedAtIso,
+      ],
+    );
+
+    // If explicitly setting active, ensure ended_at is NULL (restart/undo end).
+    if (status === 'active') {
+      await db.query(
+        `UPDATE transport_bus_trips SET status = 'active', ended_at = NULL, updated_at = NOW()
+         WHERE bus_id = ? AND trip_date = ? AND trip_type = ?`,
+        [busId, today, tripType],
+      );
+    }
+
+    const [rows] = await db.query(
+      `SELECT bus_id, trip_type, status, started_at, ended_at, updated_at
+       FROM transport_bus_trips
+       WHERE bus_id = ? AND trip_date = ? AND trip_type = ?
+       LIMIT 1`,
+      [busId, today, tripType],
+    );
+    const r = rows && rows.length ? rows[0] : null;
+    return res.json({
+      ok: true,
+      tripDate: today,
+      trip: r
+        ? {
+            busId: String(r.bus_id),
+            tripType: String(r.trip_type),
+            status: String(r.status),
+            startedAt: r.started_at ? new Date(r.started_at).toISOString() : null,
+            endedAt: r.ended_at ? new Date(r.ended_at).toISOString() : null,
+            updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : null,
+          }
+        : null,
+    });
+  } catch (err) {
+    console.error('transport patch trip:', err);
+    if (err.code === 'ER_NO_SUCH_TABLE') {
+      return res.status(503).json({ error: 'Database not ready', details: 'Run backend/sql/2026-04-07-transport_trips.sql' });
+    }
+    return res.status(500).json({ error: 'Failed to update trip' });
   }
 });
 
@@ -1888,7 +2199,7 @@ router.post('/attendance/scan', requireTransportScanner, async (req, res) => {
     // Send email to parent on "onboard" transition (best-effort; do not block scan).
     let emailSent = false;
     let emailError = null;
-    if (direction === 'on' && parentEmail && prevStatus !== 'on') {
+    if ((direction === 'on' || direction === 'off') && parentEmail && prevStatus !== direction) {
       try {
         // Resolve bus + driver details for parent email.
         let busName = null;
@@ -1916,9 +2227,12 @@ router.post('/attendance/scan', requireTransportScanner, async (req, res) => {
         }
 
         const displayName = childName || studentName || 'Your child';
-        const subject = `Transport update: ${displayName} onboarded`;
+        const subject =
+          direction === 'on'
+            ? `Transport update: ${displayName} onboarded`
+            : `Transport update: ${displayName} offboarded`;
         const lines = [
-          `${displayName} has onboarded the bus.`,
+          direction === 'on' ? `${displayName} has onboarded the bus.` : `${displayName} has offboarded the bus.`,
           '',
           `Trip: ${tripType}`,
           `Time: ${scannedAt.toISOString()}`,
@@ -2152,6 +2466,107 @@ router.patch('/rfid-tags/:id/unassign', requireTransportAdmin, async (req, res) 
       return res.status(503).json({ error: 'Database not ready' });
     }
     res.status(500).json({ error: 'Failed to unassign RFID tag' });
+  }
+});
+
+/** DELETE /api/transport/rfid-tags/:id — permanently deletes RFID tag row */
+router.delete('/rfid-tags/:id', requireTransportAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!id) return res.status(400).json({ error: 'id is required' });
+    const [del] = await db.query(`DELETE FROM transport_rfid_tags WHERE id = ? RETURNING id`, [String(id)]);
+    if (!del || !del.length) return res.status(404).json({ error: 'RFID tag not found' });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('transport delete rfid tag:', err);
+    if (err.code === 'ER_NO_SUCH_TABLE' || err.code === '42P01') {
+      return res.status(503).json({ error: 'Database not ready' });
+    }
+    res.status(500).json({ error: 'Failed to delete RFID tag' });
+  }
+});
+
+// --- Announcements (admin → parents in-app) ---
+
+/** GET /api/transport/announcements?schoolId=...&busId=... */
+router.get('/announcements', requireTransportParentOrAdmin, async (req, res) => {
+  try {
+    const role = normalizeRole(req.user?.role);
+    const tokenSchoolId = req.user?.schoolId || req.user?.school_id || null;
+    const effectiveSchoolId =
+      role === 'parent'
+        ? tokenSchoolId
+        : tokenSchoolId || (req.query.schoolId ? String(req.query.schoolId) : null);
+    if (!effectiveSchoolId) {
+      return res.status(400).json({ error: 'schoolId is required' });
+    }
+    const busId = req.query.busId ? String(req.query.busId) : null;
+
+    const [rows] = await db.query(
+      `
+      SELECT id, school_id, bus_id, title, message, created_at
+      FROM transport_announcements
+      WHERE school_id = ?
+        AND (?::uuid IS NULL OR bus_id = ?::uuid OR bus_id IS NULL)
+      ORDER BY created_at DESC
+      LIMIT 200
+      `,
+      [String(effectiveSchoolId), busId, busId],
+    );
+
+    return res.json({
+      announcements: (rows || []).map((r) => ({
+        id: String(r.id),
+        schoolId: String(r.school_id),
+        busId: r.bus_id != null ? String(r.bus_id) : null,
+        title: r.title,
+        message: r.message,
+        createdAt: r.created_at,
+      })),
+    });
+  } catch (err) {
+    console.error('transport list announcements:', err);
+    if (err.code === 'ER_NO_SUCH_TABLE') {
+      return res
+        .status(503)
+        .json({ error: 'Database not ready', details: 'Run backend/sql/2026-04-10-transport_announcements.sql' });
+    }
+    return res.status(500).json({ error: 'Failed to list announcements' });
+  }
+});
+
+/** POST /api/transport/announcements body: { schoolId, busId?, title, message } */
+router.post('/announcements', requireTransportAdmin, async (req, res) => {
+  try {
+    const schoolId = req.user?.schoolId || req.user?.school_id || req.body?.schoolId;
+    const busId = req.body?.busId != null ? String(req.body.busId).trim() : '';
+    const title = req.body?.title != null ? String(req.body.title).trim() : '';
+    const message = req.body?.message != null ? String(req.body.message).trim() : '';
+    if (!schoolId) return res.status(400).json({ error: 'schoolId is required' });
+    if (!title) return res.status(400).json({ error: 'title is required' });
+    if (!message) return res.status(400).json({ error: 'message is required' });
+
+    const createdByUserId = req.user?.id ? String(req.user.id) : null;
+    const createdByRole = req.user?.role ? String(req.user.role) : null;
+
+    const [ins] = await db.query(
+      `
+      INSERT INTO transport_announcements (school_id, bus_id, title, message, created_by_user_id, created_by_role)
+      VALUES (?, ?, ?, ?, ?, ?)
+      RETURNING id
+      `,
+      [String(schoolId), busId || null, title, message, createdByUserId, createdByRole],
+    );
+    const newId = ins && ins[0] && ins[0].id ? String(ins[0].id) : null;
+    return res.status(201).json({ ok: true, id: newId });
+  } catch (err) {
+    console.error('transport create announcement:', err);
+    if (err.code === 'ER_NO_SUCH_TABLE') {
+      return res
+        .status(503)
+        .json({ error: 'Database not ready', details: 'Run backend/sql/2026-04-10-transport_announcements.sql' });
+    }
+    return res.status(500).json({ error: 'Failed to create announcement' });
   }
 });
 

@@ -15,7 +15,8 @@ const authenticateToken = (req, res, next) => {
   jwt.verify(token, JWT_SECRET, (err, user) => {
     if (err) {
       console.log('❌ authenticateToken failed: Invalid token', { error: err.message });
-      return res.status(403).json({ error: 'Invalid or expired token' });
+      // Use 401 so clients clear session + re-login (403 is reserved for "authenticated but forbidden").
+      return res.status(401).json({ error: 'Invalid or expired token' });
     }
     
     // Log decoded user info for debugging

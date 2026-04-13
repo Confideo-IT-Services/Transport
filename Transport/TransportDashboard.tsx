@@ -2,10 +2,11 @@ import { Link } from "react-router-dom";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Users, UserCircle, Bus, ScanLine } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Slider } from "@/components/ui/slider";
 import { MapPlaceholder } from "@transport/components/MapPlaceholder";
 import {
   calculateTransportRouteLine,
+  adminPatchTrip,
+  publishTrackerPositionAdmin,
   fetchTodayTripStatuses,
   fetchTransportDrivers,
   fetchTransportRoutesWithStops,
@@ -101,9 +102,6 @@ export default function TransportDashboard() {
   );
   const allSelected = selectedKey === ALL_KEY;
 
-  const [progress, setProgress] = useState(0); // 0..100
-  const lastRef = useRef<{ at: number; p: number } | null>(null);
-
   const segmentKm = useMemo(() => {
     if (!selected) return [];
     const pts = selected.stops;
@@ -137,6 +135,91 @@ export default function TransportDashboard() {
     // Threshold 5 km.
     return segmentKm.map((km) => (km <= 5 ? 20 : 35));
   }, [segmentKm]);
+
+  const tripTimesForSelected = useMemo(() => {
+    if (!todayTrips || !selected) return null;
+    const busId = selected.driver.busId;
+    if (!busId) return null;
+    const hit = todayTrips.trips.find((t) => t.busId === busId && t.tripType === selected.tripType);
+    if (!hit) return null;
+    return { startedAt: hit.startedAt || null, endedAt: hit.endedAt || null, status: hit.status || null };
+  }, [todayTrips, selected]);
+
+  const [tripEditStart, setTripEditStart] = useState<string>(""); // HH:MM
+  const [tripEditEnd, setTripEditEnd] = useState<string>(""); // HH:MM
+  const [savingTrip, setSavingTrip] = useState(false);
+
+  useEffect(() => {
+    if (!selected) return;
+    const started = tripTimesForSelected?.startedAt ? new Date(tripTimesForSelected.startedAt) : null;
+    const ended = tripTimesForSelected?.endedAt ? new Date(tripTimesForSelected.endedAt) : null;
+    const toHHMM = (d: Date | null, fallback: string) => {
+      if (!d || Number.isNaN(d.getTime())) return fallback;
+      return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+    };
+    const defaultStart = selected.tripType === "morning" ? "08:00" : "";
+    setTripEditStart(toHHMM(started, defaultStart));
+    setTripEditEnd(toHHMM(ended, ""));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedKey, tripTimesForSelected?.startedAt, tripTimesForSelected?.endedAt]);
+
+  const isoFromTodayAndHHMM = (hhmm: string): string | null => {
+    const v = (hhmm || "").trim();
+    if (!v) return null;
+    const m = /^(\d{2}):(\d{2})$/.exec(v);
+    if (!m) return null;
+    const now = new Date();
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate(), Number(m[1]), Number(m[2]), 0, 0);
+    return d.toISOString();
+  };
+
+  const refreshTrips = async () => {
+    const t = await fetchTodayTripStatuses();
+    setTodayTrips(t);
+  };
+
+  const saveTripTimes = async () => {
+    if (!selected?.driver?.busId) return;
+    setSavingTrip(true);
+    try {
+      await adminPatchTrip(selected.driver.busId, selected.tripType, {
+        startedAt: isoFromTodayAndHHMM(tripEditStart),
+        endedAt: isoFromTodayAndHHMM(tripEditEnd),
+      });
+      await refreshTrips();
+    } finally {
+      setSavingTrip(false);
+    }
+  };
+
+  const restartTrip = async () => {
+    if (!selected?.driver?.busId) return;
+    setSavingTrip(true);
+    try {
+      await adminPatchTrip(selected.driver.busId, selected.tripType, {
+        status: "active",
+        endedAt: null,
+        startedAt: isoFromTodayAndHHMM(tripEditStart) || null,
+      });
+      await refreshTrips();
+    } finally {
+      setSavingTrip(false);
+    }
+  };
+
+  const endTripNow = async () => {
+    if (!selected?.driver?.busId) return;
+    setSavingTrip(true);
+    try {
+      await adminPatchTrip(selected.driver.busId, selected.tripType, {
+        status: "ended",
+        endedAt: new Date().toISOString(),
+      });
+      await refreshTrips();
+    } finally {
+      setSavingTrip(false);
+    }
+  };
 
   const statusForSelected = useMemo(() => {
     if (!todayTrips || !selected) return null;
@@ -355,65 +438,110 @@ export default function TransportDashboard() {
     };
   }, [allSelected, assigned]);
 
-  // Auto-advance when trip is active (simple simulation).
-  useEffect(() => {
-    if (!selected) return;
-    if (statusForSelected !== "active") return;
-    let raf: number | null = null;
-    let last = Date.now();
+  const formatTime = (iso: string | null | undefined) => {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "—";
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  };
 
-    const tick = () => {
-      const now = Date.now();
-      const dt = (now - last) / 1000;
-      last = now;
-
-      // Determine current segment speed based on where we are.
-      const segCount = Math.max(1, selected.stops.length - 1);
-      const t = Math.max(0, Math.min(1, progress / 100));
-      const idx = Math.min(segCount - 1, Math.floor(t * segCount));
-      const kmh = segmentSpeedKmh[idx] ?? 20;
-      const kmPerSec = kmh / 3600;
-      const delta = totalKm > 0 ? (kmPerSec * dt * 100) / totalKm : 0;
-
-      setProgress((p) => Math.min(100, p + delta));
-      raf = window.setTimeout(tick, 250) as unknown as number;
+  const routeProgress01 = useMemo(() => {
+    if (!selected) return 0;
+    if (!gpsPos) return 0;
+    const line = roadLine && roadLine.length >= 2 ? roadLine : selected.stops.map((s) => [s.lng, s.lat] as [number, number]);
+    if (!line || line.length < 2) return 0;
+    const p = { lng: gpsPos.lng, lat: gpsPos.lat };
+    const R = 6371000;
+    const toRad = (n: number) => (n * Math.PI) / 180;
+    const dist = (a: { lat: number; lng: number }, b: { lat: number; lng: number }) => {
+      const dLat = toRad(b.lat - a.lat);
+      const dLng = toRad(b.lng - a.lng);
+      const s1 = Math.sin(dLat / 2);
+      const s2 = Math.sin(dLng / 2);
+      const c =
+        2 *
+        Math.asin(
+          Math.min(1, Math.sqrt(s1 * s1 + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * s2 * s2)),
+        );
+      return R * c;
     };
 
-    raf = window.setTimeout(tick, 500) as unknown as number;
-    return () => {
-      if (raf != null) window.clearTimeout(raf);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statusForSelected, selectedKey, totalKm, segmentSpeedKmh]);
+    let total = 0;
+    const seg = new Array(line.length - 1).fill(0).map((_, i) =>
+      dist({ lng: line[i][0], lat: line[i][1] }, { lng: line[i + 1][0], lat: line[i + 1][1] }),
+    );
+    for (const d of seg) total += d;
+    if (!total) return 0;
+
+    // Find closest point along polyline by scanning segments and using end-point proximity as approximation.
+    // (Good enough for UI; avoids heavy geometry libs.)
+    let bestI = 0;
+    let best = Infinity;
+    for (let i = 0; i < line.length; i++) {
+      const d = dist(p, { lng: line[i][0], lat: line[i][1] });
+      if (d < best) {
+        best = d;
+        bestI = i;
+      }
+    }
+    let acc = 0;
+    for (let i = 0; i < bestI; i++) acc += seg[i] || 0;
+    return Math.max(0, Math.min(1, acc / total));
+  }, [gpsPos, roadLine, selected]);
+
+  const stopDots = useMemo(() => {
+    if (!selected) return [];
+    const n = selected.stops.length;
+    if (n < 2) return [];
+    return selected.stops.map((s, i) => ({
+      id: s.id,
+      label: s.name,
+      leftPct: (i / (n - 1)) * 100,
+      isEnd: i === n - 1,
+      isStart: i === 0,
+    }));
+  }, [selected]);
+
+  const [dragProgress01, setDragProgress01] = useState<number | null>(null);
+  const dragRef = useRef<{ active: boolean; pointerId: number | null }>({ active: false, pointerId: null });
+  const barRef = useRef<HTMLDivElement | null>(null);
+  const effectiveProgress01 = dragProgress01 != null ? dragProgress01 : routeProgress01;
+
+  const setProgressFromClientX = (clientX: number) => {
+    const el = barRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const t = rect.width > 0 ? x / rect.width : 0;
+    setDragProgress01(Math.max(0, Math.min(1, t)));
+  };
+
+  const commitDraggedPosition = async () => {
+    if (!selected?.driver?.busId) return;
+    const t = dragProgress01 != null ? dragProgress01 : null;
+    if (t == null) return;
+    const line =
+      roadLine && roadLine.length >= 2 ? roadLine : selected.stops.map((s) => [s.lng, s.lat] as [number, number]);
+    const pt = line && line.length >= 2 ? pointAlongLine(line, t) : null;
+    if (!pt) return;
+    await publishTrackerPositionAdmin({
+      deviceId: selected.driver.busId,
+      lat: pt.lat,
+      lng: pt.lng,
+      accuracyMeters: 10,
+      sampleTime: new Date().toISOString(),
+    });
+    const p = await fetchTrackerPosition(selected.driver.busId);
+    setGpsPos({ lng: p.lng, lat: p.lat, sampleTime: p.sampleTime });
+  };
 
   const livePosition = useMemo(() => {
     if (!selected || selected.stops.length < 2) return null;
-    const t = Math.max(0, Math.min(1, progress / 100));
-    // Prefer real GPS when available, else simulate along road polyline.
-    const p = gpsPos
-      ? { lng: gpsPos.lng, lat: gpsPos.lat }
-      : roadLine && roadLine.length >= 2
-        ? pointAlongLine(roadLine, t)
-        : null;
-    const fallback = selected.stops;
-    const idx = Math.min(fallback.length - 2, Math.floor(t * (fallback.length - 1)));
-    const localT = t * (fallback.length - 1) - idx;
-    const a = fallback[idx];
-    const b = fallback[idx + 1];
-    const lat = p?.lat ?? a.lat + (b.lat - a.lat) * localT;
-    const lng = p?.lng ?? a.lng + (b.lng - a.lng) * localT;
-    // show segment speed by rule
-    const kmh = gpsSpeedKmh != null ? gpsSpeedKmh : (segmentSpeedKmh[idx] ?? 20);
-    return { lng, lat, label: `${selected.busLabel} · ${kmh.toFixed(0)} km/h` };
-  }, [selected, progress, segmentSpeedKmh, roadLine, gpsPos, gpsSpeedKmh]);
-
-  const onProgress = (value: number[]) => {
-    const p = value[0] ?? 0;
-    const now = Date.now();
-    const prev = lastRef.current;
-    lastRef.current = { at: now, p };
-    setProgress(p);
-  };
+    const p = gpsPos ? { lng: gpsPos.lng, lat: gpsPos.lat } : null;
+    if (!p) return null;
+    const kmh = gpsSpeedKmh != null ? gpsSpeedKmh : 0;
+    return { lng: p.lng, lat: p.lat, label: `${selected.busLabel} · ${kmh.toFixed(0)} km/h` };
+  }, [selected, gpsPos, gpsSpeedKmh]);
 
   const parents = 0;
   const buses = useMemo(() => new Set(drivers.map((d) => d.busId).filter(Boolean)).size, [drivers]);
@@ -563,12 +691,157 @@ export default function TransportDashboard() {
                         <span className="font-medium text-foreground">
                           {(gpsSpeedKmh != null ? gpsSpeedKmh : (segmentSpeedKmh[0] ?? 20)).toFixed(0)} km/h
                         </span>
-                        {gpsPos?.sampleTime ? <span className="ml-2">· GPS</span> : <span className="ml-2">· demo</span>}
+                        {gpsPos?.sampleTime ? <span className="ml-2">· GPS</span> : null}
                       </div>
                     </div>
                     <div className="text-right shrink-0">
                       <div className="text-muted-foreground">Total</div>
                       <div className="font-semibold">{(roadMeta?.distanceKm ?? totalKm).toFixed(1)} km</div>
+                    </div>
+                  </div>
+
+                  {/* Trip timeline line (start → moving bus → end) */}
+                  <div className="rounded-md border bg-background/70 px-3 py-3">
+                    <div className="flex items-center justify-between text-xs text-muted-foreground">
+                      <span>
+                        Start:{" "}
+                        <span className="font-medium text-foreground">
+                          {formatTime(tripTimesForSelected?.startedAt || null)}
+                        </span>
+                      </span>
+                      <span className="text-[11px]">
+                        {tripTimesForSelected?.status ? (
+                          <>
+                            status: <span className="font-medium text-foreground">{tripTimesForSelected.status}</span>
+                          </>
+                        ) : null}
+                      </span>
+                      <span>
+                        Arrive:{" "}
+                        <span className="font-medium text-foreground">
+                          {formatTime(tripTimesForSelected?.endedAt || null)}
+                        </span>
+                      </span>
+                    </div>
+
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      <div className="space-y-1">
+                        <div className="text-[11px] text-muted-foreground">Edit start (HH:MM)</div>
+                        <input
+                          className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+                          type="time"
+                          value={tripEditStart}
+                          onChange={(e) => setTripEditStart(e.target.value)}
+                          disabled={savingTrip}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <div className="text-[11px] text-muted-foreground">Edit arrive (HH:MM)</div>
+                        <input
+                          className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+                          type="time"
+                          value={tripEditEnd}
+                          onChange={(e) => setTripEditEnd(e.target.value)}
+                          disabled={savingTrip}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        className="h-9 rounded-md bg-emerald-600 px-3 text-sm font-medium text-white disabled:opacity-60"
+                        onClick={() => void saveTripTimes()}
+                        disabled={savingTrip || !selected.driver.busId}
+                      >
+                        Save times
+                      </button>
+                      <button
+                        type="button"
+                        className="h-9 rounded-md border bg-background px-3 text-sm font-medium disabled:opacity-60"
+                        onClick={() => void restartTrip()}
+                        disabled={savingTrip || !selected.driver.busId}
+                      >
+                        Restart / Undo end
+                      </button>
+                      <button
+                        type="button"
+                        className="h-9 rounded-md border border-destructive/40 bg-background px-3 text-sm font-medium text-destructive disabled:opacity-60"
+                        onClick={() => void endTripNow()}
+                        disabled={savingTrip || !selected.driver.busId}
+                      >
+                        End trip now
+                      </button>
+                    </div>
+
+                    <div className="relative mt-3 h-10" ref={barRef}>
+                      <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-2 rounded-full bg-emerald-600/15" />
+                      <div
+                        className="absolute left-0 top-1/2 -translate-y-1/2 h-2 rounded-full bg-emerald-600/55"
+                        style={{ width: `${Math.round(effectiveProgress01 * 100)}%` }}
+                      />
+
+                      {/* Stop dots */}
+                      {stopDots.map((d) => (
+                        <div
+                          key={d.id}
+                          className="absolute top-1/2 -translate-y-1/2"
+                          style={{ left: `calc(${d.leftPct}% - 4px)` }}
+                          title={d.label}
+                        >
+                          <div
+                            className={
+                              "h-2 w-2 rounded-full border " +
+                              (d.isStart || d.isEnd ? "bg-emerald-600 border-emerald-700/30" : "bg-background border-emerald-700/25")
+                            }
+                          />
+                        </div>
+                      ))}
+
+                      <div
+                        className="absolute top-1/2 -translate-y-1/2"
+                        style={{ left: `calc(${Math.round(effectiveProgress01 * 100)}% - 14px)` }}
+                      >
+                        <div
+                          className="h-7 w-7 rounded-full bg-background border shadow-sm grid place-items-center cursor-grab active:cursor-grabbing"
+                          role="button"
+                          tabIndex={0}
+                          aria-label="Drag bus to move"
+                          title="Drag left/right to move bus (admin)"
+                          onPointerDown={(e) => {
+                            if (!selected.driver.busId) return;
+                            dragRef.current.active = true;
+                            dragRef.current.pointerId = e.pointerId;
+                            (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+                            setProgressFromClientX(e.clientX);
+                          }}
+                          onPointerMove={(e) => {
+                            if (!dragRef.current.active) return;
+                            if (dragRef.current.pointerId != null && e.pointerId !== dragRef.current.pointerId) return;
+                            setProgressFromClientX(e.clientX);
+                          }}
+                          onPointerUp={async (e) => {
+                            if (dragRef.current.pointerId != null && e.pointerId !== dragRef.current.pointerId) return;
+                            dragRef.current.active = false;
+                            dragRef.current.pointerId = null;
+                            try {
+                              await commitDraggedPosition();
+                            } finally {
+                              setDragProgress01(null);
+                            }
+                          }}
+                          onPointerCancel={() => {
+                            dragRef.current.active = false;
+                            dragRef.current.pointerId = null;
+                            setDragProgress01(null);
+                          }}
+                        >
+                          <Bus className="h-4 w-4 text-emerald-700 dark:text-emerald-400" />
+                        </div>
+                        <div className="mt-1 text-[11px] text-muted-foreground text-center whitespace-nowrap">
+                          {(gpsSpeedKmh ?? 0).toFixed(0)} km/h
+                        </div>
+                      </div>
                     </div>
                   </div>
 
@@ -607,14 +880,6 @@ export default function TransportDashboard() {
 
                   <div className="text-xs text-muted-foreground">
                     Total distance: <span className="font-medium text-foreground">{(roadMeta?.distanceKm ?? totalKm).toFixed(1)} km</span>
-                  </div>
-
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between text-xs text-muted-foreground">
-                      <span>Move bus (demo)</span>
-                      <span>{progress.toFixed(0)}%</span>
-                    </div>
-                    <Slider value={[progress]} min={0} max={100} step={1} onValueChange={onProgress} />
                   </div>
                 </div>
               ) : (

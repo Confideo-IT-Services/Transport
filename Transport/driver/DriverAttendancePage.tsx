@@ -4,8 +4,9 @@ import { Button } from "@/components/ui/button";
 import { Bus, RefreshCw, CheckCircle2 } from "lucide-react";
 import { getDriverJwt, getDriverSession, resolveDriverBusId } from "@transport/driverSession";
 import { SeatBoardingGrid } from "@transport/components/SeatBoardingGrid";
-import { fetchDriverAssignedChildren, type DriverAssignedChildDto } from "@transport/lib/transportApi";
+import { driverAttendanceScan, fetchDriverAssignedChildren, type DriverAssignedChildDto } from "@transport/lib/transportApi";
 import { toast } from "sonner";
+import { isWebNfcSupported, scanOneNfcTagSerialNumber } from "@transport/lib/nfc";
 
 export default function DriverAttendancePage() {
   const session = getDriverSession();
@@ -20,6 +21,7 @@ export default function DriverAttendancePage() {
   const [tripType, setTripType] = useState<"morning" | "evening">("morning");
   const [children, setChildren] = useState<DriverAssignedChildDto[]>([]);
   const [loading, setLoading] = useState(false);
+  const [scanBusy, setScanBusy] = useState(false);
 
   useEffect(() => {
     if (!jwt) return;
@@ -114,6 +116,70 @@ export default function DriverAttendancePage() {
         </CardHeader>
         <CardContent>
           <SeatBoardingGrid seats={seats} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Tap RFID (NFC)</CardTitle>
+          <CardDescription>
+            Use an NFC-enabled phone to scan a child’s RFID card. This posts to attendance and updates the console.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="text-sm text-muted-foreground">
+            {isWebNfcSupported()
+              ? "Ready: tap a card near the phone."
+              : "NFC not supported on this device/browser. Use Android Chrome (HTTPS; localhost is OK)."}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="default"
+              disabled={!jwt || scanBusy || !isWebNfcSupported()}
+              onClick={async () => {
+                if (!jwt) return toast.error("Driver session missing");
+                setScanBusy(true);
+                try {
+                  toast.message("Tap the RFID/NFC card on the phone…");
+                  const { serialNumber } = await scanOneNfcTagSerialNumber({ timeoutMs: 20000 });
+                  const uid = serialNumber.trim();
+                  await driverAttendanceScan(jwt, { tagUid: uid, tripType, direction: "on", scannedAt: new Date().toISOString() });
+                  toast.success("Scanned (onboard)");
+                  refresh();
+                } catch (e: any) {
+                  toast.error(e?.message || "NFC scan failed");
+                } finally {
+                  setScanBusy(false);
+                }
+              }}
+            >
+              {scanBusy ? "Tap card…" : "Scan onboard"}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={!jwt || scanBusy || !isWebNfcSupported()}
+              onClick={async () => {
+                if (!jwt) return toast.error("Driver session missing");
+                setScanBusy(true);
+                try {
+                  toast.message("Tap the RFID/NFC card on the phone…");
+                  const { serialNumber } = await scanOneNfcTagSerialNumber({ timeoutMs: 20000 });
+                  const uid = serialNumber.trim();
+                  await driverAttendanceScan(jwt, { tagUid: uid, tripType, direction: "off", scannedAt: new Date().toISOString() });
+                  toast.success("Scanned (offboard)");
+                  refresh();
+                } catch (e: any) {
+                  toast.error(e?.message || "NFC scan failed");
+                } finally {
+                  setScanBusy(false);
+                }
+              }}
+            >
+              Scan offboard
+            </Button>
+          </div>
         </CardContent>
       </Card>
 
