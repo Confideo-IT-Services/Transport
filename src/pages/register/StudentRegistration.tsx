@@ -52,6 +52,7 @@ export default function StudentRegistration() {
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
   const [showCamera, setShowCamera] = useState(false);
   const [formData, setFormData] = useState<Record<string, string | boolean>>({});
+  const parentLoginPhone = typeof formData.parentPhone === "string" ? formData.parentPhone : "";
   const [rfidTags, setRfidTags] = useState<Array<{ id: string; tagUid: string }>>([]);
   const [pickupPoints, setPickupPoints] = useState<Array<{ id: string; name: string; lat: number; lng: number }>>([]);
   const [selectedRfidTagId, setSelectedRfidTagId] = useState<string>("");
@@ -369,6 +370,12 @@ export default function StudentRegistration() {
     e.preventDefault();
     
     if (!linkData) return;
+
+    const cleanedParentLoginPhone = parentLoginPhone.replace(/\D/g, "");
+    if (cleanedParentLoginPhone.length !== 10) {
+      toast.error("Parent phone number (for Parent Portal login) is required (10 digits)");
+      return;
+    }
     
     // Upload photo to S3 first if photo field exists and is mandatory
     let photoUrl: string | null = null;
@@ -476,6 +483,7 @@ export default function StudentRegistration() {
         bloodGroup: formData.bloodGroup || null,
         address: formData.address || null,
         photoUrl: photoUrl, // Use S3 URL
+        parentPhone: cleanedParentLoginPhone,
         // Parent/Guardian fields
         fatherName: formData.fatherName || null,
         fatherPhone: formData.fatherPhone || null,
@@ -965,6 +973,23 @@ export default function StudentRegistration() {
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="parentPhone">
+                      Parent phone number (Parent Portal login) <span className="text-destructive">*</span>
+                    </Label>
+                    <Input
+                      id="parentPhone"
+                      type="tel"
+                      placeholder="Enter 10-digit phone number"
+                      value={parentLoginPhone}
+                      onChange={(e) => handleInputChange("parentPhone", e.target.value)}
+                      maxLength={10}
+                      required
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Use this number to login on the Parent Portal once the student is approved.
+                    </p>
+                  </div>
                   {otherFields.map(renderField)}
                 </div>
               </CardContent>

@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Bus, RefreshCw, CheckCircle2 } from "lucide-react";
 import { getDriverJwt, getDriverSession, resolveDriverBusId } from "@transport/driverSession";
 import { SeatBoardingGrid } from "@transport/components/SeatBoardingGrid";
-import { driverAttendanceScan, fetchDriverAssignedChildren, type DriverAssignedChildDto } from "@transport/lib/transportApi";
+import { driverAttendanceManual, driverAttendanceScan, fetchDriverAssignedChildren, type DriverAssignedChildDto } from "@transport/lib/transportApi";
 import { toast } from "sonner";
 import { isWebNfcSupported, scanOneNfcTagSerialNumber } from "@transport/lib/nfc";
 
@@ -22,6 +22,8 @@ export default function DriverAttendancePage() {
   const [children, setChildren] = useState<DriverAssignedChildDto[]>([]);
   const [loading, setLoading] = useState(false);
   const [scanBusy, setScanBusy] = useState(false);
+  const [manualOpen, setManualOpen] = useState(false);
+  const unverified = useMemo(() => children.filter((c) => !c.onboarded), [children]);
 
   useEffect(() => {
     if (!jwt) return;
@@ -159,9 +161,14 @@ export default function DriverAttendancePage() {
             <Button
               type="button"
               variant="outline"
-              disabled={!jwt || scanBusy || !isWebNfcSupported()}
+              disabled={!jwt || scanBusy}
               onClick={async () => {
                 if (!jwt) return toast.error("Driver session missing");
+                // If NFC isn't supported, use manual verification flow (mark onboard) for unscanned children.
+                if (!isWebNfcSupported()) {
+                  setManualOpen(true);
+                  return;
+                }
                 setScanBusy(true);
                 try {
                   toast.message("Tap the RFID/NFC card on the phone…");
@@ -177,11 +184,64 @@ export default function DriverAttendancePage() {
                 }
               }}
             >
-              Scan offboard
+              {isWebNfcSupported() ? "Scan offboard" : "Manual verify"}
             </Button>
           </div>
         </CardContent>
       </Card>
+
+      {manualOpen ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Manual verify (no NFC)</CardTitle>
+            <CardDescription>Select a child who is not scanned yet to mark as verified.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center justify-between gap-2 mb-3">
+              <div className="text-sm text-muted-foreground">{unverified.length} not scanned</div>
+              <Button type="button" variant="outline" size="sm" onClick={() => setManualOpen(false)} disabled={scanBusy}>
+                Close
+              </Button>
+            </div>
+            {unverified.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Everyone is already verified.</p>
+            ) : (
+              <div className="space-y-2">
+                {unverified.map((c) => (
+                  <Button
+                    key={c.id}
+                    type="button"
+                    variant="outline"
+                    className="w-full justify-between"
+                    disabled={!jwt || scanBusy}
+                    onClick={async () => {
+                      if (!jwt) return;
+                      setScanBusy(true);
+                      try {
+                        await driverAttendanceManual(jwt, {
+                          studentId: c.id,
+                          tripType,
+                          direction: "on",
+                          scannedAt: new Date().toISOString(),
+                        });
+                        toast.success(`Verified: ${c.childName}`);
+                        refresh();
+                      } catch (e: any) {
+                        toast.error(e?.message || "Manual verify failed");
+                      } finally {
+                        setScanBusy(false);
+                      }
+                    }}
+                  >
+                    <span className="truncate">{c.childName}</span>
+                    <span className="text-xs text-muted-foreground">Mark verified</span>
+                  </Button>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Card>
         <CardHeader>

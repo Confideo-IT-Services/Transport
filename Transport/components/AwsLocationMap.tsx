@@ -82,6 +82,8 @@ export function AwsLocationMap({
   const mapRef = useRef<maplibregl.Map | null>(null);
   const markersRef = useRef<maplibregl.Marker[]>([]);
   const routeLayersAddedRef = useRef(false);
+  const userInteractedRef = useRef(false);
+  const fittedForRouteKeyRef = useRef<string>("");
   /** Avoid re-running map init every render: resolveLocationMapConfig() returns a new object each call. */
   const mapConfig = useMemo(() => resolveLocationMapConfig(), []);
   const map403ReportedRef = useRef(false);
@@ -100,6 +102,7 @@ export function AwsLocationMap({
   const [hoverPos, setHoverPos] = useState<{ x: number; y: number } | null>(null);
   const hoverTimerRef = useRef<number | null>(null);
   const lastHoverReqRef = useRef<{ lng: number; lat: number } | null>(null);
+  const reverseGeocodeBlockedRef = useRef(false);
 
   const routeGeoJson = useMemo(() => {
     const coords = (routeLineString && routeLineString.length >= 2)
@@ -130,8 +133,45 @@ export function AwsLocationMap({
   }, [multiRoutes]);
 
   const coveredRouteGeoJson = useMemo(() => {
-    const end = Math.min(stops.length, Math.max(0, currentStopIndex) + 1);
-    const coords = stops.slice(0, end).map((s) => [s.lng, s.lat] as [number, number]);
+    // Covered segment should follow the SAME geometry as the base route line.
+    // If we have a road-snapped routeLineString, take it from start until the point closest
+    // to the current stop (best-effort). Otherwise fall back to stop-to-stop connection.
+    const stopEnd = Math.min(stops.length - 1, Math.max(0, currentStopIndex));
+    const target = stops[stopEnd] ? { lng: Number(stops[stopEnd].lng), lat: Number(stops[stopEnd].lat) } : null;
+
+    const haversineMeters = (a: { lng: number; lat: number }, b: { lng: number; lat: number }) => {
+      const R = 6371000;
+      const toRad = (n: number) => (n * Math.PI) / 180;
+      const dLat = toRad(b.lat - a.lat);
+      const dLng = toRad(b.lng - a.lng);
+      const s1 = Math.sin(dLat / 2);
+      const s2 = Math.sin(dLng / 2);
+      const c =
+        2 *
+        Math.asin(
+          Math.min(1, Math.sqrt(s1 * s1 + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * s2 * s2)),
+        );
+      return R * c;
+    };
+
+    let coords: [number, number][] = [];
+    if (routeLineString && routeLineString.length >= 2 && target) {
+      // Find the nearest point index on the polyline to the target stop.
+      let bestIdx = 0;
+      let bestD = Infinity;
+      for (let i = 0; i < routeLineString.length; i++) {
+        const pt = routeLineString[i];
+        const d = haversineMeters({ lng: pt[0], lat: pt[1] }, target);
+        if (d < bestD) {
+          bestD = d;
+          bestIdx = i;
+        }
+      }
+      coords = routeLineString.slice(0, Math.max(2, bestIdx + 1));
+    } else {
+      const end = Math.min(stops.length, stopEnd + 1);
+      coords = stops.slice(0, end).map((s) => [s.lng, s.lat] as [number, number]);
+    }
     return {
       type: "FeatureCollection",
       features: [
@@ -142,37 +182,15 @@ export function AwsLocationMap({
         },
       ],
     } as const;
-  }, [stops, currentStopIndex]);
+  }, [stops, currentStopIndex, routeLineString]);
 
   const syncMarkers = useCallback(
     (map: maplibregl.Map) => {
       markersRef.current.forEach((m) => m.remove());
       markersRef.current = [];
 
-      const bounds = new maplibregl.LngLatBounds();
-      if (stops.length) {
-        stops.forEach((s) => bounds.extend([s.lng, s.lat]));
-      }
-      if (multiRoutes && multiRoutes.length) {
-        multiRoutes.forEach((r) => {
-          (r.lineString || []).forEach((pt) => bounds.extend(pt));
-        });
-      }
-      if (livePosition && !Number.isNaN(livePosition.lng) && !Number.isNaN(livePosition.lat)) {
-        bounds.extend([livePosition.lng, livePosition.lat]);
-      }
-      if (multiLivePositions && multiLivePositions.length) {
-        multiLivePositions.forEach((p) => {
-          if (!Number.isNaN(p.lng) && !Number.isNaN(p.lat)) bounds.extend([p.lng, p.lat]);
-        });
-      }
-      try {
-        if (!bounds.isEmpty()) {
-          map.fitBounds(bounds, { padding: 56, maxZoom: 14, duration: 400 });
-        }
-      } catch {
-        /* ignore */
-      }
+      // NOTE: Do not auto-fit bounds here. This callback runs often (GPS updates, polling),
+      // and auto-fit would fight the user's manual zoom/pan. We fit once in a separate effect.
 
       if (stops.length) {
         stops.forEach((stop, i) => {
@@ -399,6 +417,20 @@ export function AwsLocationMap({
           setMapReady(true);
         });
 
+        // Track manual user interaction so we don't fight zoom/pan.
+        map.on("dragstart", () => {
+          userInteractedRef.current = true;
+        });
+        map.on("zoomstart", () => {
+          userInteractedRef.current = true;
+        });
+        map.on("rotatestart", () => {
+          userInteractedRef.current = true;
+        });
+        map.on("pitchstart", () => {
+          userInteractedRef.current = true;
+        });
+
         const ro = new ResizeObserver(() => {
           map.resize();
         });
@@ -443,12 +475,57 @@ export function AwsLocationMap({
     syncMarkers(map);
   }, [mapReady, syncMarkers, syncRouteLine]);
 
+  // Fit bounds ONCE per route selection (not on every GPS update).
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+
+    // Build a stable route key that ignores livePosition (which changes frequently).
+    const routeKey = JSON.stringify({
+      stops: (stops || []).map((s) => [s.lng, s.lat]),
+      routeLine: routeLineString && routeLineString.length >= 2 ? routeLineString : null,
+      multiIds: (multiRoutes || []).map((r) => r.id),
+      multiCount: (multiRoutes || []).length,
+    });
+
+    if (fittedForRouteKeyRef.current === routeKey) return;
+    if (userInteractedRef.current) {
+      // User is already interacting; skip auto-fit.
+      fittedForRouteKeyRef.current = routeKey;
+      return;
+    }
+
+    const bounds = new maplibregl.LngLatBounds();
+    if (multiRoutes && multiRoutes.length) {
+      multiRoutes.forEach((r) => {
+        (r.lineString || []).forEach((pt) => bounds.extend(pt));
+      });
+    } else if (routeLineString && routeLineString.length >= 2) {
+      routeLineString.forEach((pt) => bounds.extend(pt));
+    } else if (stops.length) {
+      stops.forEach((s) => bounds.extend([s.lng, s.lat]));
+    }
+
+    try {
+      if (!bounds.isEmpty()) {
+        map.fitBounds(bounds, { padding: 56, maxZoom: 14, duration: 450 });
+      }
+    } catch {
+      /* ignore */
+    } finally {
+      fittedForRouteKeyRef.current = routeKey;
+    }
+  }, [mapReady, stops, routeLineString, multiRoutes]);
+
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
 
     const onMove = (e: maplibregl.MapMouseEvent & maplibregl.EventData) => {
       setHoverPos({ x: e.point.x, y: e.point.y });
+      if (reverseGeocodeBlockedRef.current) {
+        return;
+      }
       if (hoverTimerRef.current) {
         window.clearTimeout(hoverTimerRef.current);
       }
@@ -466,6 +543,10 @@ export function AwsLocationMap({
           .then((label) => setHoverLabel(label))
           .catch((e) => {
             console.error("reverseGeocode failed:", e);
+            const msg = String((e as any)?.message || e || "");
+            if (/403|forbidden/i.test(msg)) {
+              reverseGeocodeBlockedRef.current = true;
+            }
             setHoverLabel("");
           });
       }, 450);

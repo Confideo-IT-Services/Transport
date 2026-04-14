@@ -7,6 +7,7 @@ import {
   MapPin,
   ScanLine,
   Bell,
+  FileText,
   LogOut,
   ChevronRight,
   Menu,
@@ -24,6 +25,7 @@ const nav = [
   { to: "/transport/routes", label: "Routes", icon: MapPin },
   { to: "/transport/attendance", label: "Attendance (RFID)", icon: ScanLine },
   { to: "/transport/rfid", label: "RFID tags", icon: ScanLine },
+  { to: "/transport/reports", label: "Reports", icon: FileText },
   { to: "/transport/announcements", label: "Announcements", icon: Bell },
 ];
 

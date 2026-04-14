@@ -11,6 +11,7 @@ import {
   fetchTransportDrivers,
   fetchTransportRoutesWithStops,
   fetchTrackerPosition,
+  fetchGeofenceEventsAdmin,
   type TodayTripStatusDto,
   type TransportDriverDto,
   type TransportRouteWithStopsDto,
@@ -240,6 +241,7 @@ export default function TransportDashboard() {
   const [gpsPos, setGpsPos] = useState<{ lng: number; lat: number; sampleTime?: string | null } | null>(null);
   const [gpsSpeedKmh, setGpsSpeedKmh] = useState<number | null>(null);
   const lastGpsRef = useRef<{ atMs: number; lng: number; lat: number } | null>(null);
+  const [currentStopIndex, setCurrentStopIndex] = useState<number>(0);
 
   // Road-following polyline for the selected route
   const [roadLine, setRoadLine] = useState<[number, number][] | null>(null);
@@ -302,6 +304,42 @@ export default function TransportDashboard() {
 
     void tick();
     const id = window.setInterval(() => void tick(), 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [selectedKey]);
+
+  // Geofence progress (reached stops) to mark checkpoints as covered/current.
+  useEffect(() => {
+    if (!selected || !selected.driver.busId) {
+      setCurrentStopIndex(0);
+      return;
+    }
+    let cancelled = false;
+    const busId = selected.driver.busId;
+    const tripType = selected.tripType;
+    const date = new Date().toISOString().slice(0, 10);
+
+    const tick = async () => {
+      try {
+        const events = await fetchGeofenceEventsAdmin({ busId, tripType, date });
+        if (cancelled) return;
+        const reached = (events || []).filter((e) => e.eventType === "reached_stop" && e.routeStopId);
+        if (!reached.length) {
+          setCurrentStopIndex(0);
+          return;
+        }
+        const last = reached[reached.length - 1];
+        const idx = selected.stops.findIndex((s) => String(s.id) === String(last.routeStopId));
+        setCurrentStopIndex(idx >= 0 ? idx : 0);
+      } catch {
+        // ignore
+      }
+    };
+
+    void tick();
+    const id = window.setInterval(() => void tick(), 8000);
     return () => {
       cancelled = true;
       window.clearInterval(id);
@@ -676,6 +714,66 @@ export default function TransportDashboard() {
                   Showing {allLines.length || assigned.length} route line{(allLines.length || assigned.length) === 1 ? "" : "s"}.
                 </p>
               ) : null}
+
+              {/* Move the route path/timeline into the empty left space (desktop). */}
+              {!allSelected && selected ? (
+                <div className="rounded-lg border bg-muted/20 px-3 py-3">
+                  <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Path</div>
+
+                  {/* Vertical timeline (matches your sketch) */}
+                  <div className="mt-3">
+                    <div className="space-y-4">
+                      {selected.stops.map((s, i) => {
+                        const segKm = i < selected.stops.length - 1 ? segmentKm[i] : null;
+                        const segSpeed = i < selected.stops.length - 1 ? segmentSpeedKmh[i] : null;
+                        const isLast = i === selected.stops.length - 1;
+                        const covered = i <= currentStopIndex;
+                        return (
+                          <div key={`${s.id}-${i}`} className="grid grid-cols-[18px_1fr_auto] gap-x-3 gap-y-1">
+                            {/* Rail */}
+                            <div className="relative flex justify-center">
+                              {!isLast ? <div className="absolute top-3 bottom-[-18px] w-[2px] bg-emerald-600/40" /> : null}
+                              <div
+                                className={
+                                  "mt-0.5 h-4 w-4 rounded-full border-2 border-emerald-600 " +
+                                  (covered ? "bg-emerald-600" : "bg-background")
+                                }
+                                title={covered ? "Covered" : "Upcoming"}
+                              />
+                            </div>
+
+                            {/* Text */}
+                            <div className="min-w-0">
+                              <div className="text-xs font-semibold break-words leading-snug" title={s.name}>
+                                {i === 0
+                                  ? `Start: ${shortLabel(s.name)}`
+                                  : isLast
+                                    ? `End: ${shortLabel(s.name)}`
+                                    : shortLabel(s.name)}
+                              </div>
+                              {segKm != null && segSpeed != null ? (
+                                <div className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
+                                  → {segKm.toFixed(1)} km · {segSpeed} km/h
+                                </div>
+                              ) : null}
+                            </div>
+
+                            {/* Count */}
+                            <div className="text-[11px] text-muted-foreground whitespace-nowrap pt-0.5">
+                              {i + 1}/{selected.stops.length}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="mt-3 text-xs text-muted-foreground">
+                    Total distance:{" "}
+                    <span className="font-medium text-foreground">{(roadMeta?.distanceKm ?? totalKm).toFixed(1)} km</span>
+                  </div>
+                </div>
+              ) : null}
             </div>
 
             <div className="space-y-2">
@@ -845,42 +943,7 @@ export default function TransportDashboard() {
                     </div>
                   </div>
 
-                  {/* Vertical timeline (matches your sketch) */}
-                  <div className="relative pl-5">
-                    <div className="absolute left-2 top-2 bottom-2 w-[2px] bg-emerald-600/40" />
-                    <div className="space-y-4">
-                      {selected.stops.map((s, i) => {
-                        const segKm = i < selected.stops.length - 1 ? segmentKm[i] : null;
-                        const segSpeed = i < selected.stops.length - 1 ? segmentSpeedKmh[i] : null;
-                        return (
-                          <div key={`${s.id}-${i}`} className="relative grid grid-cols-[1fr_auto] gap-x-3 gap-y-1">
-                            <div className="absolute -left-[2px] top-1 h-4 w-4 rounded-full border-2 border-emerald-600 bg-background" />
-                            <div className="ml-2 min-w-0">
-                              <div className="text-xs font-semibold break-words leading-snug" title={s.name}>
-                                {i === 0
-                                  ? `Start: ${shortLabel(s.name)}`
-                                  : i === selected.stops.length - 1
-                                    ? `End: ${shortLabel(s.name)}`
-                                    : shortLabel(s.name)}
-                              </div>
-                              {segKm != null && segSpeed != null ? (
-                                <div className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
-                                  → {segKm.toFixed(1)} km · {segSpeed} km/h
-                                </div>
-                              ) : null}
-                            </div>
-                            <div className="text-[11px] text-muted-foreground whitespace-nowrap pt-0.5">
-                              {i + 1}/{selected.stops.length}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  <div className="text-xs text-muted-foreground">
-                    Total distance: <span className="font-medium text-foreground">{(roadMeta?.distanceKm ?? totalKm).toFixed(1)} km</span>
-                  </div>
+                  {/* Path timeline moved to left column to use blank space */}
                 </div>
               ) : (
                 <div className="rounded-lg border bg-muted/30 px-3 py-3 text-sm text-muted-foreground">
@@ -893,7 +956,7 @@ export default function TransportDashboard() {
           <div className="rounded-lg border overflow-hidden">
             <MapPlaceholder
               stops={allSelected ? [] : selected?.stops || []}
-              currentStopIndex={0}
+              currentStopIndex={allSelected ? 0 : currentStopIndex}
               routeLineString={allSelected ? undefined : roadLine ?? undefined}
               livePosition={allSelected ? null : livePosition}
               multiRoutes={allSelected ? allLines : undefined}

@@ -13,7 +13,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { ArrowLeft, Pencil } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Circle, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { MapPlaceholder } from "@transport/components/MapPlaceholder";
 import { RouteCheckpointTimeline } from "@transport/components/RouteCheckpointTimeline";
@@ -21,6 +21,7 @@ import { RouteStopsBuilder, type RouteStopInput } from "@transport/components/Ro
 import {
   calculateTransportRouteLine,
   deleteTransportRoute,
+  fetchRouteStopChildren,
   fetchTransportRoutesWithStops,
   patchTransportRoute,
   type TransportRouteWithStopsDto,
@@ -33,6 +34,23 @@ export default function TransportRouteDetailPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [routeLine, setRouteLine] = useState<[number, number][] | null>(null);
+  const [stopChildren, setStopChildren] = useState<
+    Array<{
+      id: string;
+      name: string;
+      sequenceOrder: number;
+      lat: number;
+      lng: number;
+      children: Array<{
+        id: string;
+        childName: string;
+        rfidTagUid: string | null;
+        onboarded: boolean;
+        lastScannedAt: string | null;
+      }>;
+    }>
+  >([]);
+  const [stopChildrenError, setStopChildrenError] = useState<string | null>(null);
 
   const refresh = async () => {
     setLoading(true);
@@ -64,10 +82,35 @@ export default function TransportRouteDetailPage() {
   }, [route]);
 
   useEffect(() => {
+    if (!route?.id) return;
+    let cancelled = false;
+    setStopChildrenError(null);
+
+    const run = async () => {
+      try {
+        const data = await fetchRouteStopChildren(route.id, { tripType: "morning" });
+        if (!cancelled) setStopChildren(data.stops || []);
+      } catch (e) {
+        if (!cancelled) setStopChildrenError(e instanceof Error ? e.message : "Failed to load assigned children");
+      }
+    };
+
+    run();
+    const t = window.setInterval(run, 4000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(t);
+    };
+  }, [route?.id]);
+
+  useEffect(() => {
     let cancelled = false;
     setRouteLine(null);
-    if (stops.length < 2) return;
-    calculateTransportRouteLine(stops.map((s) => ({ lat: s.lat, lng: s.lng })))
+    const clean = (stops || []).filter(
+      (s) => Number.isFinite(Number(s.lat)) && Number.isFinite(Number(s.lng)),
+    );
+    if (clean.length < 2) return;
+    calculateTransportRouteLine(clean.map((s) => ({ lat: Number(s.lat), lng: Number(s.lng) })))
       .then((d) => {
         if (!cancelled) setRouteLine(d.lineString || null);
       })
@@ -146,7 +189,7 @@ export default function TransportRouteDetailPage() {
   }
 
   return (
-    <div className="space-y-6 max-w-5xl">
+    <div className="space-y-6 w-full max-w-none">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Button variant="ghost" size="sm" asChild>
           <Link to="/transport/routes" className="gap-2">
@@ -218,6 +261,57 @@ export default function TransportRouteDetailPage() {
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Pickup points → assigned children (live)</CardTitle>
+          <CardDescription>Green verified = child RFID scanned (onboard) today.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {stopChildrenError ? (
+            <p className="text-sm text-destructive">{stopChildrenError}</p>
+          ) : (
+            <div className="space-y-4">
+              {(stopChildren || []).map((s, idx) => (
+                <div key={s.id} className="rounded-md border bg-background/60 px-3 py-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-sm font-medium">
+                      {idx + 1}. {s.name}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {(s.children || []).filter((c) => c.onboarded).length}/{(s.children || []).length} verified
+                    </div>
+                  </div>
+
+                  {(s.children || []).length === 0 ? (
+                    <div className="mt-2 text-xs text-muted-foreground">No children assigned to this pickup point.</div>
+                  ) : (
+                    <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                      {s.children.map((c) => (
+                        <div key={c.id} className="flex items-center justify-between gap-3 rounded-md border px-3 py-2">
+                          <div className="min-w-0">
+                            <div className="truncate text-sm">{c.childName}</div>
+                            <div className="truncate text-[11px] text-muted-foreground">
+                              {c.rfidTagUid ? `RFID: ${c.rfidTagUid}` : "RFID: —"} {c.lastScannedAt ? `· ${new Date(c.lastScannedAt).toLocaleTimeString()}` : ""}
+                            </div>
+                          </div>
+                          <div className="shrink-0">
+                            {c.onboarded ? (
+                              <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+                            ) : (
+                              <Circle className="h-5 w-5 text-muted-foreground" />
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

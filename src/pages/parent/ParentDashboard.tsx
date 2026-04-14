@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { User, Download, FileText, CheckCircle2, Calendar, Clock, BookOpen } from "lucide-react";
+import { User, Download, FileText, CheckCircle2, Calendar, Clock, BookOpen, Bus, MapPinned, Phone } from "lucide-react";
 import { format } from "date-fns";
 import { getTodayISTString, formatInIST, formatDateOnlyIST } from "@/lib/date-ist";
 import jsPDF from 'jspdf';
@@ -1058,6 +1058,70 @@ function ChildDetails({
               </div>
             )}
           </>
+        );
+
+      case 'transport':
+        return (
+          <div className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Bus className="w-5 h-5" />
+                  Transport (Demo)
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground">
+                  This page is added for the Parent Portal UI now. Live bus assignment + tracking will be connected later when the Transport module is fully integrated.
+                </p>
+              </CardContent>
+            </Card>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Bus & Driver</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3 text-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-muted-foreground">Assigned bus</span>
+                    <span className="font-medium">—</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-muted-foreground">Driver name</span>
+                    <span className="font-medium">—</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-muted-foreground flex items-center gap-2">
+                      <Phone className="w-4 h-4" />
+                      Driver phone
+                    </span>
+                    <span className="font-medium">—</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-muted-foreground">Current speed</span>
+                    <span className="font-medium">— km/h</span>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <MapPinned className="w-5 h-5" />
+                    Live map
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="h-[340px] rounded-lg border bg-muted/20 flex items-center justify-center">
+                    <p className="text-sm text-muted-foreground">
+                      Map will show bus live location after integration.
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
         );
 
       default:

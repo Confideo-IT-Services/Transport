@@ -480,7 +480,11 @@ router.post('/', async (req, res) => {
     // Map form fields to database columns
     // Use father/mother fields as primary, fallback to parent fields
     const finalParentName = fatherName || parentName || null;
-    const finalParentPhone = fatherPhone || parentPhone || emergencyContact || null;
+    const finalParentPhoneRaw = fatherPhone || parentPhone || emergencyContact || null;
+    const finalParentPhone =
+      finalParentPhoneRaw != null && String(finalParentPhoneRaw).trim() !== ''
+        ? String(finalParentPhoneRaw).replace(/\D/g, '')
+        : null;
     const finalParentEmail = fatherEmail || parentEmail || null;
 
     // Store all submitted data in JSON format for custom fields

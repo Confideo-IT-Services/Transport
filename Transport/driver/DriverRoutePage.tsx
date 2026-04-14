@@ -6,7 +6,9 @@ import { RouteCheckpointTimeline } from "@transport/components/RouteCheckpointTi
 import { getDriverJwt, getDriverSession, resolveDriverBusId } from "@transport/driverSession";
 import {
   calculateTransportRouteLineWithJwt,
+  fetchDriverStopChildren,
   fetchDriverProfile,
+  fetchMyGeofenceEvents,
   fetchMyTrackerPosition,
   publishTrackerPosition,
   type DriverProfileDto,
@@ -15,6 +17,7 @@ import { getBusById, getRouteById } from "@transport/mock/mockStore";
 import { getTripState, type TripType } from "@transport/mock/driverTripStore";
 import { toast } from "sonner";
 import type { RouteStop } from "@transport/types";
+import { CheckCircle2, Circle } from "lucide-react";
 
 function mapApiStopsToRouteStops(stops: DriverProfileDto["morningStops"]): RouteStop[] {
   return (stops || []).map((s, i) => ({
@@ -39,6 +42,18 @@ export default function DriverRoutePage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [routeLine, setRouteLine] = useState<[number, number][] | null>(null);
   const [livePos, setLivePos] = useState<{ lng: number; lat: number; sampleTime?: string | null } | null>(null);
+  const [currentStopIndex, setCurrentStopIndex] = useState(0);
+  const [stopChildren, setStopChildren] = useState<
+    Array<{
+      id: string;
+      name: string;
+      sequenceOrder: number;
+      lat: number;
+      lng: number;
+      children: Array<{ id: string; childName: string; onboarded: boolean; lastScannedAt: string | null }>;
+    }>
+  >([]);
+  const [stopChildrenError, setStopChildrenError] = useState<string | null>(null);
   const geoDeniedToastShownRef = useRef(false);
   const lastSentAtRef = useRef<number>(0);
   const inFlightRef = useRef(false);
@@ -110,6 +125,66 @@ export default function DriverRoutePage() {
     };
   }, [jwt, useMock]);
 
+  // Use geofence events (reached stops) to compute current checkpoint index for the UI.
+  useEffect(() => {
+    if (!jwt || useMock) return;
+    if (!busId) return;
+    if (!apiProfile) return;
+    let cancelled = false;
+    const date = new Date().toISOString().slice(0, 10);
+
+    const tick = async () => {
+      try {
+        const events = await fetchMyGeofenceEvents(jwt, { busId, tripType, date });
+        if (cancelled) return;
+        const reached = (events || []).filter((e) => e.eventType === "reached_stop" && e.routeStopId);
+        if (!reached.length) {
+          setCurrentStopIndex(0);
+          return;
+        }
+        const last = reached[reached.length - 1];
+        const rawStops = tripType === "evening" ? apiProfile.eveningStops : apiProfile.morningStops;
+        const stops = mapApiStopsToRouteStops(rawStops);
+        const idx = stops.findIndex((s) => String(s.id) === String(last.routeStopId));
+        setCurrentStopIndex(idx >= 0 ? idx : 0);
+      } catch {
+        // ignore, keep prior
+      }
+    };
+
+    void tick();
+    const id = window.setInterval(() => void tick(), 8000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [jwt, useMock, busId, apiProfile, tripType]);
+
+  // Load stop → children list (driver view), refreshed periodically while trip is active.
+  useEffect(() => {
+    if (!jwt || useMock) return;
+    if (!apiProfile) return;
+    let cancelled = false;
+    setStopChildrenError(null);
+    const date = new Date().toISOString().slice(0, 10);
+
+    const tick = async () => {
+      try {
+        const data = await fetchDriverStopChildren(jwt, { tripType, date });
+        if (!cancelled) setStopChildren(data.stops || []);
+      } catch (e) {
+        if (!cancelled) setStopChildrenError(e instanceof Error ? e.message : "Failed to load stop children");
+      }
+    };
+
+    void tick();
+    const id = window.setInterval(() => void tick(), 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [jwt, useMock, apiProfile, tripType]);
+
   // Publish GPS while trip is active (so live marker works even when driver is on this page).
   useEffect(() => {
     if (!jwt) return;
@@ -162,7 +237,7 @@ export default function DriverRoutePage() {
     return { bus, route, stops };
   }, [session, useMock]);
 
-  const { title, stops, currentStopIndex, busLabel, mapDescription } = useMemo(() => {
+  const { title, stops, busLabel, mapDescription } = useMemo(() => {
     if (apiProfile) {
       const rawStops = tripType === "evening" ? apiProfile.eveningStops : apiProfile.morningStops;
       const s = mapApiStopsToRouteStops(rawStops);
@@ -174,7 +249,6 @@ export default function DriverRoutePage() {
       return {
         title: `${bus} · ${routeName}`,
         stops: s,
-        currentStopIndex: 0,
         busLabel: bus,
         mapDescription: "Amazon Location map with route checkpoints.",
       };
@@ -183,7 +257,6 @@ export default function DriverRoutePage() {
       return {
         title: `${mockData.bus.label} · ${mockData.route.name}`,
         stops: mockData.stops,
-        currentStopIndex: mockData.bus.currentStopIndex,
         busLabel: mockData.bus.label,
         mapDescription: "Amazon Location map with route checkpoints (demo).",
       };
@@ -191,7 +264,6 @@ export default function DriverRoutePage() {
     return {
       title: "",
       stops: [] as RouteStop[],
-      currentStopIndex: 0,
       busLabel: "",
       mapDescription: "",
     };
@@ -246,6 +318,54 @@ export default function DriverRoutePage() {
             currentStopIndex={currentStopIndex}
             busLabel={busLabel}
           />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Pickup points → assigned children</CardTitle>
+          <CardDescription>Green verified = child RFID scanned (onboard) today.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {stopChildrenError ? <p className="text-sm text-destructive">{stopChildrenError}</p> : null}
+          <div className="space-y-4">
+            {(stopChildren || []).map((s, idx) => (
+              <div key={s.id} className="rounded-md border bg-background/60 px-3 py-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-sm font-medium">
+                    {idx + 1}. {s.name}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {(s.children || []).filter((c) => c.onboarded).length}/{(s.children || []).length} verified
+                  </div>
+                </div>
+
+                {(s.children || []).length === 0 ? (
+                  <div className="mt-2 text-xs text-muted-foreground">No children assigned to this pickup point.</div>
+                ) : (
+                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                    {s.children.map((c) => (
+                      <div key={c.id} className="flex items-center justify-between gap-3 rounded-md border px-3 py-2">
+                        <div className="min-w-0">
+                          <div className="truncate text-sm">{c.childName}</div>
+                          <div className="truncate text-[11px] text-muted-foreground">
+                            {c.lastScannedAt ? `Scanned: ${new Date(c.lastScannedAt).toLocaleTimeString()}` : "Not scanned yet"}
+                          </div>
+                        </div>
+                        <div className="shrink-0">
+                          {c.onboarded ? (
+                            <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+                          ) : (
+                            <Circle className="h-5 w-5 text-muted-foreground" />
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
         </CardContent>
       </Card>
 

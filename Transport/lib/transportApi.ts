@@ -101,6 +101,38 @@ export async function fetchTransportRoutesWithStops(): Promise<TransportRouteWit
   return data.routes || [];
 }
 
+export type RouteStopChildrenDto = RouteStopDto & {
+  children: Array<{
+    id: string;
+    childName: string;
+    gender: string | null;
+    parentEmail: string | null;
+    busId: string | null;
+    rfidTagUid: string | null;
+    onboarded: boolean;
+    lastScannedAt: string | null;
+  }>;
+};
+
+export async function fetchRouteStopChildren(
+  routeId: string,
+  body: { tripType?: "morning" | "evening"; date?: string } = {},
+): Promise<{ routeId: string; tripType: "morning" | "evening"; date: string; stops: RouteStopChildrenDto[] }> {
+  const qs = new URLSearchParams();
+  qs.set("tripType", body.tripType || "morning");
+  if (body.date) qs.set("date", body.date);
+  const res = await fetch(
+    `${getTransportApiBase()}/transport/routes/${encodeURIComponent(routeId)}/stop-children?${qs.toString()}`,
+    { headers: getTransportAdminHeaders() },
+  );
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data as { error?: string }).error || res.statusText);
+  }
+  const out = data as { routeId: string; tripType: "morning" | "evening"; date: string; stops: RouteStopChildrenDto[] };
+  return { routeId: out.routeId, tripType: out.tripType, date: out.date, stops: out.stops || [] };
+}
+
 export async function createTransportBus(body: {
   name: string;
   registrationNo?: string;
@@ -293,13 +325,21 @@ export async function calculateTransportRouteLineWithJwt(
   distanceMeters: number | null;
   durationSeconds: number | null;
 }> {
+  // Defensive: some route stops can have null/string lat/lng in DB or during editing.
+  // Backend rejects non-numeric values with 400, which makes the UI fall back to straight lines.
+  const cleanStops = (stops || [])
+    .map((s) => ({ lat: Number((s as any).lat), lng: Number((s as any).lng) }))
+    .filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lng));
+  if (cleanStops.length < 2) {
+    return { lineString: [], distanceMeters: null, durationSeconds: null };
+  }
   const headers: HeadersInit = jwt
     ? { Authorization: `Bearer ${jwt}`, "Content-Type": "application/json" }
     : getTransportAdminHeaders();
   const res = await fetch(`${getTransportApiBase()}/transport/routes/calculate`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ stops }),
+    body: JSON.stringify({ stops: cleanStops }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -459,6 +499,42 @@ export async function fetchMyTrackerPosition(jwt: string): Promise<TrackerPositi
   return data as TrackerPositionDto;
 }
 
+export type GeofenceEventDto = {
+  routeStopId: string | null;
+  eventType: string;
+  createdAt: string;
+};
+
+export async function fetchGeofenceEventsAdmin(body: { busId: string; tripType: "morning" | "evening"; date: string }): Promise<GeofenceEventDto[]> {
+  const qs = new URLSearchParams();
+  qs.set("busId", body.busId);
+  qs.set("tripType", body.tripType);
+  qs.set("date", body.date);
+  const res = await fetch(`${getTransportApiBase()}/transport/geofence-events?${qs.toString()}`, {
+    headers: getTransportAdminHeaders(),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data as { error?: string }).error || res.statusText);
+  }
+  return (data as { events: GeofenceEventDto[] }).events || [];
+}
+
+export async function fetchMyGeofenceEvents(jwt: string, body: { busId: string; tripType: "morning" | "evening"; date: string }): Promise<GeofenceEventDto[]> {
+  const qs = new URLSearchParams();
+  qs.set("busId", body.busId);
+  qs.set("tripType", body.tripType);
+  qs.set("date", body.date);
+  const res = await fetch(`${getTransportApiBase()}/transport/geofence-events?${qs.toString()}`, {
+    headers: { Authorization: `Bearer ${jwt}` },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data as { error?: string }).error || res.statusText);
+  }
+  return (data as { events: GeofenceEventDto[] }).events || [];
+}
+
 export type TodayTripStatusDto = {
   busId: string;
   tripType: "morning" | "evening";
@@ -571,6 +647,41 @@ export async function fetchDriverAssignedChildren(
   return data as { busId: string; tripType: "morning" | "evening"; tripDate: string; children: DriverAssignedChildDto[] };
 }
 
+export type DriverStopChildrenDto = {
+  ok: true;
+  busId: string;
+  tripType: "morning" | "evening";
+  date: string;
+  stops: Array<
+    RouteStopDto & {
+      children: Array<{
+        id: string;
+        childName: string;
+        rfidTagUid: string | null;
+        onboarded: boolean;
+        lastScannedAt: string | null;
+      }>;
+    }
+  >;
+};
+
+export async function fetchDriverStopChildren(
+  jwt: string,
+  body: { tripType?: "morning" | "evening"; date?: string } = {},
+): Promise<DriverStopChildrenDto> {
+  const qs = new URLSearchParams();
+  qs.set("tripType", body.tripType || "morning");
+  if (body.date) qs.set("date", body.date);
+  const res = await fetch(`${getTransportApiBase()}/transport/driver/stop-children?${qs.toString()}`, {
+    headers: { Authorization: `Bearer ${jwt}` },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data as { error?: string }).error || res.statusText);
+  }
+  return data as DriverStopChildrenDto;
+}
+
 export type BusAttendanceDto = {
   busId: string;
   tripType: "morning" | "evening";
@@ -624,6 +735,28 @@ export async function driverAttendanceScan(
   return data as any;
 }
 
+export async function driverAttendanceManual(
+  jwt: string,
+  body: { studentId: string; tripType?: "morning" | "evening"; direction?: "on" | "off"; scannedAt?: string },
+): Promise<{ ok: true; busId: string; tripType: string; direction: string; studentId: string }> {
+  const res = await fetch(`${getTransportApiBase()}/transport/attendance/manual`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${jwt}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      studentId: body.studentId,
+      tripType: body.tripType,
+      direction: body.direction,
+      scannedAt: body.scannedAt,
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = (data as any)?.details ? `${(data as any).error}: ${(data as any).details}` : (data as any)?.error || res.statusText;
+    throw new Error(msg);
+  }
+  return data as any;
+}
+
 export type RfidTagDto = {
   id: string;
   tagUid: string;
@@ -653,7 +786,7 @@ export async function fetchRfidTags(schoolId?: string): Promise<RfidTagDto[]> {
   return (data as { tags: RfidTagDto[] }).tags || [];
 }
 
-export async function createRfidTag(body: { schoolId?: string; tagUid: string; tagName?: string | null }): Promise<void> {
+export async function createRfidTag(body: { schoolId?: string; tagUid: string; tagName?: string | null }): Promise<string | null> {
   const res = await fetch(`${getTransportApiBase()}/transport/rfid-tags`, {
     method: "POST",
     headers: getTransportAdminHeaders(),
@@ -663,6 +796,7 @@ export async function createRfidTag(body: { schoolId?: string; tagUid: string; t
   if (!res.ok) {
     throw new Error((data as { error?: string }).error || res.statusText);
   }
+  return (data as { id?: string }).id ?? null;
 }
 
 export async function assignRfidTag(tagId: string, studentId: string): Promise<void> {
@@ -697,6 +831,40 @@ export async function deleteRfidTag(tagId: string): Promise<void> {
   if (!res.ok) {
     throw new Error((data as { error?: string }).error || res.statusText);
   }
+}
+
+export type DriverReportDto = {
+  ok: true;
+  busId: string;
+  tripType: "morning" | "evening";
+  date: string;
+  trip: { status: string | null; startedAt: string | null; endedAt: string | null; updatedAt: string | null } | null;
+  route: { routeId: string } | null;
+  stops: Array<{
+    id: string;
+    order: number;
+    name: string;
+    lat: number | null;
+    lng: number | null;
+    reachedAt: string | null;
+  }>;
+  events: Array<{ eventType: string; routeStopId: string | null; at: string }>;
+};
+
+export async function fetchDriverReport(body: { busId: string; tripType: "morning" | "evening"; date: string }): Promise<DriverReportDto> {
+  const qs = new URLSearchParams();
+  qs.set("busId", body.busId);
+  qs.set("tripType", body.tripType);
+  qs.set("date", body.date);
+  const res = await fetch(`${getTransportApiBase()}/transport/reports/driver?${qs.toString()}`, {
+    headers: getTransportAdminHeaders(),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = (data as any)?.details ? `${(data as any).error}: ${(data as any).details}` : (data as any)?.error || res.statusText;
+    throw new Error(msg);
+  }
+  return data as DriverReportDto;
 }
 
 export async function fetchTransportAnnouncements(schoolId: string, busId?: string | null): Promise<TransportAnnouncementDto[]> {
@@ -741,6 +909,10 @@ export type TransportChildDto = {
   busId?: string | null;
   pickupPointId?: string | null;
   pickupPointName?: string | null;
+  dropPointId?: string | null;
+  dropPointName?: string | null;
+  rfidTagId?: string | null;
+  rfidTagUid?: string | null;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -776,11 +948,25 @@ export async function createTransportChild(body: {
   return (data as { id?: string }).id ?? null;
 }
 
-export async function patchChildAssignment(childId: string, body: { busId?: string | null; pickupPointId?: string | null }): Promise<void> {
+export async function patchChildAssignment(
+  childId: string,
+  body: { busId?: string | null; pickupPointId?: string | null; dropPointId?: string | null },
+): Promise<void> {
   const res = await fetch(`${getTransportApiBase()}/transport/children/${encodeURIComponent(childId)}/assignment`, {
     method: "PATCH",
     headers: getTransportAdminHeaders(),
     body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data as { error?: string }).error || res.statusText);
+  }
+}
+
+export async function deleteTransportChild(childId: string): Promise<void> {
+  const res = await fetch(`${getTransportApiBase()}/transport/children/${encodeURIComponent(childId)}`, {
+    method: "DELETE",
+    headers: getTransportAdminHeaders(),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {

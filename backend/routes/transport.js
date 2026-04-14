@@ -420,6 +420,96 @@ router.get('/routes', requireTransportAdmin, async (req, res) => {
   }
 });
 
+/**
+ * GET /api/transport/routes/:routeId/stop-children?tripType=morning&date=YYYY-MM-DD
+ * Admin-only. Returns route stops and children assigned to each stop (morning: pickup_point_id, evening: drop_point_id),
+ * including today's onboard/verified status derived from transport_bus_boarding.
+ */
+router.get('/routes/:routeId/stop-children', requireTransportAdmin, async (req, res) => {
+  try {
+    const routeId = String(req.params.routeId || '').trim();
+    if (!routeId) return res.status(400).json({ error: 'routeId is required' });
+
+    const tripType = String(req.query.tripType || 'morning') === 'evening' ? 'evening' : 'morning';
+    const pointCol = tripType === 'evening' ? 'drop_point_id' : 'pickup_point_id';
+    const date = String(req.query.date || '').trim() || toUtcDateString(new Date());
+
+    const [stopRows] = await db.query(
+      'SELECT id, name, sequence_order, lat, lng FROM transport_route_stops WHERE route_id = ? ORDER BY sequence_order ASC',
+      [routeId],
+    );
+    const stops = (stopRows || []).map(mapStopRow);
+    if (!stops.length) {
+      return res.status(404).json({ error: 'Route not found (no stops)' });
+    }
+
+    const [rows] = await db.query(
+      `
+      SELECT
+        rs.id AS route_stop_id,
+        c.id AS student_id,
+        c.child_name,
+        c.gender,
+        c.parent_email,
+        a.bus_id,
+        rt.tag_uid AS rfid_tag_uid,
+        bb.status AS boarding_status,
+        bb.last_scanned_at
+      FROM transport_route_stops rs
+      LEFT JOIN transport_pickup_points pp
+        ON pp.route_stop_id = rs.id
+      LEFT JOIN transport_student_assignments a
+        ON a.${pointCol} = pp.id
+      LEFT JOIN transport_children c
+        ON c.id = a.student_id
+      LEFT JOIN transport_rfid_tags rt
+        ON rt.assigned_student_id = c.id
+      LEFT JOIN transport_bus_boarding bb
+        ON bb.bus_id = a.bus_id
+       AND bb.trip_type = ?
+       AND bb.trip_date = ?::date
+       AND bb.student_id = c.id
+      WHERE rs.route_id = ?
+      ORDER BY rs.sequence_order ASC, c.child_name ASC
+      `,
+      [tripType, date, routeId],
+    );
+
+    const byStopId = new Map();
+    for (const r of rows || []) {
+      const stopId = r.route_stop_id != null ? String(r.route_stop_id) : null;
+      if (!stopId) continue;
+      if (!r.student_id) continue;
+      const list = byStopId.get(stopId) || [];
+      list.push({
+        id: String(r.student_id),
+        childName: r.child_name,
+        gender: r.gender || null,
+        parentEmail: r.parent_email || null,
+        busId: r.bus_id != null ? String(r.bus_id) : null,
+        rfidTagUid: r.rfid_tag_uid || null,
+        onboarded: String(r.boarding_status || '').toLowerCase() === 'on',
+        lastScannedAt: r.last_scanned_at || null,
+      });
+      byStopId.set(stopId, list);
+    }
+
+    res.json({
+      ok: true,
+      routeId,
+      tripType,
+      date,
+      stops: stops.map((s) => ({
+        ...s,
+        children: byStopId.get(String(s.id)) || [],
+      })),
+    });
+  } catch (err) {
+    console.error('transport route stop-children:', err);
+    res.status(500).json({ error: 'Failed to load route stop children' });
+  }
+});
+
 /** POST /api/transport/routes — body: { name, stops: [{ name, lat, lng }] } */
 router.post('/routes', requireTransportAdmin, async (req, res) => {
   try {
@@ -923,13 +1013,14 @@ router.get('/places/reverse-geocode', requireTransportUser, async (req, res) => 
       return res.status(503).json({ error: 'AWS_LOCATION_API_KEY is not set on the server' });
     }
     const region = getPlacesRegion();
-    const url = `https://places.geo.${region}.amazonaws.com/reverse-geocode?key=${encodeURIComponent(key)}`;
-    const body = {
-      QueryPosition: [lng, lat],
-      MaxResults: 1,
-      Language: 'en',
-      IntendedUse: 'SingleUse',
-    };
+    const qs = new URLSearchParams({
+      key,
+      language: 'en',
+      'intended-use': 'SingleUse',
+    });
+    // Places API keys use v2 endpoints; v1 can return 403 with "Unable to determine service/operation name..."
+    const url = `https://places.geo.${region}.amazonaws.com/v2/reverse-geocode?${qs.toString()}`;
+    const body = { QueryPosition: [lng, lat], MaxResults: 1 };
     const r = await fetch(url, {
       method: 'POST',
       headers: {
@@ -942,7 +1033,7 @@ router.get('/places/reverse-geocode', requireTransportUser, async (req, res) => 
     if (!r.ok) {
       console.error('transport reverse-geocode', r.status, data);
       return res.status(r.status >= 400 ? r.status : 502).json({
-        error: data.message || data.error || 'ReverseGeocode failed',
+        error: data.message || data.Message || data.error || 'ReverseGeocode failed',
       });
     }
     const item = data.ResultItems && data.ResultItems[0] ? data.ResultItems[0] : null;
@@ -1153,45 +1244,55 @@ router.post('/routes/calculate', requireTransportUser, async (req, res) => {
     const travelModeRaw = String(req.body?.travelMode || 'Car').trim();
     const travelMode = ['Car', 'Truck', 'Scooter', 'Pedestrian'].includes(travelModeRaw) ? travelModeRaw : 'Car';
 
-    if (stops.length < 2) {
-      return res.status(400).json({ error: 'stops must have at least 2 points' });
-    }
-    const coords = stops.map((s) => {
-      const lat = Number(s.lat);
-      const lng = Number(s.lng);
-      return { lat, lng };
-    });
-    if (coords.some((c) => Number.isNaN(c.lat) || Number.isNaN(c.lng))) {
-      return res.status(400).json({ error: 'Each stop must have numeric lat/lng' });
+    // Defensive: ignore invalid/null coordinates instead of failing with 400.
+    // Frontend can temporarily hold null/string lat/lng (during editing) and older DB rows may have missing coords.
+    const coords = (stops || [])
+      .map((s) => ({ lat: Number(s?.lat), lng: Number(s?.lng) }))
+      .filter((c) => Number.isFinite(c.lat) && Number.isFinite(c.lng));
+    if (coords.length < 2) {
+      return res.status(400).json({
+        error: 'stops must have at least 2 valid points',
+        details: 'At least 2 stops need numeric lat/lng (others were null/invalid).',
+      });
     }
 
     const origin = [coords[0].lng, coords[0].lat];
     const destination = [coords[coords.length - 1].lng, coords[coords.length - 1].lat];
     const waypoints = coords.slice(1, -1).map((c) => ({ Position: [c.lng, c.lat] }));
 
-    const url = `https://routes.geo.${region}.amazonaws.com/v2/routes?key=${encodeURIComponent(key)}`;
+    // Routes API endpoint: some AWS docs/examples use `/routes` while others show `/v2/routes`.
+    // Use `/routes` first and fall back to `/v2/routes` if needed.
+    const url = `https://routes.geo.${region}.amazonaws.com/routes?key=${encodeURIComponent(key)}`;
+    const urlV2 = `https://routes.geo.${region}.amazonaws.com/v2/routes?key=${encodeURIComponent(key)}`;
     const body = {
       Origin: origin,
       Destination: destination,
       Waypoints: waypoints.length ? waypoints : undefined,
       TravelMode: travelMode,
-      LegGeometryFormat: 'FlexiblePolyline',
     };
 
-    const r = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        // API keys with referrer restrictions often require Origin/Referer; forward from client.
-        ...placesForwardHeaders(req),
-      },
-      body: JSON.stringify(body),
-    });
-    const data = await r.json().catch(() => ({}));
+    const postJson = async (targetUrl) => {
+      const r = await fetch(targetUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          // API keys with referrer restrictions often require Origin/Referer; forward from client.
+          ...placesForwardHeaders(req),
+        },
+        body: JSON.stringify(body),
+      });
+      const data = await r.json().catch(() => ({}));
+      return { r, data };
+    };
+
+    let { r, data } = await postJson(url);
+    if (!r.ok) {
+      ({ r, data } = await postJson(urlV2));
+    }
     if (!r.ok) {
       console.error('transport routes calculate', r.status, data);
       return res.status(r.status >= 400 ? r.status : 502).json({
-        error: data.message || data.error || 'Route calculation failed',
+        error: data.message || data.Message || data.error || 'Route calculation failed',
       });
     }
 
@@ -1200,7 +1301,8 @@ router.post('/routes/calculate', requireTransportUser, async (req, res) => {
       return res.status(502).json({ error: 'No route legs returned' });
     }
 
-    // Decode detailed road geometry (FlexiblePolyline). Fallback to LineString if needed.
+    // Prefer LineString geometry returned by Routes v2.
+    // Keep FlexiblePolyline decode as a fallback for backward compatibility.
     awsPolyline.setCompressionAlgorithm(awsPolyline.CompressionAlgorithm.FlexiblePolyline);
     const line = [];
     for (const leg of route.Legs) {
@@ -1314,6 +1416,19 @@ router.post('/tracker/position', requireTransportUser, async (req, res) => {
 
     // Best-effort: geofence-style "bus reached pickup point" notifications via email (SES).
     // We keep this non-blocking and deduped via transport_geofence_events.
+    let geofenceDebug = {
+      activeTripType: null,
+      routeId: null,
+      nearestPickupPointId: null,
+      nearestPickupPointName: null,
+      nearestStopId: null,
+      insertedEvent: false,
+      matchedParents: 0,
+      emailAttempted: 0,
+      emailSent: 0,
+      emailError: null,
+      note: null,
+    };
     try {
       const today = toUtcDateString(new Date(sampleTime));
       // Determine active trip type for this bus (deviceId == busId for driver updates).
@@ -1331,6 +1446,7 @@ router.post('/tracker/position', requireTransportUser, async (req, res) => {
         tripRows && tripRows.length === 1
           ? String(tripRows[0].trip_type || '').toLowerCase()
           : '';
+      geofenceDebug.activeTripType = activeTripType || null;
       if (activeTripType === 'morning' || activeTripType === 'evening') {
         // Load route_id for this bus + tripType via assigned driver.
         const [drvRows] = await db.query(
@@ -1345,7 +1461,34 @@ router.post('/tracker/position', requireTransportUser, async (req, res) => {
                   : drvRows[0].evening_route_id || '',
               )
             : '';
+        geofenceDebug.routeId = routeId || null;
         if (routeId) {
+          const RADIUS_M = Number(process.env.TRANSPORT_GEOFENCE_RADIUS_M || 90);
+
+          // Pickup/drop points assigned to this bus (the real geofence targets).
+          // Morning uses pickup_point_id. Evening uses drop_point_id.
+          const pointCol = activeTripType === 'evening' ? 'drop_point_id' : 'pickup_point_id';
+          const [ppRows] = await db.query(
+            `
+            SELECT DISTINCT pp.id, pp.name, pp.lat, pp.lng, pp.route_stop_id
+            FROM transport_student_assignments a
+            JOIN transport_pickup_points pp ON pp.id = a.${pointCol}
+            WHERE a.bus_id = ?
+              AND pp.lat IS NOT NULL
+              AND pp.lng IS NOT NULL
+            `,
+            [deviceId],
+          );
+          const pickupPoints = (ppRows || []).map((p) => ({
+            id: String(p.id),
+            name: p.name || 'Pickup point',
+            lat: Number(p.lat),
+            lng: Number(p.lng),
+            routeStopId: p.route_stop_id != null ? String(p.route_stop_id) : null,
+          }));
+
+          // Route stops are used only to map legacy pickup points missing route_stop_id
+          // and to determine "last stop" for reached-school logic.
           const [stopRows] = await db.query(
             `SELECT id, sequence_order, name, lat, lng
              FROM transport_route_stops
@@ -1360,21 +1503,61 @@ router.post('/tracker/position', requireTransportUser, async (req, res) => {
             lat: Number(s.lat),
             lng: Number(s.lng),
           }));
-          if (stops.length) {
-            // Find nearest stop within radius.
-            const RADIUS_M = Number(process.env.TRANSPORT_GEOFENCE_RADIUS_M || 90);
-            let nearestIdx = -1;
-            let nearestDist = Infinity;
-            for (let i = 0; i < stops.length; i++) {
-              const d = haversineMeters({ lat, lng }, stops[i]);
-              if (d < nearestDist) {
-                nearestDist = d;
-                nearestIdx = i;
-              }
+
+          let nearestPickup = null;
+          let nearestPickupDist = Infinity;
+          for (const p of pickupPoints) {
+            if (Number.isNaN(p.lat) || Number.isNaN(p.lng)) continue;
+            const d = haversineMeters({ lat, lng }, p);
+            if (d < nearestPickupDist) {
+              nearestPickupDist = d;
+              nearestPickup = p;
             }
-            if (nearestIdx >= 0 && nearestDist <= RADIUS_M) {
-              const reached = stops[nearestIdx];
-              // Insert event (dedupe). If inserted, notify parents for NEXT stop.
+          }
+
+          if (nearestPickup && nearestPickupDist <= RADIUS_M) {
+            geofenceDebug.nearestPickupPointId = nearestPickup.id;
+            geofenceDebug.nearestPickupPointName = nearestPickup.name;
+
+            let reachedStopId = nearestPickup.routeStopId;
+            if (!reachedStopId && stops.length) {
+              let best = null;
+              let bestD = Infinity;
+              for (const s of stops) {
+                const d = haversineMeters({ lat: nearestPickup.lat, lng: nearestPickup.lng }, s);
+                if (d < bestD) {
+                  bestD = d;
+                  best = s;
+                }
+              }
+              reachedStopId = best ? best.id : null;
+            }
+            geofenceDebug.nearestStopId = reachedStopId || null;
+
+            if (!reachedStopId) {
+              geofenceDebug.note = 'pickup point has no route_stop_id and could not map to a route stop';
+            } else {
+              const [rows] = await db.query(
+                `
+                SELECT c.parent_email, c.child_name, pp.name AS pickup_name
+                FROM transport_student_assignments a
+                JOIN transport_children c ON c.id = a.student_id
+                JOIN transport_pickup_points pp ON pp.id = a.${pointCol}
+                WHERE a.bus_id = ?
+                  AND c.parent_email IS NOT NULL
+                  AND a.${pointCol} = ?
+                `,
+                [deviceId, nearestPickup.id],
+              );
+              const emails = (rows || [])
+                .map((r) => ({
+                  to: r.parent_email ? String(r.parent_email).trim() : '',
+                  childName: r.child_name || 'Your child',
+                  pickupName: r.pickup_name || nearestPickup.name || 'your pickup point',
+                }))
+                .filter((x) => x.to);
+              geofenceDebug.matchedParents = emails.length;
+
               const [ins] = await db.query(
                 `
                 INSERT INTO transport_geofence_events (bus_id, trip_date, trip_type, route_stop_id, event_type)
@@ -1382,73 +1565,128 @@ router.post('/tracker/position', requireTransportUser, async (req, res) => {
                 ON CONFLICT (bus_id, trip_date, trip_type, route_stop_id, event_type) DO NOTHING
                 RETURNING id
                 `,
-                [deviceId, today, activeTripType, reached.id],
+                [deviceId, today, activeTripType, reachedStopId],
               );
               const inserted = Boolean(ins && ins.length && ins[0].id);
-              const next = stops[nearestIdx + 1] || null;
-              if (inserted && next) {
-                // Notify parents whose pickup point is the NEXT stop (route_stop_id match).
-                const [rows] = await db.query(
-                  `
-                  SELECT c.parent_email, c.child_name, pp.name AS pickup_name
-                  FROM transport_student_assignments a
-                  JOIN transport_children c ON c.id = a.student_id
-                  JOIN transport_pickup_points pp ON pp.id = a.pickup_point_id
-                  WHERE a.bus_id = ?
-                    AND pp.route_stop_id = ?
-                    AND c.parent_email IS NOT NULL
-                  `,
-                  [deviceId, next.id],
-                );
-                const emails = (rows || [])
-                  .map((r) => ({
-                    to: r.parent_email ? String(r.parent_email).trim() : '',
-                    childName: r.child_name || 'Your child',
-                    pickupName: r.pickup_name || next.name || 'your pickup point',
-                  }))
-                  .filter((x) => x.to);
+              geofenceDebug.insertedEvent = inserted;
+
+              const idxInStops = stops.findIndex((s) => String(s.id) === String(reachedStopId));
+              const next = idxInStops >= 0 ? stops[idxInStops + 1] || null : null;
+
+              if (inserted) {
+                // Rule 3: bus reached your location (this stop)
                 for (const e of emails) {
-                  const subject = `Transport update: bus reached previous stop`;
+                  const subject = `Transport update: bus reached your location`;
                   const textBody =
-                    `Bus has reached the previous pickup point.\n\n` +
-                    `Next: ${e.pickupName}\n` +
+                    `Bus has reached your ${activeTripType === 'evening' ? 'drop' : 'pickup'} point.\n\n` +
+                    `${activeTripType === 'evening' ? 'Drop' : 'Pickup'}: ${e.pickupName}\n` +
                     `Child: ${e.childName}\n\n` +
-                    `It will reach in a few minutes.`;
-                  // best-effort; do not await all in parallel to avoid spikes
-                  // eslint-disable-next-line no-await-in-loop
-                  await sendTransportEmail(e.to, { subject, textBody });
-                }
-              } else if (inserted && !next && activeTripType === 'morning') {
-                // Last stop reached on morning trip: treat as "reached school" notification.
-                // We intentionally keep this simple: the final stop is treated as destination.
-                const [rows] = await db.query(
-                  `
-                  SELECT DISTINCT c.parent_email
-                  FROM transport_student_assignments a
-                  JOIN transport_children c ON c.id = a.student_id
-                  WHERE a.bus_id = ?
-                    AND c.parent_email IS NOT NULL
-                  `,
-                  [deviceId],
-                );
-                const tos = (rows || [])
-                  .map((r) => (r.parent_email ? String(r.parent_email).trim() : ''))
-                  .filter(Boolean);
-                for (const to of tos) {
-                  const subject = `Transport update: bus reached school`;
-                  const textBody =
-                    `Bus has reached the destination (school).\n\n` +
-                    `Trip: ${activeTripType}\n` +
                     `Time: ${new Date().toISOString()}`;
-                  // eslint-disable-next-line no-await-in-loop
-                  await sendTransportEmail(to, { subject, textBody });
+                  geofenceDebug.emailAttempted += 1;
+                  try {
+                    // eslint-disable-next-line no-await-in-loop
+                    await sendTransportEmail(e.to, { subject, textBody });
+                    geofenceDebug.emailSent += 1;
+                  } catch (mailErr) {
+                    if (!geofenceDebug.emailError) {
+                      geofenceDebug.emailError = mailErr && mailErr.message ? String(mailErr.message) : String(mailErr);
+                    }
+                  }
+                }
+
+                // Rule 2: bus reached previous pickup point -> notify NEXT point parents (approaching).
+                if (next && next.id) {
+                  const nextStopId = String(next.id);
+                  const [ins2] = await db.query(
+                    `
+                    INSERT INTO transport_geofence_events (bus_id, trip_date, trip_type, route_stop_id, event_type)
+                    VALUES (?, ?::date, ?, ?, 'approaching_stop')
+                    ON CONFLICT (bus_id, trip_date, trip_type, route_stop_id, event_type) DO NOTHING
+                    RETURNING id
+                    `,
+                    [deviceId, today, activeTripType, nextStopId],
+                  );
+                  const insertedApproach = Boolean(ins2 && ins2.length && ins2[0].id);
+                  if (insertedApproach) {
+                    const [rowsN] = await db.query(
+                      `
+                      SELECT c.parent_email, c.child_name, pp.name AS pickup_name
+                      FROM transport_student_assignments a
+                      JOIN transport_children c ON c.id = a.student_id
+                      JOIN transport_pickup_points pp ON pp.id = a.${pointCol}
+                      WHERE a.bus_id = ?
+                        AND c.parent_email IS NOT NULL
+                        AND pp.route_stop_id = ?::uuid
+                      `,
+                      [deviceId, nextStopId],
+                    );
+                    const emailsN = (rowsN || [])
+                      .map((r) => ({
+                        to: r.parent_email ? String(r.parent_email).trim() : '',
+                        childName: r.child_name || 'Your child',
+                        pickupName: r.pickup_name || next.name || 'your pickup point',
+                      }))
+                      .filter((x) => x.to);
+                    for (const e of emailsN) {
+                      const subject = `Transport update: bus reached previous pickup point`;
+                      const textBody =
+                        `Bus has reached the previous stop and is heading to your ${activeTripType === 'evening' ? 'drop' : 'pickup'} point.\n\n` +
+                        `Next stop: ${e.pickupName}\n` +
+                        `Child: ${e.childName}\n\n` +
+                        `Time: ${new Date().toISOString()}`;
+                      geofenceDebug.emailAttempted += 1;
+                      try {
+                        // eslint-disable-next-line no-await-in-loop
+                        await sendTransportEmail(e.to, { subject, textBody });
+                        geofenceDebug.emailSent += 1;
+                      } catch (mailErr) {
+                        if (!geofenceDebug.emailError) {
+                          geofenceDebug.emailError =
+                            mailErr && mailErr.message ? String(mailErr.message) : String(mailErr);
+                        }
+                      }
+                    }
+                  }
+                }
+
+                if (!next && activeTripType === 'morning') {
+                  const [rows3] = await db.query(
+                    `
+                    SELECT DISTINCT c.parent_email
+                    FROM transport_student_assignments a
+                    JOIN transport_children c ON c.id = a.student_id
+                    WHERE a.bus_id = ?
+                      AND c.parent_email IS NOT NULL
+                    `,
+                    [deviceId],
+                  );
+                  const tos = (rows3 || [])
+                    .map((r) => (r.parent_email ? String(r.parent_email).trim() : ''))
+                    .filter(Boolean);
+                  for (const to of tos) {
+                    const subject = `Transport update: bus reached school`;
+                    const textBody =
+                      `Bus has reached the destination (school).\n\n` +
+                      `Trip: ${activeTripType}\n` +
+                      `Time: ${new Date().toISOString()}`;
+                    // eslint-disable-next-line no-await-in-loop
+                    await sendTransportEmail(to, { subject, textBody });
+                  }
                 }
               }
+
+              if (!inserted) {
+                geofenceDebug.note = 'deduped: stop already reached today';
+              }
             }
+          } else {
+            geofenceDebug.note = pickupPoints.length ? 'not within radius of any assigned pickup point' : 'no pickup points assigned to this bus';
           }
         }
       }
     } catch (notifyErr) {
+      geofenceDebug.emailError =
+        geofenceDebug.emailError || (notifyErr && notifyErr.message ? String(notifyErr.message) : String(notifyErr));
       console.error('transport tracker geofence notify failed:', notifyErr && notifyErr.message ? notifyErr.message : notifyErr);
     }
 
@@ -1457,6 +1695,7 @@ router.post('/tracker/position', requireTransportUser, async (req, res) => {
       trackerName,
       deviceId,
       sampleTime: sampleTime.toISOString(),
+      geofence: geofenceDebug,
     });
   } catch (err) {
     // Surface AWS error details to speed up setup (permissions/region/tracker name issues).
@@ -1528,6 +1767,47 @@ router.get('/tracker/position/me', authenticateToken, async (req, res) => {
       error: 'Failed to load device position',
       awsError: { name, message, httpStatus },
     });
+  }
+});
+
+/**
+ * GET /api/transport/geofence-events?busId=...&tripType=morning&date=YYYY-MM-DD
+ * Admin-only. Returns reached_stop events (deduped) for UI timelines.
+ */
+router.get('/geofence-events', requireTransportUser, async (req, res) => {
+  try {
+    const busId = req.query.busId != null ? String(req.query.busId).trim() : '';
+    const tripType = req.query.tripType != null ? String(req.query.tripType).trim().toLowerCase() : '';
+    const date = req.query.date != null ? String(req.query.date).trim() : '';
+    if (!busId) return res.status(400).json({ error: 'busId is required' });
+    if (tripType !== 'morning' && tripType !== 'evening') return res.status(400).json({ error: 'tripType must be morning|evening' });
+    if (!date) return res.status(400).json({ error: 'date is required (YYYY-MM-DD)' });
+
+    const [rows] = await db.query(
+      `
+      SELECT route_stop_id, event_type, created_at
+      FROM transport_geofence_events
+      WHERE bus_id = ? AND trip_date = ?::date AND trip_type = ?
+      ORDER BY created_at ASC
+      `,
+      [busId, date, tripType],
+    );
+    res.json({
+      busId,
+      tripType,
+      date,
+      events: (rows || []).map((r) => ({
+        routeStopId: r.route_stop_id != null ? String(r.route_stop_id) : null,
+        eventType: r.event_type,
+        createdAt: r.created_at,
+      })),
+    });
+  } catch (err) {
+    console.error('transport geofence events:', err);
+    if (err.code === 'ER_NO_SUCH_TABLE' || err.code === '42P01') {
+      return res.status(503).json({ error: 'Database not ready', details: 'Run backend/sql/2026-04-10-transport_geofence_events.sql' });
+    }
+    res.status(500).json({ error: 'Failed to load geofence events' });
   }
 });
 
@@ -1825,6 +2105,112 @@ router.get('/driver/assigned-children', authenticateToken, async (req, res) => {
   } catch (err) {
     console.error('transport driver assigned children:', err);
     res.status(500).json({ error: 'Failed to load assigned children' });
+  }
+});
+
+/**
+ * GET /api/transport/driver/stop-children?tripType=morning&date=YYYY-MM-DD
+ * Driver-only. Returns route stops + children assigned to each pickup point on this driver's bus,
+ * with onboard/verified status from transport_bus_boarding for the given date.
+ */
+router.get('/driver/stop-children', authenticateToken, async (req, res) => {
+  try {
+    const r = normalizeRole(req.user?.role);
+    if (r !== 'transportdriver') {
+      return res.status(403).json({ error: 'Driver session required' });
+    }
+    const tripType = req.query.tripType != null ? String(req.query.tripType).trim().toLowerCase() : 'morning';
+    if (tripType !== 'morning' && tripType !== 'evening') {
+      return res.status(400).json({ error: 'tripType must be morning|evening' });
+    }
+    const pointCol = tripType === 'evening' ? 'drop_point_id' : 'pickup_point_id';
+    const date = req.query.date != null ? String(req.query.date).trim() : '';
+    const tripDate = date || toUtcDateString();
+
+    const driverId = String(req.user.id || '');
+    const [drv] = await db.query(`SELECT bus_id, morning_route_id, evening_route_id FROM transport_drivers WHERE id = ? LIMIT 1`, [
+      driverId,
+    ]);
+    const busId = drv && drv[0] && drv[0].bus_id != null ? String(drv[0].bus_id) : '';
+    if (!busId) {
+      return res.status(400).json({ error: 'Driver has no bus assigned' });
+    }
+    const routeId =
+      drv && drv[0]
+        ? String(tripType === 'morning' ? drv[0].morning_route_id || '' : drv[0].evening_route_id || '')
+        : '';
+    if (!routeId) {
+      return res.status(400).json({ error: 'No route assigned for this trip type' });
+    }
+
+    const [stopRows] = await db.query(
+      `SELECT id, name, sequence_order, lat, lng
+       FROM transport_route_stops
+       WHERE route_id = ?
+       ORDER BY sequence_order ASC`,
+      [routeId],
+    );
+    const stops = (stopRows || []).map(mapStopRow);
+
+    const [rows] = await db.query(
+      `
+      SELECT
+        rs.id AS route_stop_id,
+        c.id AS student_id,
+        c.child_name,
+        rt.tag_uid AS rfid_tag_uid,
+        bb.status AS boarding_status,
+        bb.last_scanned_at
+      FROM transport_route_stops rs
+      LEFT JOIN transport_pickup_points pp
+        ON pp.route_stop_id = rs.id
+      LEFT JOIN transport_student_assignments a
+        ON a.${pointCol} = pp.id
+       AND a.bus_id = ?
+      LEFT JOIN transport_children c
+        ON c.id = a.student_id
+      LEFT JOIN transport_rfid_tags rt
+        ON rt.assigned_student_id = c.id
+      LEFT JOIN transport_bus_boarding bb
+        ON bb.bus_id = a.bus_id
+       AND bb.trip_type = ?
+       AND bb.trip_date = ?::date
+       AND bb.student_id = c.id
+      WHERE rs.route_id = ?
+      ORDER BY rs.sequence_order ASC, c.child_name ASC
+      `,
+      [busId, tripType, tripDate, routeId],
+    );
+
+    const byStopId = new Map();
+    for (const r2 of rows || []) {
+      const stopId = r2.route_stop_id != null ? String(r2.route_stop_id) : null;
+      if (!stopId) continue;
+      if (!r2.student_id) continue;
+      const list = byStopId.get(stopId) || [];
+      list.push({
+        id: String(r2.student_id),
+        childName: r2.child_name,
+        rfidTagUid: r2.rfid_tag_uid || null,
+        onboarded: String(r2.boarding_status || '').toLowerCase() === 'on',
+        lastScannedAt: r2.last_scanned_at || null,
+      });
+      byStopId.set(stopId, list);
+    }
+
+    res.json({
+      ok: true,
+      busId,
+      tripType,
+      date: tripDate,
+      stops: stops.map((s) => ({
+        ...s,
+        children: byStopId.get(String(s.id)) || [],
+      })),
+    });
+  } catch (err) {
+    console.error('transport driver stop children:', err);
+    res.status(500).json({ error: 'Failed to load stop children' });
   }
 });
 
@@ -2275,6 +2661,78 @@ router.post('/attendance/scan', requireTransportScanner, async (req, res) => {
   }
 });
 
+/** POST /api/transport/attendance/manual
+ * body: { studentId, tripType, direction?: 'on'|'off', scannedAt?: ISO string }
+ * auth: Driver JWT only (fallback when NFC is unavailable).
+ */
+router.post('/attendance/manual', authenticateToken, async (req, res) => {
+  try {
+    const r = normalizeRole(req.user?.role);
+    if (r !== 'transportdriver') {
+      return res.status(403).json({ error: 'Driver session required' });
+    }
+
+    const studentIdRaw = req.body?.studentId ?? req.body?.childId;
+    const studentId = studentIdRaw != null ? String(studentIdRaw).trim() : '';
+    let tripType = req.body?.tripType != null ? String(req.body.tripType).trim().toLowerCase() : '';
+    const direction = req.body?.direction != null ? String(req.body.direction).trim().toLowerCase() : 'on';
+    const scannedAt = req.body?.scannedAt ? new Date(String(req.body.scannedAt)) : new Date();
+
+    if (!studentId) return res.status(400).json({ error: 'studentId is required' });
+    if (tripType !== 'morning' && tripType !== 'evening') {
+      return res.status(400).json({ error: 'tripType must be morning|evening' });
+    }
+    if (direction !== 'on' && direction !== 'off') {
+      return res.status(400).json({ error: 'direction must be on|off' });
+    }
+    if (Number.isNaN(scannedAt.getTime())) {
+      return res.status(400).json({ error: 'scannedAt must be a valid ISO timestamp' });
+    }
+
+    const driverId = String(req.user.id || '');
+    const [drvRows] = await db.query(`SELECT bus_id FROM transport_drivers WHERE id = ? LIMIT 1`, [driverId]);
+    const busId = drvRows && drvRows[0] && drvRows[0].bus_id != null ? String(drvRows[0].bus_id) : '';
+    if (!busId) {
+      return res.status(400).json({ error: 'Driver has no bus assigned' });
+    }
+
+    // Security: driver can only mark children assigned to THEIR bus.
+    const [assignRows] = await db.query(
+      `SELECT bus_id FROM transport_student_assignments WHERE student_id = ? LIMIT 1`,
+      [studentId],
+    );
+    const assignedBus = assignRows && assignRows.length && assignRows[0].bus_id != null ? String(assignRows[0].bus_id) : '';
+    if (!assignedBus || assignedBus !== busId) {
+      return res.status(403).json({ error: 'Forbidden', details: 'Child is not assigned to this bus' });
+    }
+
+    // Use a synthetic tag_uid to satisfy NOT NULL constraint in transport_attendance_scans.
+    const tagUid = `manual:${studentId}`;
+
+    await db.query(
+      `INSERT INTO transport_attendance_scans (bus_id, trip_type, direction, tag_uid, student_id, scanned_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [busId, tripType, direction, tagUid, studentId, scannedAt],
+    );
+
+    const today = toUtcDateString(new Date(scannedAt));
+    await db.query(
+      `
+      INSERT INTO transport_bus_boarding (bus_id, trip_type, student_id, tag_uid, status, last_scanned_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())
+      ON CONFLICT (bus_id, trip_date, trip_type, student_id)
+      DO UPDATE SET status = EXCLUDED.status, tag_uid = EXCLUDED.tag_uid, last_scanned_at = EXCLUDED.last_scanned_at, updated_at = NOW()
+      `,
+      [busId, tripType, studentId, tagUid, direction, scannedAt],
+    );
+
+    res.json({ ok: true, busId, tripType, direction, studentId });
+  } catch (err) {
+    console.error('transport attendance manual:', err);
+    res.status(500).json({ error: 'Manual attendance failed' });
+  }
+});
+
 /** GET /api/transport/attendance/bus/:busId?tripType=morning&date=YYYY-MM-DD */
 router.get('/attendance/bus/:busId', requireTransportAdmin, async (req, res) => {
   try {
@@ -2486,6 +2944,112 @@ router.delete('/rfid-tags/:id', requireTransportAdmin, async (req, res) => {
   }
 });
 
+// --- Reports (admin) ---
+
+/**
+ * GET /api/transport/reports/driver?busId=...&tripType=morning&date=YYYY-MM-DD
+ * Generates a JSON report from DB events and stores it in S3.
+ */
+router.get('/reports/driver', requireTransportAdmin, async (req, res) => {
+  try {
+    const busId = req.query.busId != null ? String(req.query.busId).trim() : '';
+    const tripType = req.query.tripType != null ? String(req.query.tripType).trim().toLowerCase() : '';
+    const date = req.query.date != null ? String(req.query.date).trim() : '';
+    if (!busId) return res.status(400).json({ error: 'busId is required' });
+    if (tripType !== 'morning' && tripType !== 'evening') return res.status(400).json({ error: 'tripType must be morning|evening' });
+    if (!date) return res.status(400).json({ error: 'date is required (YYYY-MM-DD)' });
+
+    // Trip summary (start/end/status)
+    const [tripRows] = await db.query(
+      `
+      SELECT status, started_at, ended_at, updated_at
+      FROM transport_bus_trips
+      WHERE bus_id = ? AND trip_date = ?::date AND trip_type = ?
+      LIMIT 1
+      `,
+      [busId, date, tripType],
+    );
+    const trip = tripRows && tripRows.length ? tripRows[0] : null;
+
+    // Resolve route stops for this bus/trip type (via assigned driver route)
+    const [drvRows] = await db.query(
+      `SELECT morning_route_id, evening_route_id FROM transport_drivers WHERE bus_id = ? LIMIT 1`,
+      [busId],
+    );
+    const routeId =
+      drvRows && drvRows.length
+        ? String(tripType === 'evening' ? drvRows[0].evening_route_id || '' : drvRows[0].morning_route_id || '')
+        : '';
+    const [stopRows] = routeId
+      ? await db.query(
+          `SELECT id, sequence_order, name, lat, lng
+           FROM transport_route_stops
+           WHERE route_id = ?
+           ORDER BY sequence_order ASC`,
+          [routeId],
+        )
+      : [[], undefined];
+    const stops = (stopRows || []).map((s) => ({
+      id: String(s.id),
+      order: Number(s.sequence_order) || 0,
+      name: s.name,
+      lat: s.lat != null ? Number(s.lat) : null,
+      lng: s.lng != null ? Number(s.lng) : null,
+    }));
+
+    // Reached stop events
+    const [evRows] = await db.query(
+      `
+      SELECT route_stop_id, event_type, created_at
+      FROM transport_geofence_events
+      WHERE bus_id = ? AND trip_date = ?::date AND trip_type = ?
+      ORDER BY created_at ASC
+      `,
+      [busId, date, tripType],
+    );
+    const reached = (evRows || [])
+      .filter((e) => e.event_type === 'reached_stop' && e.route_stop_id)
+      .map((e) => ({ routeStopId: String(e.route_stop_id), at: e.created_at }));
+
+    const reachedByStopId = new Map();
+    for (const r of reached) reachedByStopId.set(r.routeStopId, r.at);
+
+    const tripOut = trip
+      ? {
+          status: trip.status || null,
+          startedAt: trip.started_at ? new Date(trip.started_at).toISOString() : null,
+          endedAt: trip.ended_at ? new Date(trip.ended_at).toISOString() : null,
+          updatedAt: trip.updated_at ? new Date(trip.updated_at).toISOString() : null,
+        }
+      : null;
+
+    res.json({
+      ok: true,
+      busId,
+      tripType,
+      date,
+      trip: tripOut,
+      route: routeId ? { routeId } : null,
+      stops: stops.map((s) => ({
+        id: s.id,
+        order: s.order,
+        name: s.name,
+        lat: s.lat,
+        lng: s.lng,
+        reachedAt: reachedByStopId.get(s.id) || null,
+      })),
+      events: (evRows || []).map((e) => ({
+        eventType: e.event_type,
+        routeStopId: e.route_stop_id != null ? String(e.route_stop_id) : null,
+        at: e.created_at,
+      })),
+    });
+  } catch (err) {
+    console.error('transport driver report:', err);
+    res.status(500).json({ error: 'Failed to generate driver report' });
+  }
+});
+
 // --- Announcements (admin → parents in-app) ---
 
 /** GET /api/transport/announcements?schoolId=...&busId=... */
@@ -2583,11 +3147,16 @@ router.get('/children', requireTransportAdmin, async (req, res) => {
     const [rows] = await db.query(
       `
       SELECT c.id, c.school_id, c.child_name, c.gender, c.parent_email, c.address, c.created_at, c.updated_at,
-             a.bus_id, a.pickup_point_id,
-             pp.name AS pickup_point_name
+             a.bus_id, a.pickup_point_id, a.drop_point_id,
+             pp.name AS pickup_point_name,
+             dp.name AS drop_point_name,
+             rt.id AS rfid_tag_id,
+             rt.tag_uid AS rfid_tag_uid
       FROM transport_children c
       LEFT JOIN transport_student_assignments a ON a.student_id = c.id
       LEFT JOIN transport_pickup_points pp ON pp.id = a.pickup_point_id
+      LEFT JOIN transport_pickup_points dp ON dp.id = a.drop_point_id
+      LEFT JOIN transport_rfid_tags rt ON rt.assigned_student_id = c.id
       WHERE c.school_id = ?
       ORDER BY c.created_at DESC
       `,
@@ -2604,6 +3173,10 @@ router.get('/children', requireTransportAdmin, async (req, res) => {
         busId: r.bus_id != null ? String(r.bus_id) : null,
         pickupPointId: r.pickup_point_id != null ? String(r.pickup_point_id) : null,
         pickupPointName: r.pickup_point_name || null,
+        dropPointId: r.drop_point_id != null ? String(r.drop_point_id) : null,
+        dropPointName: r.drop_point_name || null,
+        rfidTagId: r.rfid_tag_id != null ? String(r.rfid_tag_id) : null,
+        rfidTagUid: r.rfid_tag_uid || null,
         createdAt: r.created_at,
         updatedAt: r.updated_at,
       })),
@@ -2613,11 +3186,11 @@ router.get('/children', requireTransportAdmin, async (req, res) => {
     if (err.code === 'ER_NO_SUCH_TABLE' || err.code === '42P01') {
       return res.status(503).json({ error: 'Database not ready', details: 'Run backend/sql/2026-04-09-transport_children_rfid_tag_name.sql' });
     }
-    res.status(500).json({ error: 'Failed to list children' });
+    res.status(500).json({ error: 'Failed to list children', details: err.message || undefined });
   }
 });
 
-/** POST /api/transport/children body: { schoolId, childName, gender?, parentEmail } */
+/** POST /api/transport/children body: { schoolId, childName, gender?, parentEmail, address } */
 router.post('/children', requireTransportAdmin, async (req, res) => {
   try {
     const schoolId = req.user?.schoolId || req.user?.school_id || req.body?.schoolId;
@@ -2631,7 +3204,8 @@ router.post('/children', requireTransportAdmin, async (req, res) => {
     if (!parentEmail) return res.status(400).json({ error: 'parentEmail is required' });
     if (!address) return res.status(400).json({ error: 'address is required' });
 
-    const [ins] = await db.query(
+    let ins;
+    [ins] = await db.query(
       `
       INSERT INTO transport_children (school_id, child_name, gender, parent_email, address)
       VALUES (?, ?, ?, ?, ?)
@@ -2646,16 +3220,17 @@ router.post('/children', requireTransportAdmin, async (req, res) => {
     if (err.code === 'ER_NO_SUCH_TABLE' || err.code === '42P01') {
       return res.status(503).json({ error: 'Database not ready', details: 'Run backend/sql/2026-04-09-transport_children_rfid_tag_name.sql' });
     }
-    res.status(500).json({ error: 'Failed to create child' });
+    res.status(500).json({ error: 'Failed to create child', details: err.message || undefined });
   }
 });
 
-/** PATCH /api/transport/children/:id/assignment body: { busId?, pickupPointId? } */
+/** PATCH /api/transport/children/:id/assignment body: { busId?, pickupPointId?, dropPointId? } */
 router.patch('/children/:id/assignment', requireTransportAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const busId = req.body?.busId != null ? String(req.body.busId).trim() : null;
     const pickupPointId = req.body?.pickupPointId != null ? String(req.body.pickupPointId).trim() : null;
+    const dropPointId = req.body?.dropPointId != null ? String(req.body.dropPointId).trim() : null;
     if (!id) return res.status(400).json({ error: 'id is required' });
 
     const [c] = await db.query(`SELECT school_id, child_name, parent_email FROM transport_children WHERE id = ? LIMIT 1`, [String(id)]);
@@ -2666,25 +3241,27 @@ router.patch('/children/:id/assignment', requireTransportAdmin, async (req, res)
 
     await db.query(
       `
-      INSERT INTO transport_student_assignments (student_id, school_id, bus_id, pickup_point_id, updated_at)
-      VALUES (?, ?, ?, ?, NOW())
+      INSERT INTO transport_student_assignments (student_id, school_id, bus_id, pickup_point_id, drop_point_id, updated_at)
+      VALUES (?, ?, ?, ?, ?, NOW())
       ON CONFLICT (student_id)
       DO UPDATE SET
         school_id = EXCLUDED.school_id,
         bus_id = EXCLUDED.bus_id,
         pickup_point_id = EXCLUDED.pickup_point_id,
+        drop_point_id = EXCLUDED.drop_point_id,
         updated_at = NOW()
       `,
-      [String(id), schoolId, busId || null, pickupPointId || null],
+      [String(id), schoolId, busId || null, pickupPointId || null, dropPointId || null],
     );
 
     // Notify parent about bus/pickup assignment (best-effort).
     let emailSent = false;
     let emailError = null;
-    if (parentEmail && (busId || pickupPointId)) {
+    if (parentEmail && (busId || pickupPointId || dropPointId)) {
       try {
         let busName = '';
         let pickupName = '';
+        let dropName = '';
         if (busId) {
           const [b] = await db.query(`SELECT name FROM transport_buses WHERE id = ? LIMIT 1`, [String(busId)]);
           if (b && b.length) busName = b[0].name || '';
@@ -2693,11 +3270,16 @@ router.patch('/children/:id/assignment', requireTransportAdmin, async (req, res)
           const [p] = await db.query(`SELECT name FROM transport_pickup_points WHERE id = ? LIMIT 1`, [String(pickupPointId)]);
           if (p && p.length) pickupName = p[0].name || '';
         }
+        if (dropPointId) {
+          const [d] = await db.query(`SELECT name FROM transport_pickup_points WHERE id = ? LIMIT 1`, [String(dropPointId)]);
+          if (d && d.length) dropName = d[0].name || '';
+        }
         const subject = `Transport assignment updated for ${childName}`;
         const textBody =
           `Transport assignment updated.\n\n` +
           `Child: ${childName}\n` +
           (pickupName ? `Pickup point: ${pickupName}\n` : '') +
+          (dropName ? `Drop point: ${dropName}\n` : '') +
           (busName ? `Bus: ${busName}\n` : '') +
           `\nThank you.`;
         await sendTransportEmail(parentEmail, { subject, textBody });
@@ -2712,6 +3294,29 @@ router.patch('/children/:id/assignment', requireTransportAdmin, async (req, res)
   } catch (err) {
     console.error('transport patch child assignment:', err);
     res.status(500).json({ error: 'Failed to update child assignment' });
+  }
+});
+
+/** DELETE /api/transport/children/:id — permanently deletes child + related assignment + RFID linkage */
+router.delete('/children/:id', requireTransportAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!id) return res.status(400).json({ error: 'id is required' });
+
+    // Best-effort cleanup: unassign RFID tag + delete assignment row first.
+    await db.query(`UPDATE transport_rfid_tags SET assigned_student_id = NULL WHERE assigned_student_id = ?`, [String(id)]);
+    await db.query(`DELETE FROM transport_student_assignments WHERE student_id = ?`, [String(id)]);
+
+    const [del] = await db.query(`DELETE FROM transport_children WHERE id = ? RETURNING id`, [String(id)]);
+    if (!del || !del.length) return res.status(404).json({ error: 'Child not found' });
+
+    res.json({ ok: true, id: String(del[0].id) });
+  } catch (err) {
+    console.error('transport delete child:', err);
+    if (err.code === 'ER_NO_SUCH_TABLE' || err.code === '42P01') {
+      return res.status(503).json({ error: 'Database not ready' });
+    }
+    res.status(500).json({ error: 'Failed to delete child' });
   }
 });
 

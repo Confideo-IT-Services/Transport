@@ -8,6 +8,7 @@ import {
   BookOpen,
   ClipboardCheck,
   Calendar,
+  Bus,
   Bell,
   BarChart3,
   MessageSquare,
@@ -294,6 +295,12 @@ const parentNavItems: NavItem[] = [
     label: "Notifications", 
     href: "/parent/dashboard/notifications", 
     icon: Bell,
+    roles: ["parent"]
+  },
+  { 
+    label: "Transport", 
+    href: "/parent/dashboard/transport", 
+    icon: Bus,
     roles: ["parent"]
   },
   { 
